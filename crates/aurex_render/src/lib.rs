@@ -351,6 +351,28 @@ pub struct BootPostFxAggregate {
     pub peak_bloom: f32,
 }
 
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BootPostFxTrack {
+    pub snapshots: Vec<BootPostFxSnapshot>,
+}
+
+impl BootPostFxTrack {
+    pub fn from_timeline(timeline: &BootTimeline) -> Self {
+        Self {
+            snapshots: timeline.to_postfx_snapshots(),
+        }
+    }
+
+    pub fn snapshot_for_tick(&self, tick: u64) -> Option<BootPostFxSnapshot> {
+        self.snapshots.iter().find(|s| s.tick == tick).copied()
+    }
+
+    pub fn latest_snapshot(&self) -> Option<BootPostFxSnapshot> {
+        self.snapshots.last().copied()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct BootTimeline {
     pub frames: Vec<BootTimelineFrame>,
@@ -741,6 +763,27 @@ mod tests {
         assert!(agg.avg_bloom > 0.0);
         assert!(agg.peak_bloom >= agg.avg_bloom);
         assert!(agg.avg_fog >= 0.0);
+    }
+
+
+    #[test]
+    fn postfx_track_supports_tick_lookup() {
+        let timeline = BootAnimator::with_style_and_recipe(
+            BootAnimationConfig {
+                seed: 303,
+                frame_count: 10,
+                ..BootAnimationConfig::default()
+            },
+            BootStyleProfile::from_preset(BootStylePreset::Classic),
+            BootSequenceRecipe::Standard,
+        )
+        .generate_timeline(25);
+
+        let track = BootPostFxTrack::from_timeline(&timeline);
+        assert_eq!(track.snapshots.len(), 10);
+        assert!(track.snapshot_for_tick(25).is_some());
+        assert!(track.snapshot_for_tick(999).is_none());
+        assert_eq!(track.latest_snapshot().unwrap().tick, 34);
     }
 
     #[test]

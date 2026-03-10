@@ -152,3 +152,10 @@ Boot PostFX snapshot layer added:
 • added `BootPostFxSnapshot` and `BootPostFxAggregate` contracts in `aurex_render`
 • added timeline conversion to frame-wise postfx snapshots and aggregate statistics
 • expanded runtime scaffold diagnostics with postfx aggregate output for backend handoff
+
+Phase 24
+Boot PostFX track/query layer added:
+
+• added `BootPostFxTrack` for deterministic per-tick snapshot lookup
+• added track lookup tests for hit/miss/latest behavior
+• expanded runtime scaffold diagnostics with first/latest postfx snapshot summaries

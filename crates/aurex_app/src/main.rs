@@ -3,8 +3,9 @@ use aurex_ecs::{CommandBuffer, EcsCommand, EcsWorld, EntityId, Transform2p5D};
 use aurex_lighting::{LightDescriptor, LightKind};
 use aurex_postfx::BloomSettings;
 use aurex_render::{
-    BootAnimationConfig, BootAnimator, BootSequenceRecipe, BootStylePreset, BootStyleProfile,
-    CameraRig, MockRenderer, RenderBackendMode, RenderBootstrapConfig, RenderStage, RENDER_MAIN_STAGES,
+    BootAnimationConfig, BootAnimator, BootPostFxTrack, BootSequenceRecipe, BootStylePreset,
+    BootStyleProfile, CameraRig, MockRenderer, RenderBackendMode, RenderBootstrapConfig, RenderStage,
+    RENDER_MAIN_STAGES,
 };
 use aurex_shape_synth::{PrimitiveType, ShapeDescriptor};
 
@@ -80,10 +81,15 @@ fn main() {
         boot_recipe,
     );
     let boot_frames = boot_animator.generate_frames(clock.sim_tick.0);
+    let first_boot = &boot_frames[0];
+    let last_boot = &boot_frames[boot_frames.len() - 1];
     let boot_timeline = boot_animator.generate_timeline(clock.sim_tick.0);
     let (phase_ignition, phase_pulse_lock, phase_reveal) = boot_timeline.phase_counts();
     let boot_intents = boot_timeline.derive_render_intents();
     let boot_postfx = boot_timeline.aggregate_postfx();
+    let postfx_track = BootPostFxTrack::from_timeline(&boot_timeline);
+    let first_postfx = postfx_track.snapshot_for_tick(first_boot.tick).unwrap();
+    let latest_postfx = postfx_track.latest_snapshot().unwrap();
     let avg_styled_glow = boot_timeline.frames.iter().map(|f| f.styled_glow).sum::<f32>() / boot_timeline.frames.len() as f32;
     let avg_distortion = boot_timeline.frames.iter().map(|f| f.distortion_weight).sum::<f32>() / boot_timeline.frames.len() as f32;
     let avg_phase_t = boot_timeline.frames.iter().map(|f| f.phase_t).sum::<f32>() / boot_timeline.frames.len() as f32;
@@ -91,8 +97,6 @@ fn main() {
     let avg_fog_intent = boot_intents.iter().map(|i| i.fog_weight).sum::<f32>() / boot_intents.len() as f32;
     let peak_bloom_intent = boot_intents.iter().map(|i| i.bloom_weight).fold(0.0_f32, f32::max);
     let avg_color_shift = boot_intents.iter().map(|i| i.color_shift).sum::<f32>() / boot_intents.len() as f32;
-    let first_boot = &boot_frames[0];
-    let last_boot = &boot_frames[boot_frames.len() - 1];
 
     println!("Aurex runtime scaffold initialized.");
     println!("frame={} tick={}", clock.frame_index.0, clock.sim_tick.0);
@@ -161,4 +165,12 @@ fn main() {
         boot_postfx.avg_color_shift
     );
     println!("boot_postfx_peak_bloom={:.3}", boot_postfx.peak_bloom);
+    println!(
+        "boot_postfx_first=tick:{} bloom:{:.3} fog:{:.3}",
+        first_postfx.tick, first_postfx.bloom_strength, first_postfx.fog_density
+    );
+    println!(
+        "boot_postfx_latest=tick:{} bloom:{:.3} fog:{:.3}",
+        latest_postfx.tick, latest_postfx.bloom_strength, latest_postfx.fog_density
+    );
 }
