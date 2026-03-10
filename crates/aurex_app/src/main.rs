@@ -88,6 +88,8 @@ fn main() {
     let avg_phase_t = boot_timeline.frames.iter().map(|f| f.phase_t).sum::<f32>() / boot_timeline.frames.len() as f32;
     let avg_bloom_intent = boot_intents.iter().map(|i| i.bloom_weight).sum::<f32>() / boot_intents.len() as f32;
     let avg_fog_intent = boot_intents.iter().map(|i| i.fog_weight).sum::<f32>() / boot_intents.len() as f32;
+    let peak_bloom_intent = boot_intents.iter().map(|i| i.bloom_weight).fold(0.0_f32, f32::max);
+    let avg_color_shift = boot_intents.iter().map(|i| i.color_shift).sum::<f32>() / boot_intents.len() as f32;
     let first_boot = &boot_frames[0];
     let last_boot = &boot_frames[boot_frames.len() - 1];
 
@@ -146,7 +148,8 @@ fn main() {
         avg_styled_glow, avg_distortion, avg_phase_t
     );
     println!(
-        "boot_intent_avg=bloom:{:.3} fog:{:.3}",
-        avg_bloom_intent, avg_fog_intent
+        "boot_intent_avg=bloom:{:.3} fog:{:.3} color_shift:{:.3}",
+        avg_bloom_intent, avg_fog_intent, avg_color_shift
     );
+    println!("boot_intent_peak_bloom={:.3}", peak_bloom_intent);
 }

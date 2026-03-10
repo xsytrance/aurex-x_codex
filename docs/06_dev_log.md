@@ -138,3 +138,10 @@ Boot render-intent channel layer added:
 • added `BootRenderIntent` derivation from boot timeline frames
 • mapped timeline style outputs into bloom/fog/distortion/color-shift intent channels
 • expanded `aurex_app` diagnostics to report averaged boot render intent metrics
+
+Phase 22
+Boot intent diagnostics expanded:
+
+• added additional render-intent validation test coverage for finite/range-safe channels
+• expanded runtime scaffold to report average color-shift intent and peak bloom intent
+• improved boot postfx observability for upcoming real render pass mapping

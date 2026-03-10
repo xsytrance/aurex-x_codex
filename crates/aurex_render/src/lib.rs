@@ -644,6 +644,28 @@ mod tests {
     }
 
     #[test]
+    fn render_intent_values_stay_in_reasonable_ranges() {
+        let timeline = BootAnimator::with_style_and_recipe(
+            BootAnimationConfig {
+                seed: 77,
+                frame_count: 16,
+                ..BootAnimationConfig::default()
+            },
+            BootStyleProfile::from_preset(BootStylePreset::CrystalPulse),
+            BootSequenceRecipe::QuickPulse,
+        )
+        .generate_timeline(0);
+
+        let intents = timeline.derive_render_intents();
+        for i in intents {
+            assert!(i.bloom_weight > 0.0);
+            assert!(i.fog_weight >= 0.0);
+            assert!(i.distortion_weight >= 0.0);
+            assert!(i.color_shift.is_finite());
+        }
+    }
+
+    #[test]
     fn recipe_changes_phase_distribution() {
         let cfg = BootAnimationConfig {
             seed: 12,
