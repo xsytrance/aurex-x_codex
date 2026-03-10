@@ -110,3 +110,10 @@ Boot timeline phase model added:
 • added `BootPhase` and `BootTimeline` contracts for Ignition/PulseLock/Reveal sequencing
 • added timeline phase-count verification test in `aurex_render`
 • expanded `aurex_app` diagnostics to print boot phase distribution per generated sequence
+
+Phase 18
+Boot style profile layer added:
+
+• added `BootStyleProfile` with phase-specific intensity/hue/distortion envelopes
+• applied style envelopes into boot timeline generation (`styled_glow`, `styled_hue`, `distortion_weight`)
+• expanded `aurex_app` diagnostics with averaged styled boot metrics

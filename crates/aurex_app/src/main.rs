@@ -76,6 +76,8 @@ fn main() {
     let boot_frames = boot_animator.generate_frames(clock.sim_tick.0);
     let boot_timeline = boot_animator.generate_timeline(clock.sim_tick.0);
     let (phase_ignition, phase_pulse_lock, phase_reveal) = boot_timeline.phase_counts();
+    let avg_styled_glow = boot_timeline.frames.iter().map(|f| f.styled_glow).sum::<f32>() / boot_timeline.frames.len() as f32;
+    let avg_distortion = boot_timeline.frames.iter().map(|f| f.distortion_weight).sum::<f32>() / boot_timeline.frames.len() as f32;
     let first_boot = &boot_frames[0];
     let last_boot = &boot_frames[boot_frames.len() - 1];
 
@@ -126,5 +128,9 @@ fn main() {
     println!(
         "boot_phases=Ignition:{} PulseLock:{} Reveal:{}",
         phase_ignition, phase_pulse_lock, phase_reveal
+    );
+    println!(
+        "boot_style_avg=glow:{:.3} distortion:{:.3}",
+        avg_styled_glow, avg_distortion
     );
 }

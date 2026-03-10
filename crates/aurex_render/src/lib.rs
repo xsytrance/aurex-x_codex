@@ -161,10 +161,59 @@ pub enum BootPhase {
     Reveal,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PhaseStyle {
+    pub intensity_mul: f32,
+    pub hue_bias: f32,
+    pub distortion_weight: f32,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BootStyleProfile {
+    pub ignition: PhaseStyle,
+    pub pulse_lock: PhaseStyle,
+    pub reveal: PhaseStyle,
+}
+
+impl Default for BootStyleProfile {
+    fn default() -> Self {
+        Self {
+            ignition: PhaseStyle {
+                intensity_mul: 0.85,
+                hue_bias: -12.0,
+                distortion_weight: 0.55,
+            },
+            pulse_lock: PhaseStyle {
+                intensity_mul: 1.15,
+                hue_bias: 18.0,
+                distortion_weight: 0.8,
+            },
+            reveal: PhaseStyle {
+                intensity_mul: 1.0,
+                hue_bias: 4.0,
+                distortion_weight: 0.3,
+            },
+        }
+    }
+}
+
+impl BootStyleProfile {
+    pub fn style_for(&self, phase: BootPhase) -> PhaseStyle {
+        match phase {
+            BootPhase::Ignition => self.ignition,
+            BootPhase::PulseLock => self.pulse_lock,
+            BootPhase::Reveal => self.reveal,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct BootTimelineFrame {
     pub phase: BootPhase,
     pub frame: BootFrame,
+    pub styled_glow: f32,
+    pub styled_hue: f32,
+    pub distortion_weight: f32,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -193,11 +242,19 @@ impl BootTimeline {
 #[derive(Debug, Clone)]
 pub struct BootAnimator {
     config: BootAnimationConfig,
+    style: BootStyleProfile,
 }
 
 impl BootAnimator {
     pub fn new(config: BootAnimationConfig) -> Self {
-        Self { config }
+        Self {
+            config,
+            style: BootStyleProfile::default(),
+        }
+    }
+
+    pub fn with_style(config: BootAnimationConfig, style: BootStyleProfile) -> Self {
+        Self { config, style }
     }
 
     pub fn generate_frames(&self, start_tick: u64) -> Vec<BootFrame> {
@@ -238,7 +295,15 @@ impl BootAnimator {
                     BootPhase::Reveal
                 };
 
-                BootTimelineFrame { phase, frame }
+                let phase_style = self.style.style_for(phase);
+
+                BootTimelineFrame {
+                    phase,
+                    styled_glow: frame.glow * phase_style.intensity_mul,
+                    styled_hue: frame.hue_shift + phase_style.hue_bias,
+                    distortion_weight: phase_style.distortion_weight,
+                    frame,
+                }
             })
             .collect();
 
@@ -336,5 +401,27 @@ mod tests {
         .generate_frames(0);
 
         assert_ne!(a, b);
+    }
+
+    #[test]
+    fn phase_style_profile_is_applied() {
+        let style = BootStyleProfile::default();
+        let timeline = BootAnimator::with_style(
+            BootAnimationConfig {
+                seed: 3,
+                frame_count: 12,
+                ..BootAnimationConfig::default()
+            },
+            style.clone(),
+        )
+        .generate_timeline(5);
+
+        let first = &timeline.frames[0];
+        let last = &timeline.frames[timeline.frames.len() - 1];
+
+        assert_eq!(first.phase, BootPhase::Ignition);
+        assert_eq!(first.distortion_weight, style.ignition.distortion_weight);
+        assert_eq!(last.phase, BootPhase::Reveal);
+        assert_eq!(last.distortion_weight, style.reveal.distortion_weight);
     }
 }
