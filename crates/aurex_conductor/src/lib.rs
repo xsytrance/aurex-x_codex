@@ -23,3 +23,24 @@ impl ConductorClock {
         self.sim_tick.0 += 1;
     }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConductorStage {
+    PreTick,
+    SimTick,
+    AudioTick,
+    RenderPrepare,
+    Render,
+    Present,
+    PostFrame,
+}
+
+pub const MAIN_LOOP_STAGES: [ConductorStage; 7] = [
+    ConductorStage::PreTick,
+    ConductorStage::SimTick,
+    ConductorStage::AudioTick,
+    ConductorStage::RenderPrepare,
+    ConductorStage::Render,
+    ConductorStage::Present,
+    ConductorStage::PostFrame,
+];

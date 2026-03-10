@@ -68,3 +68,10 @@ ADR-0006 accepted and documented:
 • selected Aurex-owned deterministic ECS authority path in `aurex_ecs`
 • defined command-buffer mutation boundary recommendations for runtime API
 • inserted M1.5 ECS hardening milestone before broader rendering feature expansion
+
+Phase 12
+Implemented M1.5 scaffolding in code:
+
+• added deterministic ECS command buffer + sorted command application path in `aurex_ecs`
+• added initial ECS invariants tests for ordering/reproducibility
+• added conductor stage enum/constants in `aurex_conductor` aligned with architecture stage graph
