@@ -180,3 +180,10 @@ Boot screen presentation contract added:
 • added `BootScreenSequence`/`BootScreenFrame` generation in `aurex_render` to drive title reveal composition for first real GPU pass
 • wired runtime diagnostics to emit `AUREX-X` boot title/subtitle and first/latest title reveal metrics
 • added test coverage validating monotonic title reveal progression across generated boot timeline
+
+Phase 28
+Renderer M1 bootstrap execution map added:
+
+• added `RenderBootstrapPlan` contract with explicit step-level readiness for first real `wgpu` window path
+• exposed step map summary and ready/total counts in `aurex_app` diagnostics for implementation tracking
+• added tests to guarantee deterministic bootstrap-step contract mapping by backend mode

@@ -78,6 +78,80 @@ impl RenderBackendReadiness {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenderBootstrapStep {
+    InitWindow,
+    InitWgpuInstance,
+    InitSurface,
+    RequestDevice,
+    ConfigureSwapchain,
+    UploadBootScreenQuad,
+    DrawBootScreen,
+}
+
+impl RenderBootstrapStep {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            RenderBootstrapStep::InitWindow => "InitWindow",
+            RenderBootstrapStep::InitWgpuInstance => "InitWgpuInstance",
+            RenderBootstrapStep::InitSurface => "InitSurface",
+            RenderBootstrapStep::RequestDevice => "RequestDevice",
+            RenderBootstrapStep::ConfigureSwapchain => "ConfigureSwapchain",
+            RenderBootstrapStep::UploadBootScreenQuad => "UploadBootScreenQuad",
+            RenderBootstrapStep::DrawBootScreen => "DrawBootScreen",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenderBootstrapTaskStatus {
+    pub step: RenderBootstrapStep,
+    pub ready: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenderBootstrapPlan {
+    pub tasks: Vec<RenderBootstrapTaskStatus>,
+}
+
+impl RenderBootstrapPlan {
+    pub fn for_mode(mode: RenderBackendMode) -> Self {
+        let ready = matches!(mode, RenderBackendMode::WgpuPlanned);
+        let steps = [
+            RenderBootstrapStep::InitWindow,
+            RenderBootstrapStep::InitWgpuInstance,
+            RenderBootstrapStep::InitSurface,
+            RenderBootstrapStep::RequestDevice,
+            RenderBootstrapStep::ConfigureSwapchain,
+            RenderBootstrapStep::UploadBootScreenQuad,
+            RenderBootstrapStep::DrawBootScreen,
+        ];
+
+        Self {
+            tasks: steps
+                .into_iter()
+                .map(|step| RenderBootstrapTaskStatus { step, ready })
+                .collect(),
+        }
+    }
+
+    pub fn ready_count(&self) -> usize {
+        self.tasks.iter().filter(|t| t.ready).count()
+    }
+
+    pub fn total_count(&self) -> usize {
+        self.tasks.len()
+    }
+
+    pub fn summary(&self) -> String {
+        self.tasks
+            .iter()
+            .map(|task| format!("{}:{}", task.step.as_str(), task.ready))
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct RenderFrameStats {
     pub frame_id: u64,
@@ -669,6 +743,17 @@ mod tests {
         assert_eq!(first.frame_id, 1);
         assert_eq!(second.frame_id, 2);
         assert_eq!(first.stages_executed, 3);
+    }
+
+    #[test]
+    fn bootstrap_plan_matches_backend_mode() {
+        let mock = RenderBootstrapPlan::for_mode(RenderBackendMode::Mock);
+        assert_eq!(mock.ready_count(), 0);
+        assert_eq!(mock.total_count(), 7);
+
+        let planned = RenderBootstrapPlan::for_mode(RenderBackendMode::WgpuPlanned);
+        assert_eq!(planned.ready_count(), planned.total_count());
+        assert!(planned.summary().contains("DrawBootScreen:true"));
     }
 
     #[test]

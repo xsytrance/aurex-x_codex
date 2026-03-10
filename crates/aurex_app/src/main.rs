@@ -6,7 +6,7 @@ use aurex_postfx::BloomSettings;
 use aurex_render::{
     BootAnimationConfig, BootAnimator, BootPostFxTrack, BootSequenceRecipe, BootStylePreset,
     BootStyleProfile, CameraRig, MockRenderer, RENDER_MAIN_STAGES, RenderBackendMode,
-    RenderBackendReadiness, RenderBootstrapConfig, RenderStage,
+    RenderBackendReadiness, RenderBootstrapConfig, RenderBootstrapPlan, RenderStage,
 };
 use aurex_shape_synth::{PrimitiveType, ShapeDescriptor};
 
@@ -77,6 +77,7 @@ fn runtime_diagnostics_report() -> String {
     let transition = renderer.transition_backend_mode(RenderBackendMode::WgpuPlanned);
     let backend_after = renderer.backend_status();
     let render_readiness = RenderBackendReadiness::for_mode(backend_after.mode);
+    let render_bootstrap_plan = RenderBootstrapPlan::for_mode(backend_after.mode);
 
     let boot_style = BootStyleProfile::from_preset(BootStylePreset::NeonStorm);
     let boot_recipe = BootSequenceRecipe::GrandReveal;
@@ -194,6 +195,15 @@ fn runtime_diagnostics_report() -> String {
         render_readiness.has_gpu_backend,
         render_readiness.can_present
     ));
+    lines.push(format!(
+        "render_bootstrap_ready_steps={}/{}",
+        render_bootstrap_plan.ready_count(),
+        render_bootstrap_plan.total_count()
+    ));
+    lines.push(format!(
+        "render_bootstrap_step_map={}",
+        render_bootstrap_plan.summary()
+    ));
     lines.push(format!("boot_frame_count={}", boot_frames.len()));
     lines.push(format!(
         "boot_first=tick:{} radius:{:.3} glow:{:.3} hue:{:.2}",
@@ -292,6 +302,8 @@ render_backend_before=Mock backend_ready_before=true
 render_backend_transition=Transitioned
 render_backend_after=WgpuPlanned backend_ready_after=false
 render_m1_readiness=windowing:true gpu:true can_present:true
+render_bootstrap_ready_steps=7/7
+render_bootstrap_step_map=InitWindow:true,InitWgpuInstance:true,InitSurface:true,RequestDevice:true,ConfigureSwapchain:true,UploadBootScreenQuad:true,DrawBootScreen:true
 boot_frame_count=12
 boot_first=tick:1 radius:1.021 glow:0.931 hue:36.79
 boot_last=tick:12 radius:1.040 glow:0.987 hue:103.46
