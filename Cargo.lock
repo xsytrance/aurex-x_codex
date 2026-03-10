@@ -6,6 +6,7 @@ version = 4
 name = "aurex_app"
 version = "0.1.0"
 dependencies = [
+ "aurex_audio",
  "aurex_conductor",
  "aurex_core",
  "aurex_ecs",
@@ -13,6 +14,13 @@ dependencies = [
  "aurex_postfx",
  "aurex_render",
  "aurex_shape_synth",
+]
+
+[[package]]
+name = "aurex_audio"
+version = "0.1.0"
+dependencies = [
+ "aurex_core",
 ]
 
 [[package]]

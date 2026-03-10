@@ -1,3 +1,4 @@
+use aurex_audio::{AudioBackendMode, MockAudioEngine};
 use aurex_conductor::{ConductorClock, ConductorStage, MAIN_LOOP_STAGES, execute_frame};
 use aurex_ecs::{CommandBuffer, EcsCommand, EcsWorld, EntityId, Transform2p5D};
 use aurex_lighting::{LightDescriptor, LightKind};
@@ -35,6 +36,12 @@ fn runtime_diagnostics_report() -> String {
     };
 
     let bloom = BloomSettings::default();
+
+    let mut audio = MockAudioEngine::default();
+    let audio_before = audio.status();
+    let audio_transition = audio.transition_mode(AudioBackendMode::CpalPlanned);
+    let audio_after = audio.status();
+    let audio_probe = audio.next_beat();
 
     let mut world = EcsWorld::default();
     let mut commands = CommandBuffer::default();
@@ -128,6 +135,19 @@ fn runtime_diagnostics_report() -> String {
         light.kind, bloom.intensity
     ));
     lines.push(format!("conductor_stage_count={}", MAIN_LOOP_STAGES.len()));
+    lines.push(format!(
+        "audio_backend_before={:?} audio_ready_before={}",
+        audio_before.mode, audio_before.ready
+    ));
+    lines.push(format!("audio_backend_transition={:?}", audio_transition));
+    lines.push(format!(
+        "audio_backend_after={:?} audio_ready_after={}",
+        audio_after.mode, audio_after.ready
+    ));
+    lines.push(format!(
+        "audio_probe=tick:{} pulse:{:.3}",
+        audio_probe.tick.0, audio_probe.pulse
+    ));
     lines.push(format!("ecs_entity_count={}", world.entity_count()));
     lines.push(format!(
         "render_bootstrap={} {}x{}",
@@ -214,7 +234,7 @@ mod tests {
 
     #[test]
     fn diagnostics_report_matches_expected_snapshot() {
-        let expected = "Aurex runtime scaffold initialized.\nframe=1 tick=1\ncamera_fov=60\nshape_count=3\nlight_kind=Pulse bloom_intensity=0.25\nconductor_stage_count=7\necs_entity_count=2\nrender_bootstrap=Aurex-X 1280x720\nrender_stage_count=3\nrender_stages=RenderPrepare/Render/Present\nrender_frame_id=1 render_stages_executed=3\nconductor_trace_stages=7\nrender_stages_seen_by_conductor=3\nrender_backend_before=Mock backend_ready_before=true\nrender_backend_transition=Transitioned\nrender_backend_after=WgpuPlanned backend_ready_after=false\nboot_frame_count=12\nboot_first=tick:1 radius:1.021 glow:0.931 hue:36.79\nboot_last=tick:12 radius:1.040 glow:0.987 hue:103.46\nboot_phases=Ignition:5 PulseLock:3 Reveal:4\nboot_style_preset=NeonStorm\nboot_sequence_recipe=GrandReveal\nboot_style_avg=glow:0.914 distortion:0.543 phase_t:0.375\nboot_intent_avg=bloom:0.894 fog:0.229 color_shift:98.395\nboot_intent_peak_bloom=1.179\nboot_postfx_avg=bloom:0.894 fog:0.229 distortion:0.543 color_shift:98.395\nboot_postfx_peak_bloom=1.179\nboot_postfx_first=tick:1 bloom:0.752 fog:0.050\nboot_postfx_latest=tick:12 bloom:1.108 fog:0.560";
+        let expected = "Aurex runtime scaffold initialized.\nframe=1 tick=1\ncamera_fov=60\nshape_count=3\nlight_kind=Pulse bloom_intensity=0.25\nconductor_stage_count=7\naudio_backend_before=MockSilence audio_ready_before=true\naudio_backend_transition=Transitioned\naudio_backend_after=CpalPlanned audio_ready_after=false\naudio_probe=tick:1 pulse:0.854\necs_entity_count=2\nrender_bootstrap=Aurex-X 1280x720\nrender_stage_count=3\nrender_stages=RenderPrepare/Render/Present\nrender_frame_id=1 render_stages_executed=3\nconductor_trace_stages=7\nrender_stages_seen_by_conductor=3\nrender_backend_before=Mock backend_ready_before=true\nrender_backend_transition=Transitioned\nrender_backend_after=WgpuPlanned backend_ready_after=false\nboot_frame_count=12\nboot_first=tick:1 radius:1.021 glow:0.931 hue:36.79\nboot_last=tick:12 radius:1.040 glow:0.987 hue:103.46\nboot_phases=Ignition:5 PulseLock:3 Reveal:4\nboot_style_preset=NeonStorm\nboot_sequence_recipe=GrandReveal\nboot_style_avg=glow:0.914 distortion:0.543 phase_t:0.375\nboot_intent_avg=bloom:0.894 fog:0.229 color_shift:98.395\nboot_intent_peak_bloom=1.179\nboot_postfx_avg=bloom:0.894 fog:0.229 distortion:0.543 color_shift:98.395\nboot_postfx_peak_bloom=1.179\nboot_postfx_first=tick:1 bloom:0.752 fog:0.050\nboot_postfx_latest=tick:12 bloom:1.108 fog:0.560";
 
         assert_eq!(runtime_diagnostics_report(), expected);
     }

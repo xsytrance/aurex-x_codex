@@ -159,3 +159,10 @@ Boot PostFX track/query layer added:
 • added `BootPostFxTrack` for deterministic per-tick snapshot lookup
 • added track lookup tests for hit/miss/latest behavior
 • expanded runtime scaffold diagnostics with first/latest postfx snapshot summaries
+
+Phase 25
+Audio runtime scaffolding added:
+
+• added `aurex_audio` crate with backend mode/state contracts (`MockSilence`, `CpalPlanned`)
+• added deterministic audio clock + beat probe event for conductor/audio handshake diagnostics
+• expanded `aurex_app` diagnostics with audio backend transition and probe pulse output

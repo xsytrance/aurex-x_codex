@@ -13,3 +13,4 @@ aurex_render = { path = "../aurex_render" }
 aurex_shape_synth = { path = "../aurex_shape_synth" }
 aurex_lighting = { path = "../aurex_lighting" }
 aurex_postfx = { path = "../aurex_postfx" }
+aurex_audio = { path = "../aurex_audio" }
