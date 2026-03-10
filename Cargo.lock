@@ -3,5 +3,51 @@
 version = 4
 
 [[package]]
-name = "aurex-x_codex"
+name = "aurex_app"
+version = "0.1.0"
+dependencies = [
+ "aurex_conductor",
+ "aurex_core",
+ "aurex_ecs",
+ "aurex_lighting",
+ "aurex_postfx",
+ "aurex_render",
+ "aurex_shape_synth",
+]
+
+[[package]]
+name = "aurex_conductor"
+version = "0.1.0"
+dependencies = [
+ "aurex_core",
+]
+
+[[package]]
+name = "aurex_core"
+version = "0.1.0"
+
+[[package]]
+name = "aurex_ecs"
+version = "0.1.0"
+dependencies = [
+ "aurex_core",
+]
+
+[[package]]
+name = "aurex_lighting"
+version = "0.1.0"
+
+[[package]]
+name = "aurex_postfx"
+version = "0.1.0"
+
+[[package]]
+name = "aurex_render"
+version = "0.1.0"
+dependencies = [
+ "aurex_core",
+]
+
+[[package]]
+name = "aurex_shape_synth"
 version = "0.1.0"
