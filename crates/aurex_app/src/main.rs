@@ -3,7 +3,8 @@ use aurex_ecs::{CommandBuffer, EcsCommand, EcsWorld, EntityId, Transform2p5D};
 use aurex_lighting::{LightDescriptor, LightKind};
 use aurex_postfx::BloomSettings;
 use aurex_render::{
-    CameraRig, MockRenderer, RenderBootstrapConfig, RenderStage, RENDER_MAIN_STAGES,
+    CameraRig, MockRenderer, RenderBackendMode, RenderBootstrapConfig, RenderStage,
+    RENDER_MAIN_STAGES,
 };
 use aurex_shape_synth::{PrimitiveType, ShapeDescriptor};
 
@@ -56,12 +57,16 @@ fn main() {
 
     let mut visited = Vec::new();
     let trace = execute_frame(&mut clock, |stage| {
-        if matches!(stage, ConductorStage::RenderPrepare | ConductorStage::Render | ConductorStage::Present)
-        {
+        if matches!(
+            stage,
+            ConductorStage::RenderPrepare | ConductorStage::Render | ConductorStage::Present
+        ) {
             visited.push(stage);
         }
     });
-    let backend = renderer.backend_status();
+    let backend_before = renderer.backend_status();
+    let transition = renderer.transition_backend_mode(RenderBackendMode::WgpuPlanned);
+    let backend_after = renderer.backend_status();
 
     println!("Aurex runtime scaffold initialized.");
     println!("frame={} tick={}", clock.frame_index.0, clock.sim_tick.0);
@@ -89,5 +94,13 @@ fn main() {
     );
     println!("conductor_trace_stages={}", trace.stages.len());
     println!("render_stages_seen_by_conductor={}", visited.len());
-    println!("render_backend={:?} backend_ready={}", backend.mode, backend.ready);
+    println!(
+        "render_backend_before={:?} backend_ready_before={}",
+        backend_before.mode, backend_before.ready
+    );
+    println!("render_backend_transition={:?}", transition);
+    println!(
+        "render_backend_after={:?} backend_ready_after={}",
+        backend_after.mode, backend_after.ready
+    );
 }

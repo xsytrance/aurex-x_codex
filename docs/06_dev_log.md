@@ -89,3 +89,10 @@ Conductor/render integration scaffolding added:
 • added `execute_frame` trace path in `aurex_conductor` for canonical stage execution verification
 • added render backend mode/status contracts in `aurex_render` (`Mock`, `WgpuPlanned`)
 • updated `aurex_app` diagnostics to confirm conductor-render stage handshake
+
+Phase 15
+Render backend transition contract scaffolding added:
+
+• added explicit backend transition API in `aurex_render` (`transition_backend_mode`)
+• added readiness state transitions for `Mock` -> `WgpuPlanned`
+• expanded `aurex_app` runtime diagnostics to print backend transition lifecycle

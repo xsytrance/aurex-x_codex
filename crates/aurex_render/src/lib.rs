@@ -36,6 +36,13 @@ pub struct RenderBootstrapConfig {
     pub backend_mode: RenderBackendMode,
 }
 
+impl RenderBootstrapConfig {
+    pub fn with_backend_mode(mut self, mode: RenderBackendMode) -> Self {
+        self.backend_mode = mode;
+        self
+    }
+}
+
 impl Default for RenderBootstrapConfig {
     fn default() -> Self {
         Self {
@@ -59,17 +66,26 @@ pub struct RenderBackendStatus {
     pub ready: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackendTransition {
+    Noop,
+    Transitioned,
+}
+
 #[derive(Debug)]
 pub struct MockRenderer {
     config: RenderBootstrapConfig,
     frames_rendered: u64,
+    backend_ready: bool,
 }
 
 impl MockRenderer {
     pub fn new(config: RenderBootstrapConfig) -> Self {
+        let backend_ready = config.backend_mode == RenderBackendMode::Mock;
         Self {
             config,
             frames_rendered: 0,
+            backend_ready,
         }
     }
 
@@ -80,8 +96,18 @@ impl MockRenderer {
     pub fn backend_status(&self) -> RenderBackendStatus {
         RenderBackendStatus {
             mode: self.config.backend_mode,
-            ready: self.config.backend_mode == RenderBackendMode::Mock,
+            ready: self.backend_ready,
         }
+    }
+
+    pub fn transition_backend_mode(&mut self, mode: RenderBackendMode) -> BackendTransition {
+        if self.config.backend_mode == mode {
+            return BackendTransition::Noop;
+        }
+
+        self.config.backend_mode = mode;
+        self.backend_ready = mode == RenderBackendMode::Mock;
+        BackendTransition::Transitioned
     }
 
     pub fn run_frame(&mut self, stages: &[RenderStage]) -> RenderFrameStats {
@@ -122,5 +148,15 @@ mod tests {
 
         assert_eq!(status.mode, RenderBackendMode::Mock);
         assert!(status.ready);
+    }
+
+    #[test]
+    fn transition_to_wgpu_planned_sets_not_ready() {
+        let mut renderer = MockRenderer::new(RenderBootstrapConfig::default());
+        let t = renderer.transition_backend_mode(RenderBackendMode::WgpuPlanned);
+
+        assert_eq!(t, BackendTransition::Transitioned);
+        assert_eq!(renderer.backend_status().mode, RenderBackendMode::WgpuPlanned);
+        assert!(!renderer.backend_status().ready);
     }
 }
