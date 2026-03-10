@@ -395,6 +395,22 @@ impl BootPostFxTrack {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BootScreenFrame {
+    pub tick: u64,
+    pub title_progress: f32,
+    pub title_glow: f32,
+    pub subtitle_opacity: f32,
+    pub glyphs_lit: usize,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BootScreenSequence {
+    pub title_text: String,
+    pub subtitle_text: String,
+    pub frames: Vec<BootScreenFrame>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct BootTimeline {
     pub frames: Vec<BootTimelineFrame>,
@@ -450,6 +466,44 @@ impl BootTimeline {
                 color_grade_shift: intent.color_shift,
             })
             .collect()
+    }
+
+    pub fn to_boot_screen_sequence(
+        &self,
+        title_text: &str,
+        subtitle_text: &str,
+    ) -> BootScreenSequence {
+        let glyph_count = title_text.chars().count().max(1);
+        let frames = self
+            .frames
+            .iter()
+            .map(|f| {
+                let reveal_weight = match f.phase {
+                    BootPhase::Ignition => 0.2,
+                    BootPhase::PulseLock => 0.65,
+                    BootPhase::Reveal => 1.0,
+                };
+                let title_progress = (f.phase_t * reveal_weight).clamp(0.0, 1.0);
+                let glyphs_lit =
+                    ((title_progress * glyph_count as f32).ceil() as usize).clamp(1, glyph_count);
+                let title_glow = (f.styled_glow * (0.55 + reveal_weight * 0.45)).clamp(0.0, 2.0);
+                let subtitle_opacity = (0.2 + title_progress * 0.8).clamp(0.0, 1.0);
+
+                BootScreenFrame {
+                    tick: f.frame.tick,
+                    title_progress,
+                    title_glow,
+                    subtitle_opacity,
+                    glyphs_lit,
+                }
+            })
+            .collect();
+
+        BootScreenSequence {
+            title_text: title_text.to_string(),
+            subtitle_text: subtitle_text.to_string(),
+            frames,
+        }
     }
 
     pub fn aggregate_postfx(&self) -> BootPostFxAggregate {
@@ -783,6 +837,30 @@ mod tests {
             assert!(i.distortion_weight >= 0.0);
             assert!(i.color_shift.is_finite());
         }
+    }
+
+    #[test]
+    fn boot_screen_sequence_tracks_title_reveal() {
+        let timeline = BootAnimator::with_style_and_recipe(
+            BootAnimationConfig {
+                seed: 1337,
+                frame_count: 12,
+                ..BootAnimationConfig::default()
+            },
+            BootStyleProfile::from_preset(BootStylePreset::NeonStorm),
+            BootSequenceRecipe::GrandReveal,
+        )
+        .generate_timeline(1);
+
+        let sequence = timeline.to_boot_screen_sequence("AUREX-X", "Booting runtime");
+        assert_eq!(sequence.title_text, "AUREX-X");
+        assert_eq!(sequence.frames.len(), timeline.frames.len());
+
+        let first = sequence.frames.first().unwrap();
+        let last = sequence.frames.last().unwrap();
+        assert!(first.glyphs_lit >= 1);
+        assert!(last.glyphs_lit >= first.glyphs_lit);
+        assert!(last.subtitle_opacity >= first.subtitle_opacity);
     }
 
     #[test]

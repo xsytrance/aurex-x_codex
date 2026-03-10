@@ -97,8 +97,11 @@ fn runtime_diagnostics_report() -> String {
     let boot_intents = boot_timeline.derive_render_intents();
     let boot_postfx = boot_timeline.aggregate_postfx();
     let postfx_track = BootPostFxTrack::from_timeline(&boot_timeline);
+    let boot_screen = boot_timeline.to_boot_screen_sequence("AUREX-X", "Prime Pulse online");
     let first_postfx = postfx_track.snapshot_for_tick(first_boot.tick).unwrap();
     let latest_postfx = postfx_track.latest_snapshot().unwrap();
+    let first_screen = boot_screen.frames.first().unwrap();
+    let latest_screen = boot_screen.frames.last().unwrap();
     let avg_styled_glow = boot_timeline
         .frames
         .iter()
@@ -206,6 +209,11 @@ fn runtime_diagnostics_report() -> String {
     ));
     lines.push(format!("boot_style_preset={:?}", boot_style.preset));
     lines.push(format!("boot_sequence_recipe={:?}", boot_recipe));
+    lines.push(format!("boot_screen_title={}", boot_screen.title_text));
+    lines.push(format!(
+        "boot_screen_subtitle={}",
+        boot_screen.subtitle_text
+    ));
     lines.push(format!(
         "boot_style_avg=glow:{:.3} distortion:{:.3} phase_t:{:.3}",
         avg_styled_glow, avg_distortion, avg_phase_t
@@ -225,6 +233,20 @@ fn runtime_diagnostics_report() -> String {
     lines.push(format!(
         "boot_postfx_peak_bloom={:.3}",
         boot_postfx.peak_bloom
+    ));
+    lines.push(format!(
+        "boot_screen_first=tick:{} progress:{:.3} glow:{:.3} glyphs:{}",
+        first_screen.tick,
+        first_screen.title_progress,
+        first_screen.title_glow,
+        first_screen.glyphs_lit
+    ));
+    lines.push(format!(
+        "boot_screen_latest=tick:{} progress:{:.3} glow:{:.3} glyphs:{}",
+        latest_screen.tick,
+        latest_screen.title_progress,
+        latest_screen.title_glow,
+        latest_screen.glyphs_lit
     ));
     lines.push(format!(
         "boot_postfx_first=tick:{} bloom:{:.3} fog:{:.3}",
@@ -248,7 +270,45 @@ mod tests {
 
     #[test]
     fn diagnostics_report_matches_expected_snapshot() {
-        let expected = "Aurex runtime scaffold initialized.\nframe=1 tick=1\ncamera_fov=60\nshape_count=3\nlight_kind=Pulse bloom_intensity=0.25\nconductor_stage_count=7\naudio_backend_before=MockSilence audio_ready_before=true\naudio_backend_transition=Transitioned\naudio_backend_after=CpalPlanned audio_ready_after=false\naudio_probe=tick:1 pulse:0.854\naudio_m1_readiness=device_io:true stream_graph:true can_emit_sound:true\necs_entity_count=2\nrender_bootstrap=Aurex-X 1280x720\nrender_stage_count=3\nrender_stages=RenderPrepare/Render/Present\nrender_frame_id=1 render_stages_executed=3\nconductor_trace_stages=7\nrender_stages_seen_by_conductor=3\nrender_backend_before=Mock backend_ready_before=true\nrender_backend_transition=Transitioned\nrender_backend_after=WgpuPlanned backend_ready_after=false\nrender_m1_readiness=windowing:true gpu:true can_present:true\nboot_frame_count=12\nboot_first=tick:1 radius:1.021 glow:0.931 hue:36.79\nboot_last=tick:12 radius:1.040 glow:0.987 hue:103.46\nboot_phases=Ignition:5 PulseLock:3 Reveal:4\nboot_style_preset=NeonStorm\nboot_sequence_recipe=GrandReveal\nboot_style_avg=glow:0.914 distortion:0.543 phase_t:0.375\nboot_intent_avg=bloom:0.894 fog:0.229 color_shift:98.395\nboot_intent_peak_bloom=1.179\nboot_postfx_avg=bloom:0.894 fog:0.229 distortion:0.543 color_shift:98.395\nboot_postfx_peak_bloom=1.179\nboot_postfx_first=tick:1 bloom:0.752 fog:0.050\nboot_postfx_latest=tick:12 bloom:1.108 fog:0.560";
+        let expected = "Aurex runtime scaffold initialized.
+frame=1 tick=1
+camera_fov=60
+shape_count=3
+light_kind=Pulse bloom_intensity=0.25
+conductor_stage_count=7
+audio_backend_before=MockSilence audio_ready_before=true
+audio_backend_transition=Transitioned
+audio_backend_after=CpalPlanned audio_ready_after=false
+audio_probe=tick:1 pulse:0.854
+audio_m1_readiness=device_io:true stream_graph:true can_emit_sound:true
+ecs_entity_count=2
+render_bootstrap=Aurex-X 1280x720
+render_stage_count=3
+render_stages=RenderPrepare/Render/Present
+render_frame_id=1 render_stages_executed=3
+conductor_trace_stages=7
+render_stages_seen_by_conductor=3
+render_backend_before=Mock backend_ready_before=true
+render_backend_transition=Transitioned
+render_backend_after=WgpuPlanned backend_ready_after=false
+render_m1_readiness=windowing:true gpu:true can_present:true
+boot_frame_count=12
+boot_first=tick:1 radius:1.021 glow:0.931 hue:36.79
+boot_last=tick:12 radius:1.040 glow:0.987 hue:103.46
+boot_phases=Ignition:5 PulseLock:3 Reveal:4
+boot_style_preset=NeonStorm
+boot_sequence_recipe=GrandReveal
+boot_screen_title=AUREX-X
+boot_screen_subtitle=Prime Pulse online
+boot_style_avg=glow:0.914 distortion:0.543 phase_t:0.375
+boot_intent_avg=bloom:0.894 fog:0.229 color_shift:98.395
+boot_intent_peak_bloom=1.179
+boot_postfx_avg=bloom:0.894 fog:0.229 distortion:0.543 color_shift:98.395
+boot_postfx_peak_bloom=1.179
+boot_screen_first=tick:1 progress:0.000 glow:0.566 glyphs:1
+boot_screen_latest=tick:12 progress:0.750 glow:1.108 glyphs:6
+boot_postfx_first=tick:1 bloom:0.752 fog:0.050
+boot_postfx_latest=tick:12 bloom:1.108 fog:0.560";
 
         assert_eq!(runtime_diagnostics_report(), expected);
     }

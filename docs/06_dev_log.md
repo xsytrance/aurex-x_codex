@@ -173,3 +173,10 @@ M1 readiness contracts expanded:
 • added explicit render backend readiness contract (`RenderBackendReadiness`) in `aurex_render`
 • added explicit audio backend readiness contract (`AudioBackendReadiness`) in `aurex_audio`
 • expanded `aurex_app` diagnostics with render/audio M1 readiness booleans for immediate implementation gating
+
+Phase 27
+Boot screen presentation contract added:
+
+• added `BootScreenSequence`/`BootScreenFrame` generation in `aurex_render` to drive title reveal composition for first real GPU pass
+• wired runtime diagnostics to emit `AUREX-X` boot title/subtitle and first/latest title reveal metrics
+• added test coverage validating monotonic title reveal progression across generated boot timeline

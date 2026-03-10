@@ -362,6 +362,7 @@ Completed:
 In progress / next:
 
 - M1 boot + window + camera (using ADR-0005 backend constraints)
+- M1 boot screen composition contract landed (`AUREX-X` title reveal sequence data available for renderer integration)
 - M1 audio runtime scaffolding landed (`aurex_audio` contracts + diagnostics); real device output remains pending backend integration
 - M1.5 ECS authority contract hardening (ADR-0006)
 - M2 procedural shape rendering path
