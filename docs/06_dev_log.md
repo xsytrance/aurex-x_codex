@@ -131,3 +131,10 @@ Boot sequence recipe layer added:
 • added `BootSequenceRecipe` and ratio/tempo recipe config for boot pacing
 • added `BootAnimator::with_style_and_recipe` for combined style+sequence authoring
 • wired runtime scaffold to use `GrandReveal` recipe and print active boot recipe
+
+Phase 21
+Boot render-intent channel layer added:
+
+• added `BootRenderIntent` derivation from boot timeline frames
+• mapped timeline style outputs into bloom/fog/distortion/color-shift intent channels
+• expanded `aurex_app` diagnostics to report averaged boot render intent metrics

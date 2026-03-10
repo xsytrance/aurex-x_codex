@@ -324,6 +324,14 @@ pub struct BootTimelineFrame {
     pub distortion_weight: f32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BootRenderIntent {
+    pub bloom_weight: f32,
+    pub distortion_weight: f32,
+    pub fog_weight: f32,
+    pub color_shift: f32,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct BootTimeline {
     pub frames: Vec<BootTimelineFrame>,
@@ -344,6 +352,26 @@ impl BootTimeline {
         }
 
         (ignition, pulse_lock, reveal)
+    }
+
+    pub fn derive_render_intents(&self) -> Vec<BootRenderIntent> {
+        self.frames
+            .iter()
+            .map(|f| {
+                let (phase_bloom, phase_fog) = match f.phase {
+                    BootPhase::Ignition => (0.85, 0.25),
+                    BootPhase::PulseLock => (1.15, 0.5),
+                    BootPhase::Reveal => (1.0, 0.7),
+                };
+
+                BootRenderIntent {
+                    bloom_weight: f.styled_glow * phase_bloom,
+                    distortion_weight: f.distortion_weight,
+                    fog_weight: (0.2 + f.phase_t * 0.8) * phase_fog,
+                    color_shift: f.styled_hue,
+                }
+            })
+            .collect()
     }
 }
 
@@ -595,6 +623,24 @@ mod tests {
 
         assert_ne!(classic.frames[0].styled_hue, storm.frames[0].styled_hue);
         assert_ne!(classic.frames[0].styled_glow, storm.frames[0].styled_glow);
+    }
+
+    #[test]
+    fn render_intents_are_derived_for_each_frame() {
+        let timeline = BootAnimator::with_style_and_recipe(
+            BootAnimationConfig {
+                seed: 44,
+                frame_count: 12,
+                ..BootAnimationConfig::default()
+            },
+            BootStyleProfile::from_preset(BootStylePreset::NeonStorm),
+            BootSequenceRecipe::GrandReveal,
+        )
+        .generate_timeline(0);
+
+        let intents = timeline.derive_render_intents();
+        assert_eq!(intents.len(), timeline.frames.len());
+        assert!(intents.iter().all(|i| i.bloom_weight > 0.0));
     }
 
     #[test]

@@ -82,9 +82,12 @@ fn main() {
     let boot_frames = boot_animator.generate_frames(clock.sim_tick.0);
     let boot_timeline = boot_animator.generate_timeline(clock.sim_tick.0);
     let (phase_ignition, phase_pulse_lock, phase_reveal) = boot_timeline.phase_counts();
+    let boot_intents = boot_timeline.derive_render_intents();
     let avg_styled_glow = boot_timeline.frames.iter().map(|f| f.styled_glow).sum::<f32>() / boot_timeline.frames.len() as f32;
     let avg_distortion = boot_timeline.frames.iter().map(|f| f.distortion_weight).sum::<f32>() / boot_timeline.frames.len() as f32;
     let avg_phase_t = boot_timeline.frames.iter().map(|f| f.phase_t).sum::<f32>() / boot_timeline.frames.len() as f32;
+    let avg_bloom_intent = boot_intents.iter().map(|i| i.bloom_weight).sum::<f32>() / boot_intents.len() as f32;
+    let avg_fog_intent = boot_intents.iter().map(|i| i.fog_weight).sum::<f32>() / boot_intents.len() as f32;
     let first_boot = &boot_frames[0];
     let last_boot = &boot_frames[boot_frames.len() - 1];
 
@@ -141,5 +144,9 @@ fn main() {
     println!(
         "boot_style_avg=glow:{:.3} distortion:{:.3} phase_t:{:.3}",
         avg_styled_glow, avg_distortion, avg_phase_t
+    );
+    println!(
+        "boot_intent_avg=bloom:{:.3} fog:{:.3}",
+        avg_bloom_intent, avg_fog_intent
     );
 }
