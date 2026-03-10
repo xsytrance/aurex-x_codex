@@ -32,3 +32,6 @@ Key features:
 • lore fragment discovery
 • BassLine subterranean realm
 • pulse-driven environmental rhythm
+
+Phase 7
+Runtime implementation planning document added (docs/07_runtime_implementation_plan.md) to guide prototype milestones M0–M5.
