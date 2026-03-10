@@ -3,8 +3,8 @@ use aurex_ecs::{CommandBuffer, EcsCommand, EcsWorld, EntityId, Transform2p5D};
 use aurex_lighting::{LightDescriptor, LightKind};
 use aurex_postfx::BloomSettings;
 use aurex_render::{
-    BootAnimationConfig, BootAnimator, BootStylePreset, BootStyleProfile, CameraRig, MockRenderer,
-    RenderBackendMode, RenderBootstrapConfig, RenderStage, RENDER_MAIN_STAGES,
+    BootAnimationConfig, BootAnimator, BootSequenceRecipe, BootStylePreset, BootStyleProfile,
+    CameraRig, MockRenderer, RenderBackendMode, RenderBootstrapConfig, RenderStage, RENDER_MAIN_STAGES,
 };
 use aurex_shape_synth::{PrimitiveType, ShapeDescriptor};
 
@@ -69,13 +69,15 @@ fn main() {
     let backend_after = renderer.backend_status();
 
     let boot_style = BootStyleProfile::from_preset(BootStylePreset::NeonStorm);
-    let boot_animator = BootAnimator::with_style(
+    let boot_recipe = BootSequenceRecipe::GrandReveal;
+    let boot_animator = BootAnimator::with_style_and_recipe(
         BootAnimationConfig {
             seed: 1337,
             frame_count: 12,
             ..BootAnimationConfig::default()
         },
         boot_style.clone(),
+        boot_recipe,
     );
     let boot_frames = boot_animator.generate_frames(clock.sim_tick.0);
     let boot_timeline = boot_animator.generate_timeline(clock.sim_tick.0);
@@ -135,6 +137,7 @@ fn main() {
         phase_ignition, phase_pulse_lock, phase_reveal
     );
     println!("boot_style_preset={:?}", boot_style.preset);
+    println!("boot_sequence_recipe={:?}", boot_recipe);
     println!(
         "boot_style_avg=glow:{:.3} distortion:{:.3} phase_t:{:.3}",
         avg_styled_glow, avg_distortion, avg_phase_t

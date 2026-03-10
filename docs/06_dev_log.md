@@ -124,3 +124,10 @@ Boot curve + preset progression added:
 • added `BootStylePreset` profiles (`Classic`, `NeonStorm`, `CrystalPulse`)
 • added phase curve shaping (`phase_t`, per-phase `curve_exp`) to style application
 • wired runtime scaffold to exercise `NeonStorm` preset and report styled phase averages
+
+Phase 20
+Boot sequence recipe layer added:
+
+• added `BootSequenceRecipe` and ratio/tempo recipe config for boot pacing
+• added `BootAnimator::with_style_and_recipe` for combined style+sequence authoring
+• wired runtime scaffold to use `GrandReveal` recipe and print active boot recipe

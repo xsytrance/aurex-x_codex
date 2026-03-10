@@ -268,6 +268,52 @@ impl Default for BootStyleProfile {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BootSequenceRecipe {
+    Standard,
+    QuickPulse,
+    GrandReveal,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BootSequenceConfig {
+    pub ignition_ratio: f32,
+    pub pulse_lock_ratio: f32,
+    pub reveal_ratio: f32,
+    pub pulse_speed_mul: f32,
+}
+
+impl BootSequenceConfig {
+    pub fn from_recipe(recipe: BootSequenceRecipe) -> Self {
+        match recipe {
+            BootSequenceRecipe::Standard => Self {
+                ignition_ratio: 0.33,
+                pulse_lock_ratio: 0.34,
+                reveal_ratio: 0.33,
+                pulse_speed_mul: 1.0,
+            },
+            BootSequenceRecipe::QuickPulse => Self {
+                ignition_ratio: 0.22,
+                pulse_lock_ratio: 0.5,
+                reveal_ratio: 0.28,
+                pulse_speed_mul: 1.2,
+            },
+            BootSequenceRecipe::GrandReveal => Self {
+                ignition_ratio: 0.38,
+                pulse_lock_ratio: 0.27,
+                reveal_ratio: 0.35,
+                pulse_speed_mul: 0.85,
+            },
+        }
+    }
+}
+
+impl Default for BootSequenceConfig {
+    fn default() -> Self {
+        Self::from_recipe(BootSequenceRecipe::Standard)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct BootTimelineFrame {
     pub phase: BootPhase,
@@ -305,6 +351,8 @@ impl BootTimeline {
 pub struct BootAnimator {
     config: BootAnimationConfig,
     style: BootStyleProfile,
+    sequence: BootSequenceConfig,
+    recipe: BootSequenceRecipe,
 }
 
 impl BootAnimator {
@@ -312,17 +360,41 @@ impl BootAnimator {
         Self {
             config,
             style: BootStyleProfile::default(),
+            sequence: BootSequenceConfig::default(),
+            recipe: BootSequenceRecipe::Standard,
         }
     }
 
     pub fn with_style(config: BootAnimationConfig, style: BootStyleProfile) -> Self {
-        Self { config, style }
+        Self {
+            config,
+            style,
+            sequence: BootSequenceConfig::default(),
+            recipe: BootSequenceRecipe::Standard,
+        }
+    }
+
+    pub fn with_style_and_recipe(
+        config: BootAnimationConfig,
+        style: BootStyleProfile,
+        recipe: BootSequenceRecipe,
+    ) -> Self {
+        Self {
+            config,
+            style,
+            sequence: BootSequenceConfig::from_recipe(recipe),
+            recipe,
+        }
+    }
+
+    pub fn recipe(&self) -> BootSequenceRecipe {
+        self.recipe
     }
 
     pub fn generate_frames(&self, start_tick: u64) -> Vec<BootFrame> {
         (0..self.config.frame_count)
             .map(|i| {
-                let t = i as f32 * self.config.pulse_speed;
+                let t = i as f32 * self.config.pulse_speed * self.sequence.pulse_speed_mul;
                 let noise = seeded_unit(self.config.seed, i);
                 let ring_radius = self.config.base_radius + (t.sin() * 0.18) + (noise * 0.07);
                 let glow = 0.55 + (t.cos().abs() * 0.35) + (noise * 0.1);
@@ -345,22 +417,29 @@ impl BootAnimator {
         let raw = self.generate_frames(start_tick);
         let total = raw.len().max(1);
 
-        let phase_span = (total / 3).max(1);
+        let ignition_end = ((total as f32 * self.sequence.ignition_ratio).round() as usize)
+            .clamp(1, total.saturating_sub(2).max(1));
+        let pulse_lock_end = ((total as f32 * (self.sequence.ignition_ratio + self.sequence.pulse_lock_ratio))
+            .round() as usize)
+            .clamp(ignition_end + 1, total.saturating_sub(1).max(ignition_end + 1));
+
+        let ignition_span = ignition_end.max(1);
+        let pulse_lock_span = pulse_lock_end.saturating_sub(ignition_end).max(1);
+        let reveal_span = total.saturating_sub(pulse_lock_end).max(1);
 
         let frames = raw
             .into_iter()
             .enumerate()
             .map(|(idx, frame)| {
-                let phase = if idx < total / 3 {
-                    BootPhase::Ignition
-                } else if idx < (2 * total) / 3 {
-                    BootPhase::PulseLock
+                let (phase, local_idx, span) = if idx < ignition_end {
+                    (BootPhase::Ignition, idx, ignition_span)
+                } else if idx < pulse_lock_end {
+                    (BootPhase::PulseLock, idx - ignition_end, pulse_lock_span)
                 } else {
-                    BootPhase::Reveal
+                    (BootPhase::Reveal, idx - pulse_lock_end, reveal_span)
                 };
 
-                let local_idx = idx % phase_span;
-                let phase_t = (local_idx as f32 / phase_span as f32).clamp(0.0, 1.0);
+                let phase_t = (local_idx as f32 / span as f32).clamp(0.0, 1.0);
 
                 let phase_style = self.style.style_for(phase);
                 let curve = phase_t.powf(phase_style.curve_exp.max(0.01));
@@ -481,7 +560,7 @@ mod tests {
                 frame_count: 12,
                 ..BootAnimationConfig::default()
             },
-            style.clone(),
+            style,
         )
         .generate_timeline(5);
 
@@ -516,5 +595,30 @@ mod tests {
 
         assert_ne!(classic.frames[0].styled_hue, storm.frames[0].styled_hue);
         assert_ne!(classic.frames[0].styled_glow, storm.frames[0].styled_glow);
+    }
+
+    #[test]
+    fn recipe_changes_phase_distribution() {
+        let cfg = BootAnimationConfig {
+            seed: 12,
+            frame_count: 12,
+            ..BootAnimationConfig::default()
+        };
+
+        let standard = BootAnimator::with_style_and_recipe(
+            cfg.clone(),
+            BootStyleProfile::from_preset(BootStylePreset::Classic),
+            BootSequenceRecipe::Standard,
+        )
+        .generate_timeline(0);
+
+        let quick = BootAnimator::with_style_and_recipe(
+            cfg,
+            BootStyleProfile::from_preset(BootStylePreset::Classic),
+            BootSequenceRecipe::QuickPulse,
+        )
+        .generate_timeline(0);
+
+        assert_ne!(standard.phase_counts(), quick.phase_counts());
     }
 }
