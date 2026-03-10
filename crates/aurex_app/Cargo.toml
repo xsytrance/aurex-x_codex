@@ -1,0 +1,16 @@
+[package]
+name = "aurex_app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+aurex_core = { path = "../aurex_core" }
+aurex_conductor = { path = "../aurex_conductor" }
+aurex_ecs = { path = "../aurex_ecs" }
+aurex_render = { path = "../aurex_render" }
+aurex_shape_synth = { path = "../aurex_shape_synth" }
+aurex_lighting = { path = "../aurex_lighting" }
+aurex_postfx = { path = "../aurex_postfx" }
+aurex_audio = { path = "../aurex_audio" }
