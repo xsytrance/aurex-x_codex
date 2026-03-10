@@ -83,6 +83,7 @@ fn main() {
     let boot_timeline = boot_animator.generate_timeline(clock.sim_tick.0);
     let (phase_ignition, phase_pulse_lock, phase_reveal) = boot_timeline.phase_counts();
     let boot_intents = boot_timeline.derive_render_intents();
+    let boot_postfx = boot_timeline.aggregate_postfx();
     let avg_styled_glow = boot_timeline.frames.iter().map(|f| f.styled_glow).sum::<f32>() / boot_timeline.frames.len() as f32;
     let avg_distortion = boot_timeline.frames.iter().map(|f| f.distortion_weight).sum::<f32>() / boot_timeline.frames.len() as f32;
     let avg_phase_t = boot_timeline.frames.iter().map(|f| f.phase_t).sum::<f32>() / boot_timeline.frames.len() as f32;
@@ -152,4 +153,12 @@ fn main() {
         avg_bloom_intent, avg_fog_intent, avg_color_shift
     );
     println!("boot_intent_peak_bloom={:.3}", peak_bloom_intent);
+    println!(
+        "boot_postfx_avg=bloom:{:.3} fog:{:.3} distortion:{:.3} color_shift:{:.3}",
+        boot_postfx.avg_bloom,
+        boot_postfx.avg_fog,
+        boot_postfx.avg_distortion,
+        boot_postfx.avg_color_shift
+    );
+    println!("boot_postfx_peak_bloom={:.3}", boot_postfx.peak_bloom);
 }

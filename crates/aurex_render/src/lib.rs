@@ -332,6 +332,25 @@ pub struct BootRenderIntent {
     pub color_shift: f32,
 }
 
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BootPostFxSnapshot {
+    pub tick: u64,
+    pub bloom_strength: f32,
+    pub fog_density: f32,
+    pub distortion_amount: f32,
+    pub color_grade_shift: f32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BootPostFxAggregate {
+    pub avg_bloom: f32,
+    pub avg_fog: f32,
+    pub avg_distortion: f32,
+    pub avg_color_shift: f32,
+    pub peak_bloom: f32,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct BootTimeline {
     pub frames: Vec<BootTimelineFrame>,
@@ -372,6 +391,43 @@ impl BootTimeline {
                 }
             })
             .collect()
+    }
+
+    pub fn to_postfx_snapshots(&self) -> Vec<BootPostFxSnapshot> {
+        let intents = self.derive_render_intents();
+        self.frames
+            .iter()
+            .zip(intents.iter())
+            .map(|(frame, intent)| BootPostFxSnapshot {
+                tick: frame.frame.tick,
+                bloom_strength: intent.bloom_weight,
+                fog_density: intent.fog_weight,
+                distortion_amount: intent.distortion_weight,
+                color_grade_shift: intent.color_shift,
+            })
+            .collect()
+    }
+
+    pub fn aggregate_postfx(&self) -> BootPostFxAggregate {
+        let snapshots = self.to_postfx_snapshots();
+        let len = snapshots.len().max(1) as f32;
+
+        let avg_bloom = snapshots.iter().map(|s| s.bloom_strength).sum::<f32>() / len;
+        let avg_fog = snapshots.iter().map(|s| s.fog_density).sum::<f32>() / len;
+        let avg_distortion = snapshots.iter().map(|s| s.distortion_amount).sum::<f32>() / len;
+        let avg_color_shift = snapshots.iter().map(|s| s.color_grade_shift).sum::<f32>() / len;
+        let peak_bloom = snapshots
+            .iter()
+            .map(|s| s.bloom_strength)
+            .fold(0.0_f32, f32::max);
+
+        BootPostFxAggregate {
+            avg_bloom,
+            avg_fog,
+            avg_distortion,
+            avg_color_shift,
+            peak_bloom,
+        }
     }
 }
 
@@ -663,6 +719,28 @@ mod tests {
             assert!(i.distortion_weight >= 0.0);
             assert!(i.color_shift.is_finite());
         }
+    }
+
+    #[test]
+    fn postfx_snapshot_and_aggregate_are_consistent() {
+        let timeline = BootAnimator::with_style_and_recipe(
+            BootAnimationConfig {
+                seed: 101,
+                frame_count: 12,
+                ..BootAnimationConfig::default()
+            },
+            BootStyleProfile::from_preset(BootStylePreset::NeonStorm),
+            BootSequenceRecipe::GrandReveal,
+        )
+        .generate_timeline(0);
+
+        let snapshots = timeline.to_postfx_snapshots();
+        let agg = timeline.aggregate_postfx();
+
+        assert_eq!(snapshots.len(), 12);
+        assert!(agg.avg_bloom > 0.0);
+        assert!(agg.peak_bloom >= agg.avg_bloom);
+        assert!(agg.avg_fog >= 0.0);
     }
 
     #[test]

@@ -145,3 +145,10 @@ Boot intent diagnostics expanded:
 • added additional render-intent validation test coverage for finite/range-safe channels
 • expanded runtime scaffold to report average color-shift intent and peak bloom intent
 • improved boot postfx observability for upcoming real render pass mapping
+
+Phase 23
+Boot PostFX snapshot layer added:
+
+• added `BootPostFxSnapshot` and `BootPostFxAggregate` contracts in `aurex_render`
+• added timeline conversion to frame-wise postfx snapshots and aggregate statistics
+• expanded runtime scaffold diagnostics with postfx aggregate output for backend handoff
