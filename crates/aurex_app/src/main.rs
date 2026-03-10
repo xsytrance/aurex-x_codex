@@ -1,4 +1,4 @@
-use aurex_audio::{AudioBackendMode, MockAudioEngine};
+use aurex_audio::{AudioBackendMode, AudioBackendReadiness, MockAudioEngine};
 use aurex_conductor::{ConductorClock, ConductorStage, MAIN_LOOP_STAGES, execute_frame};
 use aurex_ecs::{CommandBuffer, EcsCommand, EcsWorld, EntityId, Transform2p5D};
 use aurex_lighting::{LightDescriptor, LightKind};
@@ -6,7 +6,7 @@ use aurex_postfx::BloomSettings;
 use aurex_render::{
     BootAnimationConfig, BootAnimator, BootPostFxTrack, BootSequenceRecipe, BootStylePreset,
     BootStyleProfile, CameraRig, MockRenderer, RENDER_MAIN_STAGES, RenderBackendMode,
-    RenderBootstrapConfig, RenderStage,
+    RenderBackendReadiness, RenderBootstrapConfig, RenderStage,
 };
 use aurex_shape_synth::{PrimitiveType, ShapeDescriptor};
 
@@ -42,6 +42,7 @@ fn runtime_diagnostics_report() -> String {
     let audio_transition = audio.transition_mode(AudioBackendMode::CpalPlanned);
     let audio_after = audio.status();
     let audio_probe = audio.next_beat();
+    let audio_readiness = AudioBackendReadiness::for_mode(audio_after.mode);
 
     let mut world = EcsWorld::default();
     let mut commands = CommandBuffer::default();
@@ -75,6 +76,7 @@ fn runtime_diagnostics_report() -> String {
     let backend_before = renderer.backend_status();
     let transition = renderer.transition_backend_mode(RenderBackendMode::WgpuPlanned);
     let backend_after = renderer.backend_status();
+    let render_readiness = RenderBackendReadiness::for_mode(backend_after.mode);
 
     let boot_style = BootStyleProfile::from_preset(BootStylePreset::NeonStorm);
     let boot_recipe = BootSequenceRecipe::GrandReveal;
@@ -148,6 +150,12 @@ fn runtime_diagnostics_report() -> String {
         "audio_probe=tick:{} pulse:{:.3}",
         audio_probe.tick.0, audio_probe.pulse
     ));
+    lines.push(format!(
+        "audio_m1_readiness=device_io:{} stream_graph:{} can_emit_sound:{}",
+        audio_readiness.has_device_io,
+        audio_readiness.has_stream_graph,
+        audio_readiness.can_emit_sound
+    ));
     lines.push(format!("ecs_entity_count={}", world.entity_count()));
     lines.push(format!(
         "render_bootstrap={} {}x{}",
@@ -176,6 +184,12 @@ fn runtime_diagnostics_report() -> String {
     lines.push(format!(
         "render_backend_after={:?} backend_ready_after={}",
         backend_after.mode, backend_after.ready
+    ));
+    lines.push(format!(
+        "render_m1_readiness=windowing:{} gpu:{} can_present:{}",
+        render_readiness.has_windowing,
+        render_readiness.has_gpu_backend,
+        render_readiness.can_present
     ));
     lines.push(format!("boot_frame_count={}", boot_frames.len()));
     lines.push(format!(
@@ -234,7 +248,7 @@ mod tests {
 
     #[test]
     fn diagnostics_report_matches_expected_snapshot() {
-        let expected = "Aurex runtime scaffold initialized.\nframe=1 tick=1\ncamera_fov=60\nshape_count=3\nlight_kind=Pulse bloom_intensity=0.25\nconductor_stage_count=7\naudio_backend_before=MockSilence audio_ready_before=true\naudio_backend_transition=Transitioned\naudio_backend_after=CpalPlanned audio_ready_after=false\naudio_probe=tick:1 pulse:0.854\necs_entity_count=2\nrender_bootstrap=Aurex-X 1280x720\nrender_stage_count=3\nrender_stages=RenderPrepare/Render/Present\nrender_frame_id=1 render_stages_executed=3\nconductor_trace_stages=7\nrender_stages_seen_by_conductor=3\nrender_backend_before=Mock backend_ready_before=true\nrender_backend_transition=Transitioned\nrender_backend_after=WgpuPlanned backend_ready_after=false\nboot_frame_count=12\nboot_first=tick:1 radius:1.021 glow:0.931 hue:36.79\nboot_last=tick:12 radius:1.040 glow:0.987 hue:103.46\nboot_phases=Ignition:5 PulseLock:3 Reveal:4\nboot_style_preset=NeonStorm\nboot_sequence_recipe=GrandReveal\nboot_style_avg=glow:0.914 distortion:0.543 phase_t:0.375\nboot_intent_avg=bloom:0.894 fog:0.229 color_shift:98.395\nboot_intent_peak_bloom=1.179\nboot_postfx_avg=bloom:0.894 fog:0.229 distortion:0.543 color_shift:98.395\nboot_postfx_peak_bloom=1.179\nboot_postfx_first=tick:1 bloom:0.752 fog:0.050\nboot_postfx_latest=tick:12 bloom:1.108 fog:0.560";
+        let expected = "Aurex runtime scaffold initialized.\nframe=1 tick=1\ncamera_fov=60\nshape_count=3\nlight_kind=Pulse bloom_intensity=0.25\nconductor_stage_count=7\naudio_backend_before=MockSilence audio_ready_before=true\naudio_backend_transition=Transitioned\naudio_backend_after=CpalPlanned audio_ready_after=false\naudio_probe=tick:1 pulse:0.854\naudio_m1_readiness=device_io:true stream_graph:true can_emit_sound:true\necs_entity_count=2\nrender_bootstrap=Aurex-X 1280x720\nrender_stage_count=3\nrender_stages=RenderPrepare/Render/Present\nrender_frame_id=1 render_stages_executed=3\nconductor_trace_stages=7\nrender_stages_seen_by_conductor=3\nrender_backend_before=Mock backend_ready_before=true\nrender_backend_transition=Transitioned\nrender_backend_after=WgpuPlanned backend_ready_after=false\nrender_m1_readiness=windowing:true gpu:true can_present:true\nboot_frame_count=12\nboot_first=tick:1 radius:1.021 glow:0.931 hue:36.79\nboot_last=tick:12 radius:1.040 glow:0.987 hue:103.46\nboot_phases=Ignition:5 PulseLock:3 Reveal:4\nboot_style_preset=NeonStorm\nboot_sequence_recipe=GrandReveal\nboot_style_avg=glow:0.914 distortion:0.543 phase_t:0.375\nboot_intent_avg=bloom:0.894 fog:0.229 color_shift:98.395\nboot_intent_peak_bloom=1.179\nboot_postfx_avg=bloom:0.894 fog:0.229 distortion:0.543 color_shift:98.395\nboot_postfx_peak_bloom=1.179\nboot_postfx_first=tick:1 bloom:0.752 fog:0.050\nboot_postfx_latest=tick:12 bloom:1.108 fog:0.560";
 
         assert_eq!(runtime_diagnostics_report(), expected);
     }

@@ -18,6 +18,30 @@ pub struct AudioEngineStatus {
     pub ready: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AudioBackendReadiness {
+    pub has_device_io: bool,
+    pub has_stream_graph: bool,
+    pub can_emit_sound: bool,
+}
+
+impl AudioBackendReadiness {
+    pub fn for_mode(mode: AudioBackendMode) -> Self {
+        match mode {
+            AudioBackendMode::MockSilence => Self {
+                has_device_io: false,
+                has_stream_graph: false,
+                can_emit_sound: false,
+            },
+            AudioBackendMode::CpalPlanned => Self {
+                has_device_io: true,
+                has_stream_graph: true,
+                can_emit_sound: true,
+            },
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AudioClock {
     pub tick: Tick,
@@ -89,7 +113,20 @@ impl MockAudioEngine {
 
 #[cfg(test)]
 mod tests {
-    use super::{AudioBackendMode, AudioTransition, MockAudioEngine};
+    use super::{AudioBackendMode, AudioBackendReadiness, AudioTransition, MockAudioEngine};
+
+    #[test]
+    fn readiness_contract_tracks_audio_mode() {
+        let silent = AudioBackendReadiness::for_mode(AudioBackendMode::MockSilence);
+        assert!(!silent.has_device_io);
+        assert!(!silent.has_stream_graph);
+        assert!(!silent.can_emit_sound);
+
+        let planned = AudioBackendReadiness::for_mode(AudioBackendMode::CpalPlanned);
+        assert!(planned.has_device_io);
+        assert!(planned.has_stream_graph);
+        assert!(planned.can_emit_sound);
+    }
 
     #[test]
     fn transition_marks_cpal_planned_not_ready() {

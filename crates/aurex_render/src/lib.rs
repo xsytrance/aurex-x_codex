@@ -54,6 +54,30 @@ impl Default for RenderBootstrapConfig {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenderBackendReadiness {
+    pub has_windowing: bool,
+    pub has_gpu_backend: bool,
+    pub can_present: bool,
+}
+
+impl RenderBackendReadiness {
+    pub fn for_mode(mode: RenderBackendMode) -> Self {
+        match mode {
+            RenderBackendMode::Mock => Self {
+                has_windowing: false,
+                has_gpu_backend: false,
+                can_present: false,
+            },
+            RenderBackendMode::WgpuPlanned => Self {
+                has_windowing: true,
+                has_gpu_backend: true,
+                can_present: true,
+            },
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct RenderFrameStats {
     pub frame_id: u64,
@@ -591,6 +615,19 @@ mod tests {
         assert_eq!(first.frame_id, 1);
         assert_eq!(second.frame_id, 2);
         assert_eq!(first.stages_executed, 3);
+    }
+
+    #[test]
+    fn readiness_contract_tracks_backend_mode() {
+        let mock = RenderBackendReadiness::for_mode(RenderBackendMode::Mock);
+        assert!(!mock.has_windowing);
+        assert!(!mock.has_gpu_backend);
+        assert!(!mock.can_present);
+
+        let planned = RenderBackendReadiness::for_mode(RenderBackendMode::WgpuPlanned);
+        assert!(planned.has_windowing);
+        assert!(planned.has_gpu_backend);
+        assert!(planned.can_present);
     }
 
     #[test]

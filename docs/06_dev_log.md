@@ -166,3 +166,10 @@ Audio runtime scaffolding added:
 • added `aurex_audio` crate with backend mode/state contracts (`MockSilence`, `CpalPlanned`)
 • added deterministic audio clock + beat probe event for conductor/audio handshake diagnostics
 • expanded `aurex_app` diagnostics with audio backend transition and probe pulse output
+
+Phase 26
+M1 readiness contracts expanded:
+
+• added explicit render backend readiness contract (`RenderBackendReadiness`) in `aurex_render`
+• added explicit audio backend readiness contract (`AudioBackendReadiness`) in `aurex_audio`
+• expanded `aurex_app` diagnostics with render/audio M1 readiness booleans for immediate implementation gating
