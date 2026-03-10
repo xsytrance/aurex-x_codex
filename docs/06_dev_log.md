@@ -117,3 +117,10 @@ Boot style profile layer added:
 • added `BootStyleProfile` with phase-specific intensity/hue/distortion envelopes
 • applied style envelopes into boot timeline generation (`styled_glow`, `styled_hue`, `distortion_weight`)
 • expanded `aurex_app` diagnostics with averaged styled boot metrics
+
+Phase 19
+Boot curve + preset progression added:
+
+• added `BootStylePreset` profiles (`Classic`, `NeonStorm`, `CrystalPulse`)
+• added phase curve shaping (`phase_t`, per-phase `curve_exp`) to style application
+• wired runtime scaffold to exercise `NeonStorm` preset and report styled phase averages

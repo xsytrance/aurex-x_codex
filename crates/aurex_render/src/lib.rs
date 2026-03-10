@@ -166,6 +166,14 @@ pub struct PhaseStyle {
     pub intensity_mul: f32,
     pub hue_bias: f32,
     pub distortion_weight: f32,
+    pub curve_exp: f32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BootStylePreset {
+    Classic,
+    NeonStorm,
+    CrystalPulse,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -173,31 +181,58 @@ pub struct BootStyleProfile {
     pub ignition: PhaseStyle,
     pub pulse_lock: PhaseStyle,
     pub reveal: PhaseStyle,
-}
-
-impl Default for BootStyleProfile {
-    fn default() -> Self {
-        Self {
-            ignition: PhaseStyle {
-                intensity_mul: 0.85,
-                hue_bias: -12.0,
-                distortion_weight: 0.55,
-            },
-            pulse_lock: PhaseStyle {
-                intensity_mul: 1.15,
-                hue_bias: 18.0,
-                distortion_weight: 0.8,
-            },
-            reveal: PhaseStyle {
-                intensity_mul: 1.0,
-                hue_bias: 4.0,
-                distortion_weight: 0.3,
-            },
-        }
-    }
+    pub preset: BootStylePreset,
 }
 
 impl BootStyleProfile {
+    pub fn from_preset(preset: BootStylePreset) -> Self {
+        match preset {
+            BootStylePreset::Classic => Self::default(),
+            BootStylePreset::NeonStorm => Self {
+                ignition: PhaseStyle {
+                    intensity_mul: 0.95,
+                    hue_bias: 24.0,
+                    distortion_weight: 0.65,
+                    curve_exp: 1.3,
+                },
+                pulse_lock: PhaseStyle {
+                    intensity_mul: 1.3,
+                    hue_bias: 42.0,
+                    distortion_weight: 0.95,
+                    curve_exp: 1.7,
+                },
+                reveal: PhaseStyle {
+                    intensity_mul: 1.05,
+                    hue_bias: 16.0,
+                    distortion_weight: 0.45,
+                    curve_exp: 1.1,
+                },
+                preset,
+            },
+            BootStylePreset::CrystalPulse => Self {
+                ignition: PhaseStyle {
+                    intensity_mul: 0.8,
+                    hue_bias: -18.0,
+                    distortion_weight: 0.4,
+                    curve_exp: 0.9,
+                },
+                pulse_lock: PhaseStyle {
+                    intensity_mul: 1.05,
+                    hue_bias: -4.0,
+                    distortion_weight: 0.55,
+                    curve_exp: 1.2,
+                },
+                reveal: PhaseStyle {
+                    intensity_mul: 1.2,
+                    hue_bias: 8.0,
+                    distortion_weight: 0.25,
+                    curve_exp: 0.8,
+                },
+                preset,
+            },
+        }
+    }
+
     pub fn style_for(&self, phase: BootPhase) -> PhaseStyle {
         match phase {
             BootPhase::Ignition => self.ignition,
@@ -207,10 +242,37 @@ impl BootStyleProfile {
     }
 }
 
+impl Default for BootStyleProfile {
+    fn default() -> Self {
+        Self {
+            ignition: PhaseStyle {
+                intensity_mul: 0.85,
+                hue_bias: -12.0,
+                distortion_weight: 0.55,
+                curve_exp: 1.0,
+            },
+            pulse_lock: PhaseStyle {
+                intensity_mul: 1.15,
+                hue_bias: 18.0,
+                distortion_weight: 0.8,
+                curve_exp: 1.4,
+            },
+            reveal: PhaseStyle {
+                intensity_mul: 1.0,
+                hue_bias: 4.0,
+                distortion_weight: 0.3,
+                curve_exp: 0.9,
+            },
+            preset: BootStylePreset::Classic,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct BootTimelineFrame {
     pub phase: BootPhase,
     pub frame: BootFrame,
+    pub phase_t: f32,
     pub styled_glow: f32,
     pub styled_hue: f32,
     pub distortion_weight: f32,
@@ -283,6 +345,8 @@ impl BootAnimator {
         let raw = self.generate_frames(start_tick);
         let total = raw.len().max(1);
 
+        let phase_span = (total / 3).max(1);
+
         let frames = raw
             .into_iter()
             .enumerate()
@@ -295,13 +359,18 @@ impl BootAnimator {
                     BootPhase::Reveal
                 };
 
+                let local_idx = idx % phase_span;
+                let phase_t = (local_idx as f32 / phase_span as f32).clamp(0.0, 1.0);
+
                 let phase_style = self.style.style_for(phase);
+                let curve = phase_t.powf(phase_style.curve_exp.max(0.01));
 
                 BootTimelineFrame {
                     phase,
-                    styled_glow: frame.glow * phase_style.intensity_mul,
-                    styled_hue: frame.hue_shift + phase_style.hue_bias,
-                    distortion_weight: phase_style.distortion_weight,
+                    phase_t,
+                    styled_glow: frame.glow * (phase_style.intensity_mul + 0.1 * curve),
+                    styled_hue: frame.hue_shift + phase_style.hue_bias * (0.6 + 0.4 * curve),
+                    distortion_weight: phase_style.distortion_weight * (0.75 + 0.25 * curve),
                     frame,
                 }
             })
@@ -420,8 +489,32 @@ mod tests {
         let last = &timeline.frames[timeline.frames.len() - 1];
 
         assert_eq!(first.phase, BootPhase::Ignition);
-        assert_eq!(first.distortion_weight, style.ignition.distortion_weight);
         assert_eq!(last.phase, BootPhase::Reveal);
-        assert_eq!(last.distortion_weight, style.reveal.distortion_weight);
+        assert!(first.distortion_weight > 0.0);
+        assert!(last.distortion_weight > 0.0);
+    }
+
+    #[test]
+    fn preset_selection_changes_styling() {
+        let cfg = BootAnimationConfig {
+            seed: 99,
+            frame_count: 12,
+            ..BootAnimationConfig::default()
+        };
+
+        let classic = BootAnimator::with_style(
+            cfg.clone(),
+            BootStyleProfile::from_preset(BootStylePreset::Classic),
+        )
+        .generate_timeline(0);
+
+        let storm = BootAnimator::with_style(
+            cfg,
+            BootStyleProfile::from_preset(BootStylePreset::NeonStorm),
+        )
+        .generate_timeline(0);
+
+        assert_ne!(classic.frames[0].styled_hue, storm.frames[0].styled_hue);
+        assert_ne!(classic.frames[0].styled_glow, storm.frames[0].styled_glow);
     }
 }

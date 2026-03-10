@@ -3,8 +3,8 @@ use aurex_ecs::{CommandBuffer, EcsCommand, EcsWorld, EntityId, Transform2p5D};
 use aurex_lighting::{LightDescriptor, LightKind};
 use aurex_postfx::BloomSettings;
 use aurex_render::{
-    BootAnimationConfig, BootAnimator, CameraRig, MockRenderer, RenderBackendMode,
-    RenderBootstrapConfig, RenderStage, RENDER_MAIN_STAGES,
+    BootAnimationConfig, BootAnimator, BootStylePreset, BootStyleProfile, CameraRig, MockRenderer,
+    RenderBackendMode, RenderBootstrapConfig, RenderStage, RENDER_MAIN_STAGES,
 };
 use aurex_shape_synth::{PrimitiveType, ShapeDescriptor};
 
@@ -68,16 +68,21 @@ fn main() {
     let transition = renderer.transition_backend_mode(RenderBackendMode::WgpuPlanned);
     let backend_after = renderer.backend_status();
 
-    let boot_animator = BootAnimator::new(BootAnimationConfig {
-        seed: 1337,
-        frame_count: 12,
-        ..BootAnimationConfig::default()
-    });
+    let boot_style = BootStyleProfile::from_preset(BootStylePreset::NeonStorm);
+    let boot_animator = BootAnimator::with_style(
+        BootAnimationConfig {
+            seed: 1337,
+            frame_count: 12,
+            ..BootAnimationConfig::default()
+        },
+        boot_style.clone(),
+    );
     let boot_frames = boot_animator.generate_frames(clock.sim_tick.0);
     let boot_timeline = boot_animator.generate_timeline(clock.sim_tick.0);
     let (phase_ignition, phase_pulse_lock, phase_reveal) = boot_timeline.phase_counts();
     let avg_styled_glow = boot_timeline.frames.iter().map(|f| f.styled_glow).sum::<f32>() / boot_timeline.frames.len() as f32;
     let avg_distortion = boot_timeline.frames.iter().map(|f| f.distortion_weight).sum::<f32>() / boot_timeline.frames.len() as f32;
+    let avg_phase_t = boot_timeline.frames.iter().map(|f| f.phase_t).sum::<f32>() / boot_timeline.frames.len() as f32;
     let first_boot = &boot_frames[0];
     let last_boot = &boot_frames[boot_frames.len() - 1];
 
@@ -129,8 +134,9 @@ fn main() {
         "boot_phases=Ignition:{} PulseLock:{} Reveal:{}",
         phase_ignition, phase_pulse_lock, phase_reveal
     );
+    println!("boot_style_preset={:?}", boot_style.preset);
     println!(
-        "boot_style_avg=glow:{:.3} distortion:{:.3}",
-        avg_styled_glow, avg_distortion
+        "boot_style_avg=glow:{:.3} distortion:{:.3} phase_t:{:.3}",
+        avg_styled_glow, avg_distortion, avg_phase_t
     );
 }
