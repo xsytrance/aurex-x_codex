@@ -342,3 +342,20 @@ To keep documentation-driven development intact, update these docs as milestones
 - `docs/04_runtime_api.md`: add minimal stable structs (`ShapeDescriptor`, `MaterialDescriptor`, `PostFxStack`, camera control API).
 - `docs/06_dev_log.md`: log each milestone completion (M0–M5) and performance notes.
 
+
+---
+
+## Execution Status
+
+Completed:
+
+- M0 workspace foundation has been executed with initial crate scaffolding and type-level contracts.
+
+In progress / next:
+
+- M1 boot + window + camera
+- M2 procedural shape rendering path
+- M3 basic dynamic lighting
+- M4 bloom post-processing
+
+Note: current executable validates crate wiring and conductor tick flow; rendering backend integration is the immediate next implementation step.

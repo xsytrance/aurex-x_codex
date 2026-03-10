@@ -1,6 +1,18 @@
-[package]
-name = "aurex-x_codex"
-version = "0.1.0"
-edition = "2024"
+[workspace]
+members = [
+  "crates/aurex_app",
+  "crates/aurex_core",
+  "crates/aurex_conductor",
+  "crates/aurex_ecs",
+  "crates/aurex_render",
+  "crates/aurex_shape_synth",
+  "crates/aurex_lighting",
+  "crates/aurex_postfx",
+]
+resolver = "2"
 
-[dependencies]
+[workspace.package]
+edition = "2024"
+version = "0.1.0"
+license = "MIT"
+authors = ["Aurex Team"]
