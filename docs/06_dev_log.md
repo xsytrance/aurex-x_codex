@@ -61,3 +61,10 @@ ADR-0005 accepted and documented:
 • selected `wgpu` + `winit` as the M1 rendering backend baseline
 • formalized backend isolation boundaries in architecture docs
 • added an architecture acceptance gate for starting M1 implementation
+
+Phase 11
+ADR-0006 accepted and documented:
+
+• selected Aurex-owned deterministic ECS authority path in `aurex_ecs`
+• defined command-buffer mutation boundary recommendations for runtime API
+• inserted M1.5 ECS hardening milestone before broader rendering feature expansion

@@ -123,8 +123,49 @@ Implementation guidance:
 
 ---
 
+## ADR-0006: ECS Implementation Strategy and Determinism Constraints
+
+Status: Accepted (M1 Baseline)
+
+Decision:
+
+Implement an in-house deterministic ECS core in `aurex_ecs` rather than adopting a general-purpose external ECS framework for runtime authority paths.
+
+Scope boundary:
+
+- Deterministic authority path (`SimTick`) uses Aurex-owned ECS storage/query/schedule.
+- Optional tooling/editor adapters may bridge to external ECS ecosystems later, but must not replace deterministic runtime authority.
+
+Design constraints:
+
+- Stable entity iteration ordering by archetype/chunk and insertion rules.
+- Fixed-stage schedule execution owned by Conductor.
+- No wall-clock mutation in systems; all time from `Tick`/`FixedDelta`.
+- Randomness provided only via seeded system streams.
+- Snapshot extraction for render interpolation is explicit and read-only.
+
+Rationale:
+
+- Determinism is a primary project constraint (replayability, resonance consistency, procedural reproducibility).
+- Runtime-specific requirements (2.5D-focused components, audio-reactive passes, small package constraints) benefit from tailored data layouts.
+- Avoids accidental nondeterminism introduced by features optimized for generic high-throughput game workloads.
+
+Tradeoffs:
+
+- Higher implementation burden compared with adopting a full ECS ecosystem.
+- Fewer out-of-the-box debugging tools initially.
+- Requires deliberate benchmarking and profiling investment.
+
+Implementation guidance:
+
+- M1: finalize authority data model (`EntityId`, component stores, deterministic query order contract).
+- M2: add deterministic schedule registry and phase barriers.
+- M3: add snapshot/export pipeline for render and replay instrumentation.
+- M4: add invariants tests (ordering, seed reproducibility, fixed-step equivalence).
+
+---
+
 ## Recommended next ADRs
 
-- ADR-0006: ECS implementation strategy (build vs adopt).
 - ADR-0007: `.axg` format versioning and compatibility policy.
 - ADR-0008: Audio clock authority and A/V sync boundary.

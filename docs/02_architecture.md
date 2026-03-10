@@ -148,3 +148,23 @@ Portability profile:
 
 - Desktop parity (Linux/Windows/macOS) is required before web export.
 - Visual equivalence checks should be performed when validating new shader/pipeline features.
+
+
+---
+
+## ECS Strategy (ADR-0006)
+
+Aurex deterministic runtime simulation uses an Aurex-owned ECS core in `aurex_ecs`.
+
+Key requirements:
+
+- Deterministic query iteration order is part of the API contract.
+- Conductor stage scheduling (`SimTick`) is the only authority path for state mutation.
+- System randomness must flow through deterministic seeded streams.
+- Render/audio systems consume snapshots/events and do not mutate simulation state out-of-band.
+
+Why this strategy:
+
+- Matches the project’s deterministic runtime philosophy.
+- Keeps ECS shape aligned with procedural runtime constraints rather than generic engine assumptions.
+- Preserves long-term control over serialization/replay/resonance-driven behavior.

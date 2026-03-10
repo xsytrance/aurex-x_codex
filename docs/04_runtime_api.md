@@ -103,3 +103,23 @@ Recommended additions before external game packages are supported:
 3. Audio event bus contract (`beat`, `kick`, `snare`, `drop`, custom).
 4. Error contract for invalid procedural descriptors.
 5. Versioned runtime capability handshake for `.axg` compatibility.
+
+
+### ECS Command Contract (Planned for v0.1)
+
+To enforce deterministic mutation boundaries, game logic should write to a command buffer during frame/tick processing.
+
+Planned command categories:
+
+- `SpawnEntity`
+- `DespawnEntity`
+- `InsertComponent`
+- `RemoveComponent`
+- `SetComponent`
+- `EmitGameplayEvent`
+
+Processing rule:
+
+- Commands are applied at deterministic barriers in `SimTick`, never immediately from arbitrary system code.
+
+This keeps replay/input determinism stable and makes state transitions auditable.

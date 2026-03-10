@@ -307,6 +307,14 @@ Target outcome: window + 3D camera + procedural shapes + dynamic lighting + bloo
 - Implement free-fly cinematic 3D camera with constrained defaults for 2.5D scenes.
 - Draw debug grid/axes for spatial orientation.
 
+
+
+### M1.5 — ECS authority hardening (ADR-0006)
+
+- Freeze deterministic query ordering contract for authority systems.
+- Introduce command-buffer mutation boundaries at `SimTick` barriers.
+- Add replay-oriented invariants for fixed-step equivalence before adding large feature surface.
+
 ### Milestone M2 — Procedural shape rendering
 
 - Implement SSU primitives: circle, polygon, ring, tube (minimum set).
@@ -354,6 +362,7 @@ Completed:
 In progress / next:
 
 - M1 boot + window + camera (using ADR-0005 backend constraints)
+- M1.5 ECS authority contract hardening (ADR-0006)
 - M2 procedural shape rendering path
 - M3 basic dynamic lighting
 - M4 bloom post-processing
@@ -367,7 +376,7 @@ Note: current executable validates crate wiring and conductor tick flow; renderi
 
 Before implementing M1 rendering backend integration, confirm:
 
-1. ADR-0001..ADR-0005 are accepted and reflected in docs.
+1. ADR-0001..ADR-0006 are accepted and reflected in docs.
 2. `aurex_render` remains the only crate containing backend/device-specific code.
 3. Conductor stage contracts remain unchanged unless updated via ADR.
 4. Runtime API contract changes are recorded in `docs/04_runtime_api.md` before code implementation.
