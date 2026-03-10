@@ -32,3 +32,18 @@ Key features:
 • lore fragment discovery
 • BassLine subterranean realm
 • pulse-driven environmental rhythm
+
+Phase 7
+Runtime implementation planning document added (docs/07_runtime_implementation_plan.md) to guide prototype milestones M0–M5.
+
+Phase 8
+Executed Milestone M0 (workspace foundation) by converting the repository into a multi-crate workspace and adding initial runtime scaffolding crates:
+
+• aurex_app
+• aurex_core
+• aurex_conductor
+• aurex_ecs
+• aurex_render
+• aurex_shape_synth
+• aurex_lighting
+• aurex_postfx
