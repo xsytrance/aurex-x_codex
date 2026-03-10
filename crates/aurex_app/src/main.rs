@@ -1,4 +1,4 @@
-use aurex_conductor::{ConductorClock, MAIN_LOOP_STAGES};
+use aurex_conductor::{execute_frame, ConductorClock, ConductorStage, MAIN_LOOP_STAGES};
 use aurex_ecs::{CommandBuffer, EcsCommand, EcsWorld, EntityId, Transform2p5D};
 use aurex_lighting::{LightDescriptor, LightKind};
 use aurex_postfx::BloomSettings;
@@ -51,12 +51,17 @@ fn main() {
     });
     world.apply_commands(&mut commands);
 
-    for _ in 0..3 {
-        clock.advance_frame();
-    }
-
     let mut renderer = MockRenderer::new(RenderBootstrapConfig::default());
     let render_stats = renderer.run_frame(&RENDER_MAIN_STAGES);
+
+    let mut visited = Vec::new();
+    let trace = execute_frame(&mut clock, |stage| {
+        if matches!(stage, ConductorStage::RenderPrepare | ConductorStage::Render | ConductorStage::Present)
+        {
+            visited.push(stage);
+        }
+    });
+    let backend = renderer.backend_status();
 
     println!("Aurex runtime scaffold initialized.");
     println!("frame={} tick={}", clock.frame_index.0, clock.sim_tick.0);
@@ -82,4 +87,7 @@ fn main() {
         "render_frame_id={} render_stages_executed={}",
         render_stats.frame_id, render_stats.stages_executed
     );
+    println!("conductor_trace_stages={}", trace.stages.len());
+    println!("render_stages_seen_by_conductor={}", visited.len());
+    println!("render_backend={:?} backend_ready={}", backend.mode, backend.ready);
 }

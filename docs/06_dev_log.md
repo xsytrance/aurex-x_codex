@@ -82,3 +82,10 @@ Accelerated M1 bootstrap scaffolding:
 • added `aurex_render` mock renderer bootstrap contracts (`RenderBootstrapConfig`, `RenderStage`, `RENDER_MAIN_STAGES`)
 • added render frame stats tracking contract for stage execution verification
 • integrated render stage/bootstrap diagnostics into `aurex_app` runtime output
+
+Phase 14
+Conductor/render integration scaffolding added:
+
+• added `execute_frame` trace path in `aurex_conductor` for canonical stage execution verification
+• added render backend mode/status contracts in `aurex_render` (`Mock`, `WgpuPlanned`)
+• updated `aurex_app` diagnostics to confirm conductor-render stage handshake

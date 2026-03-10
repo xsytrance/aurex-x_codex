@@ -44,3 +44,35 @@ pub const MAIN_LOOP_STAGES: [ConductorStage; 7] = [
     ConductorStage::Present,
     ConductorStage::PostFrame,
 ];
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct FrameExecutionTrace {
+    pub stages: Vec<ConductorStage>,
+}
+
+pub fn execute_frame(clock: &mut ConductorClock, mut visit: impl FnMut(ConductorStage)) -> FrameExecutionTrace {
+    let mut trace = FrameExecutionTrace::default();
+
+    for stage in MAIN_LOOP_STAGES {
+        visit(stage);
+        trace.stages.push(stage);
+    }
+
+    clock.advance_frame();
+    trace
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn frame_execution_is_stable() {
+        let mut clock = ConductorClock::default();
+        let trace = execute_frame(&mut clock, |_| {});
+
+        assert_eq!(trace.stages, MAIN_LOOP_STAGES);
+        assert_eq!(clock.frame_index.0, 1);
+        assert_eq!(clock.sim_tick.0, 1);
+    }
+}

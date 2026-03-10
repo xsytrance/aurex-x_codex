@@ -22,11 +22,18 @@ pub enum RenderStage {
     Present,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenderBackendMode {
+    Mock,
+    WgpuPlanned,
+}
+
 #[derive(Debug, Clone)]
 pub struct RenderBootstrapConfig {
     pub app_name: String,
     pub viewport_width: u32,
     pub viewport_height: u32,
+    pub backend_mode: RenderBackendMode,
 }
 
 impl Default for RenderBootstrapConfig {
@@ -35,6 +42,7 @@ impl Default for RenderBootstrapConfig {
             app_name: "Aurex-X".to_string(),
             viewport_width: 1280,
             viewport_height: 720,
+            backend_mode: RenderBackendMode::Mock,
         }
     }
 }
@@ -43,6 +51,12 @@ impl Default for RenderBootstrapConfig {
 pub struct RenderFrameStats {
     pub frame_id: u64,
     pub stages_executed: usize,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RenderBackendStatus {
+    pub mode: RenderBackendMode,
+    pub ready: bool,
 }
 
 #[derive(Debug)]
@@ -61,6 +75,13 @@ impl MockRenderer {
 
     pub fn config(&self) -> &RenderBootstrapConfig {
         &self.config
+    }
+
+    pub fn backend_status(&self) -> RenderBackendStatus {
+        RenderBackendStatus {
+            mode: self.config.backend_mode,
+            ready: self.config.backend_mode == RenderBackendMode::Mock,
+        }
     }
 
     pub fn run_frame(&mut self, stages: &[RenderStage]) -> RenderFrameStats {
@@ -92,5 +113,14 @@ mod tests {
         assert_eq!(first.frame_id, 1);
         assert_eq!(second.frame_id, 2);
         assert_eq!(first.stages_executed, 3);
+    }
+
+    #[test]
+    fn backend_status_reflects_mode() {
+        let renderer = MockRenderer::new(RenderBootstrapConfig::default());
+        let status = renderer.backend_status();
+
+        assert_eq!(status.mode, RenderBackendMode::Mock);
+        assert!(status.ready);
     }
 }
