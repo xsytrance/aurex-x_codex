@@ -154,6 +154,42 @@ pub struct BootFrame {
     pub scanline_offset: f32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BootPhase {
+    Ignition,
+    PulseLock,
+    Reveal,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BootTimelineFrame {
+    pub phase: BootPhase,
+    pub frame: BootFrame,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BootTimeline {
+    pub frames: Vec<BootTimelineFrame>,
+}
+
+impl BootTimeline {
+    pub fn phase_counts(&self) -> (usize, usize, usize) {
+        let mut ignition = 0;
+        let mut pulse_lock = 0;
+        let mut reveal = 0;
+
+        for f in &self.frames {
+            match f.phase {
+                BootPhase::Ignition => ignition += 1,
+                BootPhase::PulseLock => pulse_lock += 1,
+                BootPhase::Reveal => reveal += 1,
+            }
+        }
+
+        (ignition, pulse_lock, reveal)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct BootAnimator {
     config: BootAnimationConfig,
@@ -184,6 +220,29 @@ impl BootAnimator {
                 }
             })
             .collect()
+    }
+
+    pub fn generate_timeline(&self, start_tick: u64) -> BootTimeline {
+        let raw = self.generate_frames(start_tick);
+        let total = raw.len().max(1);
+
+        let frames = raw
+            .into_iter()
+            .enumerate()
+            .map(|(idx, frame)| {
+                let phase = if idx < total / 3 {
+                    BootPhase::Ignition
+                } else if idx < (2 * total) / 3 {
+                    BootPhase::PulseLock
+                } else {
+                    BootPhase::Reveal
+                };
+
+                BootTimelineFrame { phase, frame }
+            })
+            .collect();
+
+        BootTimeline { frames }
     }
 }
 
@@ -243,6 +302,22 @@ mod tests {
         let a = animator.generate_frames(100);
         let b = animator.generate_frames(100);
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn boot_timeline_covers_all_phases() {
+        let timeline = BootAnimator::new(BootAnimationConfig {
+            seed: 7,
+            frame_count: 12,
+            ..BootAnimationConfig::default()
+        })
+        .generate_timeline(0);
+
+        let (ignition, pulse_lock, reveal) = timeline.phase_counts();
+        assert!(ignition > 0);
+        assert!(pulse_lock > 0);
+        assert!(reveal > 0);
+        assert_eq!(ignition + pulse_lock + reveal, 12);
     }
 
     #[test]

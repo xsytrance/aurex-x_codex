@@ -74,6 +74,8 @@ fn main() {
         ..BootAnimationConfig::default()
     });
     let boot_frames = boot_animator.generate_frames(clock.sim_tick.0);
+    let boot_timeline = boot_animator.generate_timeline(clock.sim_tick.0);
+    let (phase_ignition, phase_pulse_lock, phase_reveal) = boot_timeline.phase_counts();
     let first_boot = &boot_frames[0];
     let last_boot = &boot_frames[boot_frames.len() - 1];
 
@@ -120,5 +122,9 @@ fn main() {
     println!(
         "boot_last=tick:{} radius:{:.3} glow:{:.3} hue:{:.2}",
         last_boot.tick, last_boot.ring_radius, last_boot.glow, last_boot.hue_shift
+    );
+    println!(
+        "boot_phases=Ignition:{} PulseLock:{} Reveal:{}",
+        phase_ignition, phase_pulse_lock, phase_reveal
     );
 }

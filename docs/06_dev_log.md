@@ -103,3 +103,10 @@ First procedural boot animation prototype scaffolding added:
 • added deterministic `BootAnimator` and `BootFrame` contracts in `aurex_render`
 • added tests verifying same-seed determinism and cross-seed variation
 • integrated boot animation frame generation diagnostics into `aurex_app` output
+
+Phase 17
+Boot timeline phase model added:
+
+• added `BootPhase` and `BootTimeline` contracts for Ignition/PulseLock/Reveal sequencing
+• added timeline phase-count verification test in `aurex_render`
+• expanded `aurex_app` diagnostics to print boot phase distribution per generated sequence
