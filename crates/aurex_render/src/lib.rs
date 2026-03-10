@@ -187,6 +187,38 @@ impl RenderBootstrapExecutor {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RealRendererBootstrapResult {
+    FeatureDisabled,
+    AdapterUnavailable,
+    DeviceRequestFailed,
+    Ready,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RealRendererBootstrapStatus {
+    pub result: RealRendererBootstrapResult,
+    pub detail: String,
+}
+
+pub fn attempt_real_renderer_bootstrap() -> RealRendererBootstrapStatus {
+    #[cfg(feature = "real_graphics")]
+    {
+        return RealRendererBootstrapStatus {
+            result: RealRendererBootstrapResult::AdapterUnavailable,
+            detail: "real_graphics feature enabled; adapter probe not wired yet".to_string(),
+        };
+    }
+
+    #[cfg(not(feature = "real_graphics"))]
+    {
+        RealRendererBootstrapStatus {
+            result: RealRendererBootstrapResult::FeatureDisabled,
+            detail: "build without real_graphics feature".to_string(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct RenderFrameStats {
     pub frame_id: u64,
@@ -767,6 +799,16 @@ fn seeded_unit(seed: u64, frame_index: u32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn real_bootstrap_reports_feature_disabled_by_default() {
+        let status = attempt_real_renderer_bootstrap();
+        #[cfg(not(feature = "real_graphics"))]
+        {
+            assert_eq!(status.result, RealRendererBootstrapResult::FeatureDisabled);
+            assert!(status.detail.contains("without real_graphics"));
+        }
+    }
 
     #[test]
     fn mock_renderer_tracks_frame_progress() {

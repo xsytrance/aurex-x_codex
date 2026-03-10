@@ -7,3 +7,6 @@ authors.workspace = true
 
 [dependencies]
 aurex_core = { path = "../aurex_core" }
+
+[features]
+real_graphics = []

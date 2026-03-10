@@ -194,3 +194,10 @@ Renderer bootstrap executor progression contract added:
 • added `RenderBootstrapExecutor` in `aurex_render` for deterministic step-by-step bring-up simulation
 • expanded runtime diagnostics with bootstrap executor progress and last completed step
 • added test coverage for full executor traversal through `DrawBootScreen`
+
+Phase 30
+Real renderer bootstrap probe contract added:
+
+• added `attempt_real_renderer_bootstrap` contract in `aurex_render` to expose real-backend bootstrap status
+• added `real_graphics` feature flags and optional `wgpu`/`winit`/`pollster` dependencies to start backend wiring path
+• expanded runtime diagnostics with `render_real_bootstrap` status/detail for immediate integration feedback
