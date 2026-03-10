@@ -125,6 +125,78 @@ pub const RENDER_MAIN_STAGES: [RenderStage; 3] = [
     RenderStage::Present,
 ];
 
+#[derive(Debug, Clone)]
+pub struct BootAnimationConfig {
+    pub seed: u64,
+    pub frame_count: u32,
+    pub base_radius: f32,
+    pub pulse_speed: f32,
+}
+
+impl Default for BootAnimationConfig {
+    fn default() -> Self {
+        Self {
+            seed: 0xA9E3_0001_u64,
+            frame_count: 16,
+            base_radius: 1.0,
+            pulse_speed: 0.35,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BootFrame {
+    pub frame_index: u32,
+    pub tick: u64,
+    pub ring_radius: f32,
+    pub glow: f32,
+    pub hue_shift: f32,
+    pub scanline_offset: f32,
+}
+
+#[derive(Debug, Clone)]
+pub struct BootAnimator {
+    config: BootAnimationConfig,
+}
+
+impl BootAnimator {
+    pub fn new(config: BootAnimationConfig) -> Self {
+        Self { config }
+    }
+
+    pub fn generate_frames(&self, start_tick: u64) -> Vec<BootFrame> {
+        (0..self.config.frame_count)
+            .map(|i| {
+                let t = i as f32 * self.config.pulse_speed;
+                let noise = seeded_unit(self.config.seed, i);
+                let ring_radius = self.config.base_radius + (t.sin() * 0.18) + (noise * 0.07);
+                let glow = 0.55 + (t.cos().abs() * 0.35) + (noise * 0.1);
+                let hue_shift = (noise * 120.0) + (t.sin() * 35.0);
+                let scanline_offset = ((i as f32 * 0.11) + noise).fract();
+
+                BootFrame {
+                    frame_index: i,
+                    tick: start_tick + i as u64,
+                    ring_radius,
+                    glow,
+                    hue_shift,
+                    scanline_offset,
+                }
+            })
+            .collect()
+    }
+}
+
+fn seeded_unit(seed: u64, frame_index: u32) -> f32 {
+    let mut x = seed ^ ((frame_index as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15));
+    x ^= x >> 30;
+    x = x.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    x ^= x >> 27;
+    x = x.wrapping_mul(0x94D0_49BB_1331_11EB);
+    x ^= x >> 31;
+    (x as f64 / u64::MAX as f64) as f32
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -158,5 +230,36 @@ mod tests {
         assert_eq!(t, BackendTransition::Transitioned);
         assert_eq!(renderer.backend_status().mode, RenderBackendMode::WgpuPlanned);
         assert!(!renderer.backend_status().ready);
+    }
+
+    #[test]
+    fn boot_animation_is_deterministic_for_same_seed() {
+        let animator = BootAnimator::new(BootAnimationConfig {
+            seed: 42,
+            frame_count: 8,
+            ..BootAnimationConfig::default()
+        });
+
+        let a = animator.generate_frames(100);
+        let b = animator.generate_frames(100);
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn boot_animation_changes_with_seed() {
+        let a = BootAnimator::new(BootAnimationConfig {
+            seed: 1,
+            frame_count: 4,
+            ..BootAnimationConfig::default()
+        })
+        .generate_frames(0);
+        let b = BootAnimator::new(BootAnimationConfig {
+            seed: 2,
+            frame_count: 4,
+            ..BootAnimationConfig::default()
+        })
+        .generate_frames(0);
+
+        assert_ne!(a, b);
     }
 }

@@ -3,8 +3,8 @@ use aurex_ecs::{CommandBuffer, EcsCommand, EcsWorld, EntityId, Transform2p5D};
 use aurex_lighting::{LightDescriptor, LightKind};
 use aurex_postfx::BloomSettings;
 use aurex_render::{
-    CameraRig, MockRenderer, RenderBackendMode, RenderBootstrapConfig, RenderStage,
-    RENDER_MAIN_STAGES,
+    BootAnimationConfig, BootAnimator, CameraRig, MockRenderer, RenderBackendMode,
+    RenderBootstrapConfig, RenderStage, RENDER_MAIN_STAGES,
 };
 use aurex_shape_synth::{PrimitiveType, ShapeDescriptor};
 
@@ -68,6 +68,15 @@ fn main() {
     let transition = renderer.transition_backend_mode(RenderBackendMode::WgpuPlanned);
     let backend_after = renderer.backend_status();
 
+    let boot_animator = BootAnimator::new(BootAnimationConfig {
+        seed: 1337,
+        frame_count: 12,
+        ..BootAnimationConfig::default()
+    });
+    let boot_frames = boot_animator.generate_frames(clock.sim_tick.0);
+    let first_boot = &boot_frames[0];
+    let last_boot = &boot_frames[boot_frames.len() - 1];
+
     println!("Aurex runtime scaffold initialized.");
     println!("frame={} tick={}", clock.frame_index.0, clock.sim_tick.0);
     println!("camera_fov={}", camera.fov_degrees);
@@ -102,5 +111,14 @@ fn main() {
     println!(
         "render_backend_after={:?} backend_ready_after={}",
         backend_after.mode, backend_after.ready
+    );
+    println!("boot_frame_count={}", boot_frames.len());
+    println!(
+        "boot_first=tick:{} radius:{:.3} glow:{:.3} hue:{:.2}",
+        first_boot.tick, first_boot.ring_radius, first_boot.glow, first_boot.hue_shift
+    );
+    println!(
+        "boot_last=tick:{} radius:{:.3} glow:{:.3} hue:{:.2}",
+        last_boot.tick, last_boot.ring_radius, last_boot.glow, last_boot.hue_shift
     );
 }

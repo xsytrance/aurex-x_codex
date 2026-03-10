@@ -96,3 +96,10 @@ Render backend transition contract scaffolding added:
 • added explicit backend transition API in `aurex_render` (`transition_backend_mode`)
 • added readiness state transitions for `Mock` -> `WgpuPlanned`
 • expanded `aurex_app` runtime diagnostics to print backend transition lifecycle
+
+Phase 16
+First procedural boot animation prototype scaffolding added:
+
+• added deterministic `BootAnimator` and `BootFrame` contracts in `aurex_render`
+• added tests verifying same-seed determinism and cross-seed variation
+• integrated boot animation frame generation diagnostics into `aurex_app` output
