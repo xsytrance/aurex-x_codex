@@ -353,9 +353,23 @@ Completed:
 
 In progress / next:
 
-- M1 boot + window + camera
+- M1 boot + window + camera (using ADR-0005 backend constraints)
 - M2 procedural shape rendering path
 - M3 basic dynamic lighting
 - M4 bloom post-processing
 
 Note: current executable validates crate wiring and conductor tick flow; rendering backend integration is the immediate next implementation step.
+
+
+---
+
+## Architecture Acceptance Gate (for M1 Start)
+
+Before implementing M1 rendering backend integration, confirm:
+
+1. ADR-0001..ADR-0005 are accepted and reflected in docs.
+2. `aurex_render` remains the only crate containing backend/device-specific code.
+3. Conductor stage contracts remain unchanged unless updated via ADR.
+4. Runtime API contract changes are recorded in `docs/04_runtime_api.md` before code implementation.
+
+This gate is intended to prevent architecture drift while implementation velocity increases.

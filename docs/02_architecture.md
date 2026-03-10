@@ -126,3 +126,25 @@ Deterministic constraints:
 - Stable query iteration order in ECS systems.
 - Seeded random streams scoped by system and tick.
 - Frame-to-frame behavior reproducibility from identical input and seed.
+
+
+---
+
+## Rendering Backend Strategy (ADR-0005)
+
+Aurex rendering implementation baseline:
+
+- Runtime backend: `wgpu` + `winit`
+- Integration point: `aurex_render` crate only
+- API boundary: gameplay and ECS systems interact through runtime contracts, not backend objects
+
+Required boundaries:
+
+- `aurex_conductor`, `aurex_ecs`, and gameplay logic remain backend-agnostic.
+- `aurex_render` owns device initialization, swapchain lifecycle, pass graph, and shader orchestration.
+- Render pass inputs are typed descriptors (camera, shape, light, postfx) produced from deterministic snapshots.
+
+Portability profile:
+
+- Desktop parity (Linux/Windows/macOS) is required before web export.
+- Visual equivalence checks should be performed when validating new shader/pipeline features.

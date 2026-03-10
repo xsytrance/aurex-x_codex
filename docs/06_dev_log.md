@@ -54,3 +54,10 @@ System architecture documentation expanded with:
 • crate dependency graph and conductor stage contract (docs/02_architecture.md)
 • runtime API v0 contract definitions (docs/04_runtime_api.md)
 • initial ADR index and accepted architecture decisions (docs/08_architecture_decisions.md)
+
+Phase 10
+ADR-0005 accepted and documented:
+
+• selected `wgpu` + `winit` as the M1 rendering backend baseline
+• formalized backend isolation boundaries in architecture docs
+• added an architecture acceptance gate for starting M1 implementation

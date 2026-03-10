@@ -84,9 +84,47 @@ Tradeoffs:
 
 ---
 
+## ADR-0005: Rendering Backend and Portability Constraints
+
+Status: Accepted (M1 Baseline)
+
+Decision:
+
+Adopt a custom Aurex renderer in `aurex_render` built on `wgpu` + `winit` as the primary runtime backend.
+
+Portability target tiers:
+
+- Tier 1: Linux, Windows, macOS (desktop runtime and dev workflow)
+- Tier 2: Web (WASM) after desktop parity for core pipeline stages
+
+Backend constraints:
+
+- Keep graphics API details isolated in `aurex_render::device` and `aurex_render::passes`.
+- Keep conductor/ECS/runtime APIs backend-agnostic.
+- No gameplay-side dependency on GPU/shader internals.
+
+Rationale:
+
+- `wgpu` provides cross-platform backends with a single Rust-facing API.
+- Supports required pipeline control for procedural geometry, stylized lighting, and post-processing.
+- Preserves the contract-first architecture by isolating render implementation details.
+
+Tradeoffs:
+
+- More low-level implementation effort versus engine-level rendering abstractions.
+- Some backend-specific visual differences must be normalized in shader/pipeline validation.
+
+Implementation guidance:
+
+- M1: establish `window + device + swapchain + camera uniform` path.
+- M2: add procedural shape geometry pass.
+- M3: integrate stylized light buffer path.
+- M4: add bloom chain with deterministic parameter handling.
+
+---
+
 ## Recommended next ADRs
 
-- ADR-0005: Rendering backend selection and portability constraints.
 - ADR-0006: ECS implementation strategy (build vs adopt).
 - ADR-0007: `.axg` format versioning and compatibility policy.
 - ADR-0008: Audio clock authority and A/V sync boundary.
