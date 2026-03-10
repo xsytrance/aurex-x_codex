@@ -1,15 +1,15 @@
-use aurex_conductor::{execute_frame, ConductorClock, ConductorStage, MAIN_LOOP_STAGES};
+use aurex_conductor::{ConductorClock, ConductorStage, MAIN_LOOP_STAGES, execute_frame};
 use aurex_ecs::{CommandBuffer, EcsCommand, EcsWorld, EntityId, Transform2p5D};
 use aurex_lighting::{LightDescriptor, LightKind};
 use aurex_postfx::BloomSettings;
 use aurex_render::{
     BootAnimationConfig, BootAnimator, BootPostFxTrack, BootSequenceRecipe, BootStylePreset,
-    BootStyleProfile, CameraRig, MockRenderer, RenderBackendMode, RenderBootstrapConfig, RenderStage,
-    RENDER_MAIN_STAGES,
+    BootStyleProfile, CameraRig, MockRenderer, RENDER_MAIN_STAGES, RenderBackendMode,
+    RenderBootstrapConfig, RenderStage,
 };
 use aurex_shape_synth::{PrimitiveType, ShapeDescriptor};
 
-fn main() {
+fn runtime_diagnostics_report() -> String {
     let mut clock = ConductorClock::default();
     let camera = CameraRig::default();
 
@@ -90,87 +90,132 @@ fn main() {
     let postfx_track = BootPostFxTrack::from_timeline(&boot_timeline);
     let first_postfx = postfx_track.snapshot_for_tick(first_boot.tick).unwrap();
     let latest_postfx = postfx_track.latest_snapshot().unwrap();
-    let avg_styled_glow = boot_timeline.frames.iter().map(|f| f.styled_glow).sum::<f32>() / boot_timeline.frames.len() as f32;
-    let avg_distortion = boot_timeline.frames.iter().map(|f| f.distortion_weight).sum::<f32>() / boot_timeline.frames.len() as f32;
-    let avg_phase_t = boot_timeline.frames.iter().map(|f| f.phase_t).sum::<f32>() / boot_timeline.frames.len() as f32;
-    let avg_bloom_intent = boot_intents.iter().map(|i| i.bloom_weight).sum::<f32>() / boot_intents.len() as f32;
-    let avg_fog_intent = boot_intents.iter().map(|i| i.fog_weight).sum::<f32>() / boot_intents.len() as f32;
-    let peak_bloom_intent = boot_intents.iter().map(|i| i.bloom_weight).fold(0.0_f32, f32::max);
-    let avg_color_shift = boot_intents.iter().map(|i| i.color_shift).sum::<f32>() / boot_intents.len() as f32;
+    let avg_styled_glow = boot_timeline
+        .frames
+        .iter()
+        .map(|f| f.styled_glow)
+        .sum::<f32>()
+        / boot_timeline.frames.len() as f32;
+    let avg_distortion = boot_timeline
+        .frames
+        .iter()
+        .map(|f| f.distortion_weight)
+        .sum::<f32>()
+        / boot_timeline.frames.len() as f32;
+    let avg_phase_t = boot_timeline.frames.iter().map(|f| f.phase_t).sum::<f32>()
+        / boot_timeline.frames.len() as f32;
+    let avg_bloom_intent =
+        boot_intents.iter().map(|i| i.bloom_weight).sum::<f32>() / boot_intents.len() as f32;
+    let avg_fog_intent =
+        boot_intents.iter().map(|i| i.fog_weight).sum::<f32>() / boot_intents.len() as f32;
+    let peak_bloom_intent = boot_intents
+        .iter()
+        .map(|i| i.bloom_weight)
+        .fold(0.0_f32, f32::max);
+    let avg_color_shift =
+        boot_intents.iter().map(|i| i.color_shift).sum::<f32>() / boot_intents.len() as f32;
 
-    println!("Aurex runtime scaffold initialized.");
-    println!("frame={} tick={}", clock.frame_index.0, clock.sim_tick.0);
-    println!("camera_fov={}", camera.fov_degrees);
-    println!("shape_count={}", shapes.len());
-    println!("light_kind={:?} bloom_intensity={}", light.kind, bloom.intensity);
-    println!("conductor_stage_count={}", MAIN_LOOP_STAGES.len());
-    println!("ecs_entity_count={}", world.entity_count());
-    println!(
+    let mut lines = Vec::new();
+    lines.push("Aurex runtime scaffold initialized.".to_string());
+    lines.push(format!(
+        "frame={} tick={}",
+        clock.frame_index.0, clock.sim_tick.0
+    ));
+    lines.push(format!("camera_fov={}", camera.fov_degrees));
+    lines.push(format!("shape_count={}", shapes.len()));
+    lines.push(format!(
+        "light_kind={:?} bloom_intensity={}",
+        light.kind, bloom.intensity
+    ));
+    lines.push(format!("conductor_stage_count={}", MAIN_LOOP_STAGES.len()));
+    lines.push(format!("ecs_entity_count={}", world.entity_count()));
+    lines.push(format!(
         "render_bootstrap={} {}x{}",
         renderer.config().app_name,
         renderer.config().viewport_width,
         renderer.config().viewport_height
-    );
-    println!("render_stage_count={}", RENDER_MAIN_STAGES.len());
-    println!(
+    ));
+    lines.push(format!("render_stage_count={}", RENDER_MAIN_STAGES.len()));
+    lines.push(format!(
         "render_stages={:?}/{:?}/{:?}",
         RenderStage::RenderPrepare,
         RenderStage::Render,
         RenderStage::Present
-    );
-    println!(
+    ));
+    lines.push(format!(
         "render_frame_id={} render_stages_executed={}",
         render_stats.frame_id, render_stats.stages_executed
-    );
-    println!("conductor_trace_stages={}", trace.stages.len());
-    println!("render_stages_seen_by_conductor={}", visited.len());
-    println!(
+    ));
+    lines.push(format!("conductor_trace_stages={}", trace.stages.len()));
+    lines.push(format!("render_stages_seen_by_conductor={}", visited.len()));
+    lines.push(format!(
         "render_backend_before={:?} backend_ready_before={}",
         backend_before.mode, backend_before.ready
-    );
-    println!("render_backend_transition={:?}", transition);
-    println!(
+    ));
+    lines.push(format!("render_backend_transition={:?}", transition));
+    lines.push(format!(
         "render_backend_after={:?} backend_ready_after={}",
         backend_after.mode, backend_after.ready
-    );
-    println!("boot_frame_count={}", boot_frames.len());
-    println!(
+    ));
+    lines.push(format!("boot_frame_count={}", boot_frames.len()));
+    lines.push(format!(
         "boot_first=tick:{} radius:{:.3} glow:{:.3} hue:{:.2}",
         first_boot.tick, first_boot.ring_radius, first_boot.glow, first_boot.hue_shift
-    );
-    println!(
+    ));
+    lines.push(format!(
         "boot_last=tick:{} radius:{:.3} glow:{:.3} hue:{:.2}",
         last_boot.tick, last_boot.ring_radius, last_boot.glow, last_boot.hue_shift
-    );
-    println!(
+    ));
+    lines.push(format!(
         "boot_phases=Ignition:{} PulseLock:{} Reveal:{}",
         phase_ignition, phase_pulse_lock, phase_reveal
-    );
-    println!("boot_style_preset={:?}", boot_style.preset);
-    println!("boot_sequence_recipe={:?}", boot_recipe);
-    println!(
+    ));
+    lines.push(format!("boot_style_preset={:?}", boot_style.preset));
+    lines.push(format!("boot_sequence_recipe={:?}", boot_recipe));
+    lines.push(format!(
         "boot_style_avg=glow:{:.3} distortion:{:.3} phase_t:{:.3}",
         avg_styled_glow, avg_distortion, avg_phase_t
-    );
-    println!(
+    ));
+    lines.push(format!(
         "boot_intent_avg=bloom:{:.3} fog:{:.3} color_shift:{:.3}",
         avg_bloom_intent, avg_fog_intent, avg_color_shift
-    );
-    println!("boot_intent_peak_bloom={:.3}", peak_bloom_intent);
-    println!(
+    ));
+    lines.push(format!("boot_intent_peak_bloom={:.3}", peak_bloom_intent));
+    lines.push(format!(
         "boot_postfx_avg=bloom:{:.3} fog:{:.3} distortion:{:.3} color_shift:{:.3}",
         boot_postfx.avg_bloom,
         boot_postfx.avg_fog,
         boot_postfx.avg_distortion,
         boot_postfx.avg_color_shift
-    );
-    println!("boot_postfx_peak_bloom={:.3}", boot_postfx.peak_bloom);
-    println!(
+    ));
+    lines.push(format!(
+        "boot_postfx_peak_bloom={:.3}",
+        boot_postfx.peak_bloom
+    ));
+    lines.push(format!(
         "boot_postfx_first=tick:{} bloom:{:.3} fog:{:.3}",
         first_postfx.tick, first_postfx.bloom_strength, first_postfx.fog_density
-    );
-    println!(
+    ));
+    lines.push(format!(
         "boot_postfx_latest=tick:{} bloom:{:.3} fog:{:.3}",
         latest_postfx.tick, latest_postfx.bloom_strength, latest_postfx.fog_density
-    );
+    ));
+
+    lines.join("\n")
+}
+
+fn main() {
+    println!("{}", runtime_diagnostics_report());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::runtime_diagnostics_report;
+
+    #[test]
+    fn diagnostics_report_matches_expected_snapshot() {
+        let expected = "Aurex runtime scaffold initialized.\nframe=1 tick=1\ncamera_fov=60\nshape_count=3\nlight_kind=Pulse bloom_intensity=0.25\nconductor_stage_count=7\necs_entity_count=2\nrender_bootstrap=Aurex-X 1280x720\nrender_stage_count=3\nrender_stages=RenderPrepare/Render/Present\nrender_frame_id=1 render_stages_executed=3\nconductor_trace_stages=7\nrender_stages_seen_by_conductor=3\nrender_backend_before=Mock backend_ready_before=true\nrender_backend_transition=Transitioned\nrender_backend_after=WgpuPlanned backend_ready_after=false\nboot_frame_count=12\nboot_first=tick:1 radius:1.021 glow:0.931 hue:36.79\nboot_last=tick:12 radius:1.040 glow:0.987 hue:103.46\nboot_phases=Ignition:5 PulseLock:3 Reveal:4\nboot_style_preset=NeonStorm\nboot_sequence_recipe=GrandReveal\nboot_style_avg=glow:0.914 distortion:0.543 phase_t:0.375\nboot_intent_avg=bloom:0.894 fog:0.229 color_shift:98.395\nboot_intent_peak_bloom=1.179\nboot_postfx_avg=bloom:0.894 fog:0.229 distortion:0.543 color_shift:98.395\nboot_postfx_peak_bloom=1.179\nboot_postfx_first=tick:1 bloom:0.752 fog:0.050\nboot_postfx_latest=tick:12 bloom:1.108 fog:0.560";
+
+        assert_eq!(runtime_diagnostics_report(), expected);
+    }
 }

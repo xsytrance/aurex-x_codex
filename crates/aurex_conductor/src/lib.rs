@@ -50,7 +50,10 @@ pub struct FrameExecutionTrace {
     pub stages: Vec<ConductorStage>,
 }
 
-pub fn execute_frame(clock: &mut ConductorClock, mut visit: impl FnMut(ConductorStage)) -> FrameExecutionTrace {
+pub fn execute_frame(
+    clock: &mut ConductorClock,
+    mut visit: impl FnMut(ConductorStage),
+) -> FrameExecutionTrace {
     let mut trace = FrameExecutionTrace::default();
 
     for stage in MAIN_LOOP_STAGES {

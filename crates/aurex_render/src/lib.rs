@@ -332,7 +332,6 @@ pub struct BootRenderIntent {
     pub color_shift: f32,
 }
 
-
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BootPostFxSnapshot {
     pub tick: u64,
@@ -350,7 +349,6 @@ pub struct BootPostFxAggregate {
     pub avg_color_shift: f32,
     pub peak_bloom: f32,
 }
-
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct BootPostFxTrack {
@@ -525,9 +523,13 @@ impl BootAnimator {
 
         let ignition_end = ((total as f32 * self.sequence.ignition_ratio).round() as usize)
             .clamp(1, total.saturating_sub(2).max(1));
-        let pulse_lock_end = ((total as f32 * (self.sequence.ignition_ratio + self.sequence.pulse_lock_ratio))
+        let pulse_lock_end = ((total as f32
+            * (self.sequence.ignition_ratio + self.sequence.pulse_lock_ratio))
             .round() as usize)
-            .clamp(ignition_end + 1, total.saturating_sub(1).max(ignition_end + 1));
+            .clamp(
+                ignition_end + 1,
+                total.saturating_sub(1).max(ignition_end + 1),
+            );
 
         let ignition_span = ignition_end.max(1);
         let pulse_lock_span = pulse_lock_end.saturating_sub(ignition_end).max(1);
@@ -606,7 +608,10 @@ mod tests {
         let t = renderer.transition_backend_mode(RenderBackendMode::WgpuPlanned);
 
         assert_eq!(t, BackendTransition::Transitioned);
-        assert_eq!(renderer.backend_status().mode, RenderBackendMode::WgpuPlanned);
+        assert_eq!(
+            renderer.backend_status().mode,
+            RenderBackendMode::WgpuPlanned
+        );
         assert!(!renderer.backend_status().ready);
     }
 
@@ -764,7 +769,6 @@ mod tests {
         assert!(agg.peak_bloom >= agg.avg_bloom);
         assert!(agg.avg_fog >= 0.0);
     }
-
 
     #[test]
     fn postfx_track_supports_tick_lookup() {

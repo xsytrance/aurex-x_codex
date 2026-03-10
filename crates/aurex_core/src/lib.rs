@@ -14,6 +14,8 @@ pub struct FixedDelta {
 
 impl Default for FixedDelta {
     fn default() -> Self {
-        Self { seconds: 1.0 / 120.0 }
+        Self {
+            seconds: 1.0 / 120.0,
+        }
     }
 }

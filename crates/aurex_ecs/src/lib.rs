@@ -22,8 +22,12 @@ impl Default for Transform2p5D {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum EcsCommand {
-    SpawnEntity { entity: EntityId },
-    DespawnEntity { entity: EntityId },
+    SpawnEntity {
+        entity: EntityId,
+    },
+    DespawnEntity {
+        entity: EntityId,
+    },
     SetTransform {
         entity: EntityId,
         transform: Transform2p5D,
@@ -120,7 +124,10 @@ mod tests {
         world.apply_commands(&mut commands);
 
         assert_eq!(world.entity_count(), 3);
-        assert_eq!(world.ordered_entities(), vec![EntityId(1), EntityId(2), EntityId(3)]);
+        assert_eq!(
+            world.ordered_entities(),
+            vec![EntityId(1), EntityId(2), EntityId(3)]
+        );
     }
 
     #[test]
