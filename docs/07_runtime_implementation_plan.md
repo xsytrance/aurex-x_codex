@@ -382,3 +382,8 @@ Before implementing M1 rendering backend integration, confirm:
 4. Runtime API contract changes are recorded in `docs/04_runtime_api.md` before code implementation.
 
 This gate is intended to prevent architecture drift while implementation velocity increases.
+
+
+M1 bootstrap note:
+
+- A non-GPU mock renderer path may be used temporarily to validate stage contracts (`RenderPrepare`/`Render`/`Present`) before backend wiring (`wgpu` + `winit`) is introduced.

@@ -75,3 +75,10 @@ Implemented M1.5 scaffolding in code:
 • added deterministic ECS command buffer + sorted command application path in `aurex_ecs`
 • added initial ECS invariants tests for ordering/reproducibility
 • added conductor stage enum/constants in `aurex_conductor` aligned with architecture stage graph
+
+Phase 13
+Accelerated M1 bootstrap scaffolding:
+
+• added `aurex_render` mock renderer bootstrap contracts (`RenderBootstrapConfig`, `RenderStage`, `RENDER_MAIN_STAGES`)
+• added render frame stats tracking contract for stage execution verification
+• integrated render stage/bootstrap diagnostics into `aurex_app` runtime output
