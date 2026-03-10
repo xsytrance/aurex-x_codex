@@ -152,6 +152,41 @@ impl RenderBootstrapPlan {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenderBootstrapExecutor {
+    plan: RenderBootstrapPlan,
+    next_step_index: usize,
+}
+
+impl RenderBootstrapExecutor {
+    pub fn new(mode: RenderBackendMode) -> Self {
+        Self {
+            plan: RenderBootstrapPlan::for_mode(mode),
+            next_step_index: 0,
+        }
+    }
+
+    pub fn execute_next(&mut self) -> Option<RenderBootstrapStep> {
+        let step = self.plan.tasks.get(self.next_step_index).map(|t| t.step)?;
+        self.next_step_index += 1;
+        Some(step)
+    }
+
+    pub fn completed_count(&self) -> usize {
+        self.next_step_index.min(self.plan.tasks.len())
+    }
+
+    pub fn total_count(&self) -> usize {
+        self.plan.tasks.len()
+    }
+
+    pub fn last_completed_step(&self) -> Option<RenderBootstrapStep> {
+        self.next_step_index
+            .checked_sub(1)
+            .and_then(|idx| self.plan.tasks.get(idx).map(|t| t.step))
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct RenderFrameStats {
     pub frame_id: u64,
@@ -743,6 +778,26 @@ mod tests {
         assert_eq!(first.frame_id, 1);
         assert_eq!(second.frame_id, 2);
         assert_eq!(first.stages_executed, 3);
+    }
+
+    #[test]
+    fn bootstrap_executor_advances_through_steps() {
+        let mut executor = RenderBootstrapExecutor::new(RenderBackendMode::WgpuPlanned);
+
+        assert_eq!(executor.completed_count(), 0);
+        assert_eq!(executor.total_count(), 7);
+
+        let mut last = None;
+        while let Some(step) = executor.execute_next() {
+            last = Some(step);
+        }
+
+        assert_eq!(executor.completed_count(), executor.total_count());
+        assert_eq!(executor.last_completed_step(), last);
+        assert_eq!(
+            executor.last_completed_step(),
+            Some(RenderBootstrapStep::DrawBootScreen)
+        );
     }
 
     #[test]

@@ -187,3 +187,10 @@ Renderer M1 bootstrap execution map added:
 • added `RenderBootstrapPlan` contract with explicit step-level readiness for first real `wgpu` window path
 • exposed step map summary and ready/total counts in `aurex_app` diagnostics for implementation tracking
 • added tests to guarantee deterministic bootstrap-step contract mapping by backend mode
+
+Phase 29
+Renderer bootstrap executor progression contract added:
+
+• added `RenderBootstrapExecutor` in `aurex_render` for deterministic step-by-step bring-up simulation
+• expanded runtime diagnostics with bootstrap executor progress and last completed step
+• added test coverage for full executor traversal through `DrawBootScreen`

@@ -6,7 +6,8 @@ use aurex_postfx::BloomSettings;
 use aurex_render::{
     BootAnimationConfig, BootAnimator, BootPostFxTrack, BootSequenceRecipe, BootStylePreset,
     BootStyleProfile, CameraRig, MockRenderer, RENDER_MAIN_STAGES, RenderBackendMode,
-    RenderBackendReadiness, RenderBootstrapConfig, RenderBootstrapPlan, RenderStage,
+    RenderBackendReadiness, RenderBootstrapConfig, RenderBootstrapExecutor, RenderBootstrapPlan,
+    RenderStage,
 };
 use aurex_shape_synth::{PrimitiveType, ShapeDescriptor};
 
@@ -78,6 +79,8 @@ fn runtime_diagnostics_report() -> String {
     let backend_after = renderer.backend_status();
     let render_readiness = RenderBackendReadiness::for_mode(backend_after.mode);
     let render_bootstrap_plan = RenderBootstrapPlan::for_mode(backend_after.mode);
+    let mut render_bootstrap_executor = RenderBootstrapExecutor::new(backend_after.mode);
+    while render_bootstrap_executor.execute_next().is_some() {}
 
     let boot_style = BootStyleProfile::from_preset(BootStylePreset::NeonStorm);
     let boot_recipe = BootSequenceRecipe::GrandReveal;
@@ -204,6 +207,18 @@ fn runtime_diagnostics_report() -> String {
         "render_bootstrap_step_map={}",
         render_bootstrap_plan.summary()
     ));
+    lines.push(format!(
+        "render_bootstrap_executor_progress={}/{}",
+        render_bootstrap_executor.completed_count(),
+        render_bootstrap_executor.total_count()
+    ));
+    lines.push(format!(
+        "render_bootstrap_executor_last_step={}",
+        render_bootstrap_executor
+            .last_completed_step()
+            .map(|step| step.as_str())
+            .unwrap_or("None")
+    ));
     lines.push(format!("boot_frame_count={}", boot_frames.len()));
     lines.push(format!(
         "boot_first=tick:{} radius:{:.3} glow:{:.3} hue:{:.2}",
@@ -304,6 +319,8 @@ render_backend_after=WgpuPlanned backend_ready_after=false
 render_m1_readiness=windowing:true gpu:true can_present:true
 render_bootstrap_ready_steps=7/7
 render_bootstrap_step_map=InitWindow:true,InitWgpuInstance:true,InitSurface:true,RequestDevice:true,ConfigureSwapchain:true,UploadBootScreenQuad:true,DrawBootScreen:true
+render_bootstrap_executor_progress=7/7
+render_bootstrap_executor_last_step=DrawBootScreen
 boot_frame_count=12
 boot_first=tick:1 radius:1.021 glow:0.931 hue:36.79
 boot_last=tick:12 radius:1.040 glow:0.987 hue:103.46
