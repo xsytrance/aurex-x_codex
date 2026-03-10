@@ -47,3 +47,10 @@ Executed Milestone M0 (workspace foundation) by converting the repository into a
 • aurex_shape_synth
 • aurex_lighting
 • aurex_postfx
+
+Phase 9
+System architecture documentation expanded with:
+
+• crate dependency graph and conductor stage contract (docs/02_architecture.md)
+• runtime API v0 contract definitions (docs/04_runtime_api.md)
+• initial ADR index and accepted architecture decisions (docs/08_architecture_decisions.md)
