@@ -219,6 +219,64 @@ pub fn attempt_real_renderer_bootstrap() -> RealRendererBootstrapStatus {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BootFramebuffer {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+}
+
+impl BootFramebuffer {
+    pub fn pixel_count(&self) -> usize {
+        self.rgba.len() / 4
+    }
+
+    pub fn lit_pixel_count(&self) -> usize {
+        self.rgba
+            .chunks_exact(4)
+            .filter(|px| px[0] > 0 || px[1] > 0 || px[2] > 0)
+            .count()
+    }
+}
+
+pub fn rasterize_boot_frame(frame: &BootFrame, width: u32, height: u32) -> BootFramebuffer {
+    let mut rgba = vec![0_u8; width as usize * height as usize * 4];
+    let cx = width as f32 * 0.5;
+    let cy = height as f32 * 0.5;
+    let min_dim = width.min(height) as f32;
+    let ring_radius = (frame.ring_radius * min_dim * 0.24).max(1.0);
+    let ring_thickness = (2.0 + frame.glow * 3.5).clamp(1.0, 9.0);
+
+    let hue = ((frame.hue_shift + 360.0) % 360.0) / 360.0;
+    let base_r = (0.35 + hue).fract();
+    let base_g = (0.65 + hue * 0.75).fract();
+    let base_b = (0.95 + hue * 0.5).fract();
+
+    for y in 0..height {
+        for x in 0..width {
+            let dx = x as f32 - cx;
+            let dy = y as f32 - cy;
+            let dist = (dx * dx + dy * dy).sqrt();
+            let ring_delta = (dist - ring_radius).abs();
+            let ring = (1.0 - (ring_delta / ring_thickness)).clamp(0.0, 1.0);
+            let center_glow = (1.0 - dist / (ring_radius * 1.4)).clamp(0.0, 1.0) * frame.glow;
+            let intensity = (ring * 0.9 + center_glow * 0.45).clamp(0.0, 1.0);
+
+            let idx = ((y * width + x) * 4) as usize;
+            rgba[idx] = (base_r * intensity * 255.0) as u8;
+            rgba[idx + 1] = (base_g * intensity * 255.0) as u8;
+            rgba[idx + 2] = (base_b * intensity * 255.0) as u8;
+            rgba[idx + 3] = (intensity * 255.0) as u8;
+        }
+    }
+
+    BootFramebuffer {
+        width,
+        height,
+        rgba,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct RenderFrameStats {
     pub frame_id: u64,
@@ -1110,5 +1168,41 @@ mod tests {
         .generate_timeline(0);
 
         assert_ne!(standard.phase_counts(), quick.phase_counts());
+    }
+
+    #[test]
+    fn rasterized_boot_frame_matches_requested_dimensions() {
+        let frame = BootFrame {
+            frame_index: 0,
+            tick: 0,
+            ring_radius: 0.95,
+            glow: 0.8,
+            hue_shift: 22.0,
+            scanline_offset: 0.0,
+        };
+
+        let image = rasterize_boot_frame(&frame, 96, 54);
+        assert_eq!(image.width, 96);
+        assert_eq!(image.height, 54);
+        assert_eq!(image.pixel_count(), 96 * 54);
+        assert_eq!(image.rgba.len(), 96 * 54 * 4);
+    }
+
+    #[test]
+    fn rasterized_boot_frame_contains_visible_pixels() {
+        let frame = BootFrame {
+            frame_index: 3,
+            tick: 3,
+            ring_radius: 1.05,
+            glow: 0.9,
+            hue_shift: 128.0,
+            scanline_offset: 0.0,
+        };
+
+        let image = rasterize_boot_frame(&frame, 128, 128);
+        let lit = image.lit_pixel_count();
+
+        assert!(lit > 0);
+        assert!(lit < image.pixel_count());
     }
 }
