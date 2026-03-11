@@ -1,0 +1,35 @@
+{
+  "name": "particle_storm",
+  "seed": 77,
+  "sdf_scene": {
+    "root_node": {
+      "base": {
+        "type": "noise_field",
+        "scale": { "kind": "value", "value": 2.0 },
+        "amplitude": { "kind": "value", "value": 0.45 },
+        "octaves": 5,
+        "seed": 91
+      },
+      "modifiers": [
+        { "type": "bend", "amount": { "kind": "expression", "expression": "sin(time)*0.2" } },
+        { "type": "mirror", "normal": { "x": { "kind": "value", "value": 1.0 }, "y": { "kind": "value", "value": 0.0 }, "z": { "kind": "value", "value": 0.0 } }, "offset": { "kind": "value", "value": 0.0 } }
+      ]
+    },
+    "materials": [
+      { "id": "spark", "albedo": [1.0, 0.8, 0.2], "roughness": 0.1, "metallic": 0.4, "emissive": [0.8, 0.5, 0.1] }
+    ],
+    "lighting": {
+      "ambient": [0.05, 0.05, 0.08],
+      "key_lights": [
+        { "direction": [-0.2, -1.0, 0.4], "color": [0.6, 0.8, 1.0], "intensity": 1.8, "jitter_seed": 5 }
+      ]
+    }
+  },
+  "audio_sync_bindings": {
+    "reactive_parameters": [
+      { "node": "ParticleEmitter", "parameter": "burst", "audio_source": "hi_hat", "multiplier": 1.2, "offset": 0.0 },
+      { "node": "TunnelCore", "parameter": "pulse", "audio_source": "bass", "multiplier": 2.0, "offset": 0.3 },
+      { "node": "CameraRig", "parameter": "shake", "audio_source": "snare", "multiplier": 0.6, "offset": 0.0 }
+    ]
+  }
+}

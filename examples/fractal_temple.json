@@ -1,0 +1,34 @@
+{
+  "name": "fractal_temple",
+  "seed": 2024,
+  "sdf_scene": {
+    "root_node": {
+      "base": {
+        "type": "fractal_mandelbulb",
+        "power": { "kind": "value", "value": 8.0 },
+        "iterations": 12,
+        "bailout": { "kind": "value", "value": 4.0 },
+        "scale": { "kind": "value", "value": 1.0 },
+        "seed": 404
+      },
+      "modifiers": [
+        { "type": "rotate", "axis": { "x": { "kind": "value", "value": 0.0 }, "y": { "kind": "value", "value": 1.0 }, "z": { "kind": "value", "value": 0.0 } }, "angle": { "kind": "expression", "expression": "time*0.2" } },
+        { "type": "translate", "offset": { "x": { "kind": "value", "value": 0.0 }, "y": { "kind": "value", "value": -0.5 }, "z": { "kind": "value", "value": 0.0 } } }
+      ]
+    },
+    "materials": [
+      { "id": "stone_fractal", "albedo": [0.4, 0.35, 0.3], "roughness": 0.85, "metallic": 0.1, "emissive": [0.02, 0.01, 0.01] }
+    ],
+    "lighting": {
+      "ambient": [0.02, 0.02, 0.02],
+      "key_lights": [
+        { "direction": [0.2, -1.0, -0.3], "color": [1.0, 0.9, 0.7], "intensity": 3.0, "jitter_seed": 12 }
+      ]
+    }
+  },
+  "audio_sync_bindings": {
+    "reactive_parameters": [
+      { "node": "TempleCamera", "parameter": "orbit_speed", "audio_source": "kick", "multiplier": 0.25, "offset": 0.1 }
+    ]
+  }
+}
