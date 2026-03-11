@@ -7,7 +7,7 @@ use aurex_render::{
     BootAnimationConfig, BootAnimator, BootPostFxTrack, BootSequenceRecipe, BootStylePreset,
     BootStyleProfile, CameraRig, MockRenderer, RENDER_MAIN_STAGES, RenderBackendMode,
     RenderBackendReadiness, RenderBootstrapConfig, RenderBootstrapExecutor, RenderBootstrapPlan,
-    RenderStage, attempt_real_renderer_bootstrap,
+    RenderStage, attempt_real_renderer_bootstrap, rasterize_boot_frame,
 };
 use aurex_shape_synth::{PrimitiveType, ShapeDescriptor};
 
@@ -97,6 +97,8 @@ fn runtime_diagnostics_report() -> String {
     let boot_frames = boot_animator.generate_frames(clock.sim_tick.0);
     let first_boot = &boot_frames[0];
     let last_boot = &boot_frames[boot_frames.len() - 1];
+    let boot_first_raster = rasterize_boot_frame(first_boot, 320, 180);
+    let boot_last_raster = rasterize_boot_frame(last_boot, 320, 180);
     let boot_timeline = boot_animator.generate_timeline(clock.sim_tick.0);
     let (phase_ignition, phase_pulse_lock, phase_reveal) = boot_timeline.phase_counts();
     let boot_intents = boot_timeline.derive_render_intents();
@@ -286,6 +288,20 @@ fn runtime_diagnostics_report() -> String {
         "boot_postfx_latest=tick:{} bloom:{:.3} fog:{:.3}",
         latest_postfx.tick, latest_postfx.bloom_strength, latest_postfx.fog_density
     ));
+    lines.push(format!(
+        "boot_raster_first={}x{} lit:{} checksum:{}",
+        boot_first_raster.width,
+        boot_first_raster.height,
+        boot_first_raster.lit_pixel_count(),
+        boot_first_raster.checksum()
+    ));
+    lines.push(format!(
+        "boot_raster_latest={}x{} lit:{} checksum:{}",
+        boot_last_raster.width,
+        boot_last_raster.height,
+        boot_last_raster.lit_pixel_count(),
+        boot_last_raster.checksum()
+    ));
 
     lines.join("\n")
 }
@@ -343,7 +359,9 @@ boot_postfx_peak_bloom=1.179
 boot_screen_first=tick:1 progress:0.000 glow:0.566 glyphs:1
 boot_screen_latest=tick:12 progress:0.750 glow:1.108 glyphs:6
 boot_postfx_first=tick:1 bloom:0.752 fog:0.050
-boot_postfx_latest=tick:12 bloom:1.108 fog:0.560";
+boot_postfx_latest=tick:12 bloom:1.108 fog:0.560
+boot_raster_first=320x180 lit:11669 checksum:2473417577251446740
+boot_raster_latest=320x180 lit:12169 checksum:3319277554687216313";
 
         assert_eq!(runtime_diagnostics_report(), expected);
     }
