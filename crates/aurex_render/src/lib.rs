@@ -237,6 +237,16 @@ impl BootFramebuffer {
             .filter(|px| px[0] > 0 || px[1] > 0 || px[2] > 0)
             .count()
     }
+
+    pub fn checksum(&self) -> u64 {
+        self.rgba
+            .iter()
+            .enumerate()
+            .fold(0_u64, |acc, (idx, byte)| {
+                let weighted = (*byte as u64).wrapping_mul((idx as u64 % 251) + 1);
+                acc.wrapping_mul(1_099_511_628_211).wrapping_add(weighted)
+            })
+    }
 }
 
 pub fn rasterize_boot_frame(frame: &BootFrame, width: u32, height: u32) -> BootFramebuffer {
@@ -1186,6 +1196,22 @@ mod tests {
         assert_eq!(image.height, 54);
         assert_eq!(image.pixel_count(), 96 * 54);
         assert_eq!(image.rgba.len(), 96 * 54 * 4);
+    }
+
+    #[test]
+    fn rasterized_boot_frame_checksum_is_deterministic() {
+        let frame = BootFrame {
+            frame_index: 7,
+            tick: 7,
+            ring_radius: 1.12,
+            glow: 0.73,
+            hue_shift: 214.0,
+            scanline_offset: 0.0,
+        };
+
+        let a = rasterize_boot_frame(&frame, 80, 45);
+        let b = rasterize_boot_frame(&frame, 80, 45);
+        assert_eq!(a.checksum(), b.checksum());
     }
 
     #[test]
