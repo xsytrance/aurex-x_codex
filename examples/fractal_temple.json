@@ -2,8 +2,16 @@
   "sdf": {
     "seed": 1337,
     "camera": {
-      "position": { "x": 0.0, "y": 1.1, "z": -5.5 },
-      "target": { "x": 0.0, "y": 0.2, "z": 0.0 },
+      "position": {
+        "x": 0.0,
+        "y": 1.1,
+        "z": -5.5
+      },
+      "target": {
+        "x": 0.0,
+        "y": 0.2,
+        "z": 0.0
+      },
       "fov_degrees": 55.0,
       "aspect_ratio": 1.7777778
     },
@@ -11,11 +19,26 @@
       "ambient_light": 0.2,
       "key_lights": [
         {
-          "direction": { "x": -0.5, "y": -0.9, "z": -0.4 },
+          "direction": {
+            "x": -0.5,
+            "y": -0.9,
+            "z": -0.4
+          },
           "intensity": 1.35,
-          "color": { "x": 1.0, "y": 0.9, "z": 0.75 }
+          "color": {
+            "x": 1.0,
+            "y": 0.9,
+            "z": 0.75
+          }
         }
-      ]
+      ],
+      "fog_color": {
+        "x": 0.1,
+        "y": 0.09,
+        "z": 0.08
+      },
+      "fog_density": 0.04,
+      "fog_height_falloff": 0.1
     },
     "root": {
       "Union": {
@@ -23,19 +46,44 @@
           {
             "Primitive": {
               "object": {
-                "primitive": { "Mandelbulb": { "power": 8.0, "iterations": 12, "bailout": 4.0 } },
+                "primitive": {
+                  "Mandelbulb": {
+                    "power": 8.0,
+                    "iterations": 12,
+                    "bailout": 4.0
+                  }
+                },
                 "modifiers": [
-                  { "Scale": { "factor": 1.2 } },
-                  { "Rotate": { "axis": { "x": 0.0, "y": 1.0, "z": 0.0 }, "radians": 0.4 } }
+                  {
+                    "Scale": {
+                      "factor": 1.2
+                    }
+                  },
+                  {
+                    "Rotate": {
+                      "axis": {
+                        "x": 0.0,
+                        "y": 1.0,
+                        "z": 0.0
+                      },
+                      "radians": 0.4
+                    }
+                  }
                 ],
                 "bounds_radius": 3.5,
                 "material": {
                   "material_type": "FractalMetal",
-                  "base_color": { "x": 0.9, "y": 0.75, "z": 0.45 },
+                  "base_color": {
+                    "x": 0.9,
+                    "y": 0.75,
+                    "z": 0.45
+                  },
                   "emissive_strength": 0.08,
                   "roughness": 0.22,
                   "pattern": "Rings",
-                  "parameters": { "micro_noise": 1.6 }
+                  "parameters": {
+                    "micro_noise": 1.6
+                  }
                 }
               }
             }
@@ -43,22 +91,50 @@
           {
             "Transform": {
               "modifiers": [
-                { "Repeat": { "cell": { "x": 2.4, "y": 0.0, "z": 2.4 } } },
-                { "Translate": { "offset": { "x": 0.0, "y": -0.4, "z": 0.0 } } }
+                {
+                  "Repeat": {
+                    "cell": {
+                      "x": 2.4,
+                      "y": 0.0,
+                      "z": 2.4
+                    }
+                  }
+                },
+                {
+                  "Translate": {
+                    "offset": {
+                      "x": 0.0,
+                      "y": -0.4,
+                      "z": 0.0
+                    }
+                  }
+                }
               ],
               "bounds_radius": 5.5,
               "child": {
                 "Primitive": {
                   "object": {
-                    "primitive": { "Cylinder": { "radius": 0.22, "half_height": 1.2 } },
+                    "primitive": {
+                      "Cylinder": {
+                        "radius": 0.22,
+                        "half_height": 1.2
+                      }
+                    },
                     "bounds_radius": 1.4,
                     "material": {
                       "material_type": "Wireframe",
-                      "base_color": { "x": 0.95, "y": 0.8, "z": 0.55 },
+                      "base_color": {
+                        "x": 0.95,
+                        "y": 0.8,
+                        "z": 0.55
+                      },
                       "emissive_strength": 0.15,
                       "roughness": 0.35,
                       "pattern": "Checker",
-                      "parameters": { "wire_scale": 10.0, "wire_width": 0.07 }
+                      "parameters": {
+                        "wire_scale": 10.0,
+                        "wire_width": 0.07
+                      }
                     }
                   }
                 }

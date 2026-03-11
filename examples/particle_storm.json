@@ -2,8 +2,16 @@
   "sdf": {
     "seed": 9001,
     "camera": {
-      "position": { "x": 0.0, "y": 0.0, "z": -6.0 },
-      "target": { "x": 0.0, "y": 0.0, "z": 0.0 },
+      "position": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": -6.0
+      },
+      "target": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
       "fov_degrees": 60.0,
       "aspect_ratio": 1.7777778
     },
@@ -11,11 +19,26 @@
       "ambient_light": 0.18,
       "key_lights": [
         {
-          "direction": { "x": -0.2, "y": -1.0, "z": -0.6 },
+          "direction": {
+            "x": -0.2,
+            "y": -1.0,
+            "z": -0.6
+          },
           "intensity": 1.25,
-          "color": { "x": 0.8, "y": 0.85, "z": 1.0 }
+          "color": {
+            "x": 0.8,
+            "y": 0.85,
+            "z": 1.0
+          }
         }
-      ]
+      ],
+      "fog_color": {
+        "x": 0.04,
+        "y": 0.06,
+        "z": 0.1
+      },
+      "fog_density": 0.03,
+      "fog_height_falloff": 0.04
     },
     "root": {
       "Intersect": {
@@ -23,15 +46,28 @@
           {
             "Primitive": {
               "object": {
-                "primitive": { "NoiseField": { "radius": 2.8, "amplitude": 0.25, "frequency": 1.6, "seed": 123 } },
+                "primitive": {
+                  "NoiseField": {
+                    "radius": 2.8,
+                    "amplitude": 0.25,
+                    "frequency": 1.6,
+                    "seed": 123
+                  }
+                },
                 "bounds_radius": 3.2,
                 "material": {
                   "material_type": "Holographic",
-                  "base_color": { "x": 0.22, "y": 0.33, "z": 0.6 },
+                  "base_color": {
+                    "x": 0.22,
+                    "y": 0.33,
+                    "z": 0.6
+                  },
                   "emissive_strength": 0.45,
                   "roughness": 0.18,
                   "pattern": "Bands",
-                  "parameters": { "shift_speed": 3.0 }
+                  "parameters": {
+                    "shift_speed": 3.0
+                  }
                 }
               }
             }
@@ -39,23 +75,57 @@
           {
             "Transform": {
               "modifiers": [
-                { "Repeat": { "cell": { "x": 0.8, "y": 0.8, "z": 0.8 } } },
-                { "NoiseDisplacement": { "amplitude": 0.1, "frequency": 2.1, "seed": 77 } },
-                { "Mirror": { "normal": { "x": 1.0, "y": 0.0, "z": 0.0 }, "offset": 0.0 } }
+                {
+                  "Repeat": {
+                    "cell": {
+                      "x": 0.8,
+                      "y": 0.8,
+                      "z": 0.8
+                    }
+                  }
+                },
+                {
+                  "NoiseDisplacement": {
+                    "amplitude": 0.1,
+                    "frequency": 2.1,
+                    "seed": 77
+                  }
+                },
+                {
+                  "Mirror": {
+                    "normal": {
+                      "x": 1.0,
+                      "y": 0.0,
+                      "z": 0.0
+                    },
+                    "offset": 0.0
+                  }
+                }
               ],
               "bounds_radius": 3.6,
               "child": {
                 "Primitive": {
                   "object": {
-                    "primitive": { "Sphere": { "radius": 0.18 } },
+                    "primitive": {
+                      "Sphere": {
+                        "radius": 0.18
+                      }
+                    },
                     "bounds_radius": 0.5,
                     "material": {
                       "material_type": "Plasma",
-                      "base_color": { "x": 0.75, "y": 0.9, "z": 1.0 },
+                      "base_color": {
+                        "x": 0.75,
+                        "y": 0.9,
+                        "z": 1.0
+                      },
                       "emissive_strength": 0.92,
                       "roughness": 0.35,
                       "pattern": "Noise",
-                      "parameters": { "speed": 2.2, "frequency": 3.1 }
+                      "parameters": {
+                        "speed": 2.2,
+                        "frequency": 3.1
+                      }
                     }
                   }
                 }

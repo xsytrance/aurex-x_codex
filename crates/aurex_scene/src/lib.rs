@@ -409,6 +409,12 @@ pub struct SdfLighting {
     pub ambient_light: f32,
     #[serde(default)]
     pub key_lights: Vec<KeyLight>,
+    #[serde(default = "default_fog_color")]
+    pub fog_color: Vec3,
+    #[serde(default)]
+    pub fog_density: f32,
+    #[serde(default)]
+    pub fog_height_falloff: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -461,6 +467,10 @@ fn default_base_color() -> Vec3 {
 
 fn default_roughness() -> f32 {
     0.45
+}
+
+fn default_fog_color() -> Vec3 {
+    Vec3::new(0.08, 0.12, 0.18)
 }
 
 impl Default for SdfMaterialType {

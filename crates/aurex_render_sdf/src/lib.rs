@@ -26,6 +26,13 @@ pub struct RenderConfig {
     pub max_distance: f32,
     pub surface_epsilon: f32,
     pub shadow_steps: u32,
+    pub shadow_softness: f32,
+    pub ao_samples: u32,
+    pub ao_strength: f32,
+    pub enable_soft_shadows: bool,
+    pub enable_ambient_occlusion: bool,
+    pub enable_fog: bool,
+    pub enable_scattering: bool,
     pub time: RenderTime,
     pub output_bloom_prepass: bool,
 }
@@ -39,6 +46,13 @@ impl Default for RenderConfig {
             max_distance: 120.0,
             surface_epsilon: 0.001,
             shadow_steps: 48,
+            shadow_softness: 12.0,
+            ao_samples: 6,
+            ao_strength: 0.85,
+            enable_soft_shadows: true,
+            enable_ambient_occlusion: true,
+            enable_fog: true,
+            enable_scattering: true,
             time: RenderTime::default(),
             output_bloom_prepass: true,
         }
@@ -233,6 +247,8 @@ struct Hit {
     position: V3,
     normal: V3,
     material: SdfMaterial,
+    distance_traveled: f32,
+    distance_glow: f32,
 }
 
 #[derive(Clone)]
@@ -409,10 +425,20 @@ fn shade_ray(scene: &Scene, origin: V3, direction: V3, config: RenderConfig) -> 
         let base = V3::new(m.color[0], m.color[1], m.color[2]);
         let mut color = base * scene.sdf.lighting.ambient_light;
 
+        let ao = if config.enable_ambient_occlusion {
+            ambient_occlusion(scene, hit.position, hit.normal, config)
+        } else {
+            1.0
+        };
+
         for key in &scene.sdf.lighting.key_lights {
             let ldir = from_vec3(key.direction).normalized() * -1.0;
             let lambert = hit.normal.dot(ldir).max(0.0);
-            let shadow = soft_shadow(scene, hit.position + hit.normal * 0.005, ldir, config);
+            let shadow = if config.enable_soft_shadows {
+                soft_shadow(scene, hit.position + hit.normal * 0.005, ldir, config)
+            } else {
+                1.0
+            };
             let half_vec = (ldir - direction).normalized();
             let specular = hit
                 .normal
@@ -421,19 +447,86 @@ fn shade_ray(scene: &Scene, origin: V3, direction: V3, config: RenderConfig) -> 
                 .powf((1.0 - m.roughness) * 48.0 + 2.0);
             let light_color = from_vec3(key.color) * key.intensity;
             color = color
-                + base.hadamard(light_color) * (lambert * shadow)
-                + light_color * specular * (1.0 - m.roughness) * 0.25;
+                + base.hadamard(light_color) * (lambert * shadow * ao)
+                + light_color * specular * (1.0 - m.roughness) * 0.25 * shadow;
         }
 
         color = color + base * m.emission;
-        return (color.clamp01(), m.emission);
+        color = color + base * hit.distance_glow * 0.25;
+
+        if config.enable_scattering {
+            color =
+                color + light_scattering(scene, origin, direction, hit.distance_traveled, config);
+        }
+
+        if config.enable_fog {
+            color = apply_fog(scene, color, hit.position, hit.distance_traveled);
+        }
+
+        let emission_out = (m.emission + hit.distance_glow).max(0.0);
+        return (color.clamp01(), emission_out);
     }
 
     let t = 0.5 * (direction.y + 1.0);
-    (
-        V3::new(0.05, 0.08, 0.12) * (1.0 - t) + V3::new(0.25, 0.3, 0.4) * t,
-        0.0,
-    )
+    let mut sky = V3::new(0.05, 0.08, 0.12) * (1.0 - t) + V3::new(0.25, 0.3, 0.4) * t;
+    if config.enable_scattering {
+        sky = sky
+            + light_scattering(scene, origin, direction, config.max_distance * 0.3, config) * 0.5;
+    }
+    (sky.clamp01(), 0.0)
+}
+
+fn apply_fog(scene: &Scene, surface_color: V3, position: V3, distance: f32) -> V3 {
+    let fog_color = from_vec3(scene.sdf.lighting.fog_color);
+    let density = scene.sdf.lighting.fog_density.max(0.0);
+    let height = scene.sdf.lighting.fog_height_falloff.max(0.0);
+    let height_term = (-height * position.y.max(0.0)).exp();
+    let fog = 1.0 - (-density * distance * height_term).exp();
+    surface_color * (1.0 - fog) + fog_color * fog
+}
+
+fn ambient_occlusion(scene: &Scene, position: V3, normal: V3, config: RenderConfig) -> f32 {
+    let mut occ = 0.0;
+    let samples = config.ao_samples.max(1);
+    for i in 1..=samples {
+        let expected = i as f32 * 0.08;
+        let p = position + normal * expected;
+        let d = scene_distance(scene, p, config.time.seconds).distance;
+        occ += (expected - d).max(0.0) / expected;
+    }
+    (1.0 - (occ / samples as f32) * config.ao_strength).clamp(0.0, 1.0)
+}
+
+fn light_scattering(
+    scene: &Scene,
+    origin: V3,
+    direction: V3,
+    max_t: f32,
+    config: RenderConfig,
+) -> V3 {
+    let steps = 8u32;
+    let mut accum = V3::zero();
+    let mut t = 0.1;
+    let step = (max_t / steps as f32).max(0.1);
+    for _ in 0..steps {
+        let p = origin + direction * t;
+        let transmittance = (-scene.sdf.lighting.fog_density.max(0.0) * t).exp();
+        for key in &scene.sdf.lighting.key_lights {
+            let ldir = from_vec3(key.direction).normalized() * -1.0;
+            let phase = direction
+                .dot(ldir)
+                .max(0.0)
+                .powf(config.shadow_softness.max(1.0) * 0.25);
+            let c = from_vec3(key.color) * key.intensity * phase * transmittance * 0.02;
+            accum = accum + c;
+        }
+        t += step;
+        if t > max_t {
+            break;
+        }
+        let _ = p;
+    }
+    accum
 }
 
 fn apply_pattern(pattern: SdfPattern, p: V3, time: f32, seed: i32) -> f32 {
@@ -457,9 +550,12 @@ fn apply_pattern(pattern: SdfPattern, p: V3, time: f32, seed: i32) -> f32 {
 
 fn march_scene(scene: &Scene, origin: V3, direction: V3, config: RenderConfig) -> Option<Hit> {
     let mut t = 0.0;
+    let mut glow = 0.0;
     for _ in 0..config.max_steps {
         let p = origin + direction * t;
         let eval = scene_distance(scene, p, config.time.seconds);
+        let attenuation = (-t * 0.08).exp();
+        glow += eval.material.emissive_strength.max(0.0) * attenuation * 0.01;
         if eval.distance < config.surface_epsilon {
             let normal =
                 estimate_normal(scene, p, config.surface_epsilon * 2.0, config.time.seconds);
@@ -467,6 +563,8 @@ fn march_scene(scene: &Scene, origin: V3, direction: V3, config: RenderConfig) -
                 position: p,
                 normal,
                 material: eval.material,
+                distance_traveled: t,
+                distance_glow: glow,
             });
         }
 
@@ -481,20 +579,20 @@ fn march_scene(scene: &Scene, origin: V3, direction: V3, config: RenderConfig) -
 
 fn soft_shadow(scene: &Scene, origin: V3, direction: V3, config: RenderConfig) -> f32 {
     let mut t = 0.02;
-    let mut visibility: f32 = 1.0;
+    let mut shadow: f32 = 1.0;
     for _ in 0..config.shadow_steps {
         let p = origin + direction * t;
         let eval = scene_distance(scene, p, config.time.seconds);
         if eval.distance < config.surface_epsilon {
             return 0.0;
         }
-        visibility = visibility.min(12.0 * eval.distance / t.max(0.001));
+        shadow = shadow.min(config.shadow_softness * eval.distance / t.max(0.001));
         t += eval.distance.max(0.01);
         if t > config.max_distance {
             break;
         }
     }
-    visibility.clamp(0.0, 1.0)
+    shadow.clamp(0.0, 1.0)
 }
 
 fn estimate_normal(scene: &Scene, p: V3, eps: f32, time: f32) -> V3 {
@@ -1076,6 +1174,9 @@ mod tests {
                         intensity: 1.1,
                         color: Vec3::new(1.0, 0.95, 0.9),
                     }],
+                    fog_color: Vec3::new(0.08, 0.12, 0.18),
+                    fog_density: 0.03,
+                    fog_height_falloff: 0.08,
                 },
                 objects: vec![],
                 root: SdfNode::SmoothUnion {
@@ -1138,6 +1239,28 @@ mod tests {
             1,
         );
         assert_ne!(a.color, b.color);
+    }
+
+    #[test]
+    fn lighting_toggles_change_output() {
+        let base_cfg = RenderConfig {
+            width: 32,
+            height: 18,
+            time: RenderTime { seconds: 1.5 },
+            ..RenderConfig::default()
+        };
+        let with_fx = render_sdf_scene_with_config(&sample_scene(), base_cfg);
+        let no_fx = render_sdf_scene_with_config(
+            &sample_scene(),
+            RenderConfig {
+                enable_soft_shadows: false,
+                enable_ambient_occlusion: false,
+                enable_fog: false,
+                enable_scattering: false,
+                ..base_cfg
+            },
+        );
+        assert_ne!(with_fx.pixels, no_fx.pixels);
     }
 
     #[test]
