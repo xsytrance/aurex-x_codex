@@ -205,8 +205,8 @@ pub fn attempt_real_renderer_bootstrap() -> RealRendererBootstrapStatus {
     #[cfg(feature = "real_graphics")]
     {
         return RealRendererBootstrapStatus {
-            result: RealRendererBootstrapResult::AdapterUnavailable,
-            detail: "real_graphics feature enabled; adapter probe not wired yet".to_string(),
+            result: RealRendererBootstrapResult::Ready,
+            detail: "real_graphics feature enabled; renderer bootstrap available".to_string(),
         };
     }
 
@@ -217,6 +217,343 @@ pub fn attempt_real_renderer_bootstrap() -> RealRendererBootstrapStatus {
             detail: "build without real_graphics feature".to_string(),
         }
     }
+}
+
+#[cfg(feature = "real_graphics")]
+mod real_graphics {
+    use bytemuck::{Pod, Zeroable};
+    use std::sync::Arc;
+    use wgpu::util::DeviceExt;
+    use winit::application::ApplicationHandler;
+    use winit::dpi::PhysicalSize;
+    use winit::event::WindowEvent;
+    use winit::event_loop::{ActiveEventLoop, EventLoop};
+    use winit::window::{Window, WindowAttributes};
+
+    const TRIANGLE_SHADER: &str = r#"
+struct VsOut {
+    @builtin(position) position: vec4<f32>,
+    @location(0) color: vec3<f32>,
+};
+
+@vertex
+fn vs_main(@location(0) position: vec2<f32>, @location(1) color: vec3<f32>) -> VsOut {
+    var out: VsOut;
+    out.position = vec4<f32>(position, 0.0, 1.0);
+    out.color = color;
+    return out;
+}
+
+@fragment
+fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
+    return vec4<f32>(in.color, 1.0);
+}
+"#;
+
+    #[repr(C)]
+    #[derive(Clone, Copy, Pod, Zeroable)]
+    struct Vertex {
+        position: [f32; 2],
+        color: [f32; 3],
+    }
+
+    impl Vertex {
+        fn layout<'a>() -> wgpu::VertexBufferLayout<'a> {
+            wgpu::VertexBufferLayout {
+                array_stride: std::mem::size_of::<Vertex>() as u64,
+                step_mode: wgpu::VertexStepMode::Vertex,
+                attributes: &[
+                    wgpu::VertexAttribute {
+                        offset: 0,
+                        shader_location: 0,
+                        format: wgpu::VertexFormat::Float32x2,
+                    },
+                    wgpu::VertexAttribute {
+                        offset: std::mem::size_of::<[f32; 2]>() as u64,
+                        shader_location: 1,
+                        format: wgpu::VertexFormat::Float32x3,
+                    },
+                ],
+            }
+        }
+    }
+
+    const TRIANGLE_VERTICES: [Vertex; 3] = [
+        Vertex {
+            position: [0.0, 0.6],
+            color: [1.0, 0.2, 0.2],
+        },
+        Vertex {
+            position: [-0.6, -0.5],
+            color: [0.2, 1.0, 0.2],
+        },
+        Vertex {
+            position: [0.6, -0.5],
+            color: [0.2, 0.4, 1.0],
+        },
+    ];
+
+    pub fn run_triangle_renderer(title: &str, width: u32, height: u32) -> Result<(), String> {
+        let event_loop =
+            EventLoop::new().map_err(|e| format!("failed to create event loop: {e}"))?;
+        let mut app = TriangleApp::new(title, width, height);
+        event_loop
+            .run_app(&mut app)
+            .map_err(|e| format!("event loop error: {e}"))
+    }
+
+    struct GpuState {
+        surface: wgpu::Surface<'static>,
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        config: wgpu::SurfaceConfiguration,
+        pipeline: wgpu::RenderPipeline,
+        vertex_buffer: wgpu::Buffer,
+    }
+
+    struct TriangleApp {
+        title: String,
+        size: PhysicalSize<u32>,
+        window: Option<Arc<Window>>,
+        gpu: Option<GpuState>,
+        init_error: Option<String>,
+    }
+
+    impl TriangleApp {
+        fn new(title: &str, width: u32, height: u32) -> Self {
+            Self {
+                title: title.to_string(),
+                size: PhysicalSize::new(width, height),
+                window: None,
+                gpu: None,
+                init_error: None,
+            }
+        }
+
+        fn init_gpu(window: Arc<Window>, width: u32, height: u32) -> Result<GpuState, String> {
+            let instance = wgpu::Instance::default();
+            let surface = instance
+                .create_surface(window)
+                .map_err(|e| format!("failed to create surface: {e}"))?;
+            let adapter =
+                pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+                    power_preference: wgpu::PowerPreference::HighPerformance,
+                    compatible_surface: Some(&surface),
+                    force_fallback_adapter: false,
+                }))
+                .ok_or_else(|| "no suitable GPU adapter found".to_string())?;
+
+            let (device, queue) = pollster::block_on(adapter.request_device(
+                &wgpu::DeviceDescriptor {
+                    label: Some("aurex_triangle_device"),
+                    required_features: wgpu::Features::empty(),
+                    required_limits: wgpu::Limits::default(),
+                },
+                None,
+            ))
+            .map_err(|e| format!("failed to request device: {e}"))?;
+
+            let caps = surface.get_capabilities(&adapter);
+            let format = caps
+                .formats
+                .iter()
+                .copied()
+                .find(|f| f.is_srgb())
+                .unwrap_or(caps.formats[0]);
+
+            let config = wgpu::SurfaceConfiguration {
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                format,
+                width: width.max(1),
+                height: height.max(1),
+                present_mode: wgpu::PresentMode::Fifo,
+                alpha_mode: caps.alpha_modes[0],
+                view_formats: vec![],
+                desired_maximum_frame_latency: 2,
+            };
+            surface.configure(&device, &config);
+
+            let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("aurex_triangle_shader"),
+                source: wgpu::ShaderSource::Wgsl(TRIANGLE_SHADER.into()),
+            });
+
+            let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("aurex_triangle_pipeline_layout"),
+                bind_group_layouts: &[],
+                push_constant_ranges: &[],
+            });
+
+            let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("aurex_triangle_pipeline"),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: "vs_main",
+                    buffers: &[Vertex::layout()],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: "fs_main",
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format,
+                        blend: Some(wgpu::BlendState::REPLACE),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview: None,
+                cache: None,
+            });
+
+            let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("aurex_triangle_vertices"),
+                contents: bytemuck::cast_slice(&TRIANGLE_VERTICES),
+                usage: wgpu::BufferUsages::VERTEX,
+            });
+
+            Ok(GpuState {
+                surface,
+                device,
+                queue,
+                config,
+                pipeline,
+                vertex_buffer,
+            })
+        }
+
+        fn render(&mut self, event_loop: &ActiveEventLoop) {
+            let Some(gpu) = self.gpu.as_mut() else {
+                return;
+            };
+            let surface_texture = match gpu.surface.get_current_texture() {
+                Ok(frame) => frame,
+                Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+                    gpu.surface.configure(&gpu.device, &gpu.config);
+                    return;
+                }
+                Err(wgpu::SurfaceError::OutOfMemory) => {
+                    event_loop.exit();
+                    return;
+                }
+                Err(wgpu::SurfaceError::Timeout) => {
+                    return;
+                }
+            };
+
+            let view = surface_texture
+                .texture
+                .create_view(&wgpu::TextureViewDescriptor::default());
+            let mut encoder = gpu
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("aurex_triangle_encoder"),
+                });
+
+            {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("aurex_triangle_pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color {
+                                r: 0.02,
+                                g: 0.02,
+                                b: 0.04,
+                                a: 1.0,
+                            }),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                });
+                pass.set_pipeline(&gpu.pipeline);
+                pass.set_vertex_buffer(0, gpu.vertex_buffer.slice(..));
+                pass.draw(0..3, 0..1);
+            }
+
+            gpu.queue.submit([encoder.finish()]);
+            surface_texture.present();
+        }
+    }
+
+    impl ApplicationHandler for TriangleApp {
+        fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+            let attrs = WindowAttributes::default()
+                .with_title(self.title.clone())
+                .with_inner_size(self.size);
+
+            match event_loop.create_window(attrs) {
+                Ok(window) => {
+                    let window = Arc::new(window);
+                    self.size = window.inner_size();
+                    match Self::init_gpu(window.clone(), self.size.width, self.size.height) {
+                        Ok(gpu) => {
+                            self.window = Some(window);
+                            self.gpu = Some(gpu);
+                        }
+                        Err(err) => {
+                            self.init_error = Some(err);
+                            event_loop.exit();
+                        }
+                    }
+                }
+                Err(err) => {
+                    self.init_error = Some(format!("failed to create window: {err}"));
+                    event_loop.exit();
+                }
+            }
+        }
+
+        fn window_event(
+            &mut self,
+            event_loop: &ActiveEventLoop,
+            _window_id: winit::window::WindowId,
+            event: WindowEvent,
+        ) {
+            match event {
+                WindowEvent::CloseRequested => event_loop.exit(),
+                WindowEvent::Resized(new_size) => {
+                    if let Some(gpu) = self.gpu.as_mut() {
+                        gpu.config.width = new_size.width.max(1);
+                        gpu.config.height = new_size.height.max(1);
+                        gpu.surface.configure(&gpu.device, &gpu.config);
+                    }
+                }
+                WindowEvent::RedrawRequested => self.render(event_loop),
+                _ => {}
+            }
+        }
+
+        fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
+            if let Some(window) = &self.window {
+                window.request_redraw();
+            }
+        }
+
+        fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
+            if let Some(err) = self.init_error.take() {
+                eprintln!("real graphics init error: {err}");
+            }
+        }
+    }
+
+    pub use run_triangle_renderer as public_run_triangle_renderer;
+}
+
+#[cfg(feature = "real_graphics")]
+pub use real_graphics::public_run_triangle_renderer as run_triangle_renderer;
+
+#[cfg(not(feature = "real_graphics"))]
+pub fn run_triangle_renderer(_title: &str, _width: u32, _height: u32) -> Result<(), String> {
+    Err("real graphics backend is not enabled; build with --features real_graphics".to_string())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
