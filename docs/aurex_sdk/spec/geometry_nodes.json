@@ -1,0 +1,36 @@
+{
+  "nodes": [
+    {
+      "name": "TunnelGenerator",
+      "parameters": {
+        "radius": { "type": "float", "min": 1.0, "max": 20.0 },
+        "twist": { "type": "float", "min": 0.0, "max": 5.0 },
+        "glow": { "type": "float", "min": 0.0, "max": 10.0 }
+      }
+    },
+    {
+      "name": "ParticleEmitter",
+      "parameters": {
+        "spawn_rate": { "type": "float", "min": 0.0, "max": 1000.0 },
+        "speed": { "type": "float", "min": 0.0, "max": 50.0 },
+        "lifetime": { "type": "float", "min": 0.1, "max": 20.0 }
+      }
+    },
+    {
+      "name": "LightRig",
+      "parameters": {
+        "intensity": { "type": "float", "min": 0.0, "max": 20.0 },
+        "temperature": { "type": "float", "min": 1000.0, "max": 20000.0 },
+        "strobe": { "type": "float", "min": 0.0, "max": 1.0 }
+      }
+    },
+    {
+      "name": "GridFloor",
+      "parameters": {
+        "scale": { "type": "float", "min": 0.1, "max": 50.0 },
+        "line_width": { "type": "float", "min": 0.001, "max": 1.0 },
+        "pulse": { "type": "float", "min": 0.0, "max": 10.0 }
+      }
+    }
+  ]
+}
