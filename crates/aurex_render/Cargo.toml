@@ -7,6 +7,10 @@ authors.workspace = true
 
 [dependencies]
 aurex_core = { path = "../aurex_core" }
+bytemuck = { version = "1.16", features = ["derive"], optional = true }
+pollster = { version = "0.3", optional = true }
+wgpu = { version = "0.20", optional = true }
+winit = { version = "0.30", optional = true }
 
 [features]
-real_graphics = []
+real_graphics = ["dep:bytemuck", "dep:pollster", "dep:wgpu", "dep:winit"]

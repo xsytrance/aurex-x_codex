@@ -7,3 +7,7 @@ authors.workspace = true
 
 [dependencies]
 aurex_core = { path = "../aurex_core" }
+cpal = { version = "0.15", optional = true }
+
+[features]
+real_audio = ["dep:cpal"]
