@@ -9,6 +9,8 @@ members = [
   "crates/aurex_lighting",
   "crates/aurex_postfx",
   "crates/aurex_audio",
+  "crates/aurex_scene",
+  "crates/aurex_render_sdf",
 ]
 resolver = "2"
 
