@@ -17,40 +17,53 @@
         }
       ]
     },
-    "objects": [
-      {
-        "primitive": { "Sphere": { "radius": 0.18 } },
-        "modifiers": [
-          { "Repeat": { "cell": { "x": 0.8, "y": 0.8, "z": 0.8 } } },
-          { "NoiseDisplacement": { "amplitude": 0.1, "frequency": 2.1, "seed": 77 } },
-          { "Mirror": { "normal": { "x": 1.0, "y": 0.0, "z": 0.0 }, "offset": 0.0 } }
-        ],
-        "material": {
-          "material_type": "Plasma",
-          "base_color": { "x": 0.75, "y": 0.9, "z": 1.0 },
-          "emissive_strength": 0.92,
-          "roughness": 0.35,
-          "pattern": "Noise",
-          "parameters": {
-            "speed": 2.2,
-            "frequency": 3.1
+    "root": {
+      "Intersect": {
+        "children": [
+          {
+            "Primitive": {
+              "object": {
+                "primitive": { "NoiseField": { "radius": 2.8, "amplitude": 0.25, "frequency": 1.6, "seed": 123 } },
+                "bounds_radius": 3.2,
+                "material": {
+                  "material_type": "Holographic",
+                  "base_color": { "x": 0.22, "y": 0.33, "z": 0.6 },
+                  "emissive_strength": 0.45,
+                  "roughness": 0.18,
+                  "pattern": "Bands",
+                  "parameters": { "shift_speed": 3.0 }
+                }
+              }
+            }
+          },
+          {
+            "Transform": {
+              "modifiers": [
+                { "Repeat": { "cell": { "x": 0.8, "y": 0.8, "z": 0.8 } } },
+                { "NoiseDisplacement": { "amplitude": 0.1, "frequency": 2.1, "seed": 77 } },
+                { "Mirror": { "normal": { "x": 1.0, "y": 0.0, "z": 0.0 }, "offset": 0.0 } }
+              ],
+              "bounds_radius": 3.6,
+              "child": {
+                "Primitive": {
+                  "object": {
+                    "primitive": { "Sphere": { "radius": 0.18 } },
+                    "bounds_radius": 0.5,
+                    "material": {
+                      "material_type": "Plasma",
+                      "base_color": { "x": 0.75, "y": 0.9, "z": 1.0 },
+                      "emissive_strength": 0.92,
+                      "roughness": 0.35,
+                      "pattern": "Noise",
+                      "parameters": { "speed": 2.2, "frequency": 3.1 }
+                    }
+                  }
+                }
+              }
+            }
           }
-        }
-      },
-      {
-        "primitive": { "NoiseField": { "radius": 2.8, "amplitude": 0.25, "frequency": 1.6, "seed": 123 } },
-        "modifiers": [],
-        "material": {
-          "material_type": "Holographic",
-          "base_color": { "x": 0.22, "y": 0.33, "z": 0.6 },
-          "emissive_strength": 0.45,
-          "roughness": 0.18,
-          "pattern": "Bands",
-          "parameters": {
-            "shift_speed": 3.0
-          }
-        }
+        ]
       }
-    ]
+    }
   }
 }

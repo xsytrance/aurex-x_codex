@@ -17,38 +17,52 @@
         }
       ]
     },
-    "objects": [
-      {
-        "primitive": { "Torus": { "major_radius": 1.8, "minor_radius": 0.2 } },
+    "root": {
+      "Transform": {
         "modifiers": [
           { "Repeat": { "cell": { "x": 0.0, "y": 0.0, "z": 2.4 } } },
           { "Twist": { "strength": 0.12 } }
         ],
-        "material": {
-          "material_type": "NeonGrid",
-          "base_color": { "x": 0.2, "y": 0.9, "z": 1.0 },
-          "emissive_strength": 0.85,
-          "roughness": 0.12,
-          "pattern": "Bands",
-          "parameters": {
-            "grid_scale": 9.0,
-            "pulse_speed": 3.8,
-            "line_width": 0.06
+        "bounds_radius": 4.0,
+        "child": {
+          "Union": {
+            "children": [
+              {
+                "Primitive": {
+                  "object": {
+                    "primitive": { "Torus": { "major_radius": 1.8, "minor_radius": 0.2 } },
+                    "bounds_radius": 2.2,
+                    "material": {
+                      "material_type": "NeonGrid",
+                      "base_color": { "x": 0.2, "y": 0.9, "z": 1.0 },
+                      "emissive_strength": 0.85,
+                      "roughness": 0.12,
+                      "pattern": "Bands",
+                      "parameters": { "grid_scale": 9.0, "pulse_speed": 3.8, "line_width": 0.06 }
+                    }
+                  }
+                }
+              },
+              {
+                "Primitive": {
+                  "object": {
+                    "primitive": { "Torus": { "major_radius": 2.1, "minor_radius": 0.05 } },
+                    "bounds_radius": 2.3,
+                    "material": {
+                      "material_type": "Holographic",
+                      "base_color": { "x": 0.7, "y": 0.9, "z": 1.0 },
+                      "emissive_strength": 0.65,
+                      "roughness": 0.15,
+                      "pattern": "Rings",
+                      "parameters": { "shift_speed": 3.2 }
+                    }
+                  }
+                }
+              }
+            ]
           }
         }
-      },
-      {
-        "primitive": { "Plane": { "normal": { "x": 0.0, "y": 1.0, "z": 0.0 }, "offset": 1.2 } },
-        "modifiers": [],
-        "material": {
-          "material_type": "SolidColor",
-          "base_color": { "x": 0.06, "y": 0.08, "z": 0.12 },
-          "emissive_strength": 0.0,
-          "roughness": 0.8,
-          "pattern": "Checker",
-          "parameters": {}
-        }
       }
-    ]
+    }
   }
 }

@@ -25,7 +25,10 @@ pub struct SdfScene {
     pub lighting: SdfLighting,
     #[serde(default)]
     pub seed: u32,
+    #[serde(default)]
     pub objects: Vec<SdfObject>,
+    #[serde(default)]
+    pub root: SdfNode,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -35,6 +38,50 @@ pub struct SdfObject {
     pub modifiers: Vec<SdfModifier>,
     #[serde(default)]
     pub material: SdfMaterial,
+    #[serde(default)]
+    pub bounds_radius: Option<f32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum SdfNode {
+    Empty,
+    Primitive {
+        object: SdfObject,
+    },
+    Group {
+        children: Vec<SdfNode>,
+    },
+    Transform {
+        modifiers: Vec<SdfModifier>,
+        child: Box<SdfNode>,
+        #[serde(default)]
+        bounds_radius: Option<f32>,
+    },
+    Union {
+        children: Vec<SdfNode>,
+    },
+    SmoothUnion {
+        children: Vec<SdfNode>,
+        k: f32,
+    },
+    Subtract {
+        base: Box<SdfNode>,
+        subtract: Vec<SdfNode>,
+    },
+    Intersect {
+        children: Vec<SdfNode>,
+    },
+    Blend {
+        children: Vec<SdfNode>,
+        #[serde(default)]
+        weights: Vec<f32>,
+    },
+}
+
+impl Default for SdfNode {
+    fn default() -> Self {
+        Self::Empty
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -212,7 +259,7 @@ pub fn load_scene_from_json_path(
 
 #[cfg(test)]
 mod tests {
-    use super::{Scene, SdfMaterialType, load_scene_from_json_str};
+    use super::{Scene, SdfMaterialType, SdfNode, load_scene_from_json_str};
 
     #[test]
     fn parses_scene_json() {
@@ -229,27 +276,58 @@ mod tests {
                     "ambient_light": 0.2,
                     "key_lights": []
                 },
-                "objects": [{
-                    "primitive": {"Sphere": {"radius": 1.0}},
-                    "modifiers": [],
-                    "material": {
-                        "material_type": "NeonGrid",
-                        "base_color": {"x": 0.0, "y": 1.0, "z": 1.0},
-                        "emissive_strength": 0.8,
-                        "roughness": 0.1,
-                        "pattern": "Bands",
-                        "parameters": {"grid_scale": 6.0}
+                "root": {
+                    "Union": {
+                        "children": [
+                            {"Primitive": {"object": {"primitive": {"Sphere": {"radius": 1.0}}}}},
+                            {"Transform": {
+                                "modifiers": [{"Translate": {"offset": {"x": 1.3, "y": 0.0, "z": 0.0}}}],
+                                "child": {"Primitive": {"object": {
+                                    "primitive": {"Box": {"size": {"x": 0.5, "y": 0.5, "z": 0.5}}},
+                                    "material": {"material_type": "NeonGrid"}
+                                }}}
+                            }}
+                        ]
                     }
-                }]
+                }
             }
         }"#;
 
         let scene: Scene = load_scene_from_json_str(json).expect("scene json should parse");
-        assert_eq!(scene.sdf.objects.len(), 1);
         assert_eq!(scene.sdf.seed, 101);
+        match scene.sdf.root {
+            SdfNode::Union { children } => {
+                assert_eq!(children.len(), 2);
+            }
+            _ => panic!("expected union root"),
+        }
+    }
+
+    #[test]
+    fn old_material_field_alias_still_parses() {
+        let json = r#"{
+            "sdf": {
+                "camera": {
+                    "position": {"x": 0.0, "y": 0.0, "z": -5.0},
+                    "target": {"x": 0.0, "y": 0.0, "z": 0.0},
+                    "fov_degrees": 60.0,
+                    "aspect_ratio": 1.7777
+                },
+                "lighting": {"ambient_light": 0.2},
+                "objects": [{
+                    "primitive": {"Sphere": {"radius": 1.0}},
+                    "material": {
+                        "material_type": "Plasma",
+                        "color": {"x": 1.0, "y": 0.2, "z": 0.8}
+                    }
+                }]
+            }
+        }"#;
+        let scene: Scene = load_scene_from_json_str(json).expect("scene json should parse");
         assert_eq!(
             scene.sdf.objects[0].material.material_type,
-            SdfMaterialType::NeonGrid
+            SdfMaterialType::Plasma
         );
+        assert_eq!(scene.sdf.objects[0].material.base_color.x, 1.0);
     }
 }

@@ -1,7 +1,8 @@
 pub mod noise;
 
 use aurex_scene::{
-    Scene, SdfMaterial, SdfMaterialType, SdfModifier, SdfPattern, SdfPrimitive, Vec3,
+    Scene, SdfMaterial, SdfMaterialType, SdfModifier, SdfNode, SdfObject, SdfPattern, SdfPrimitive,
+    Vec3,
 };
 use bytemuck::{Pod, Zeroable};
 use noise::{NoiseVec3, fbm, value_noise};
@@ -220,18 +221,23 @@ struct Ray {
     direction: V3,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct Hit {
     position: V3,
     normal: V3,
-    object_index: usize,
+    material: SdfMaterial,
+}
+
+#[derive(Clone)]
+struct NodeEval {
+    distance: f32,
+    material: SdfMaterial,
 }
 
 fn shade_ray(scene: &Scene, origin: V3, direction: V3, config: RenderConfig) -> (V3, f32) {
     if let Some(hit) = march_scene(scene, origin, direction, config) {
-        let object = &scene.sdf.objects[hit.object_index];
         let m = evaluate_material(
-            &object.material,
+            &hit.material,
             [hit.position.x, hit.position.y, hit.position.z],
             [hit.normal.x, hit.normal.y, hit.normal.z],
             config.time,
@@ -290,18 +296,18 @@ fn march_scene(scene: &Scene, origin: V3, direction: V3, config: RenderConfig) -
     let mut t = 0.0;
     for _ in 0..config.max_steps {
         let p = origin + direction * t;
-        let (distance, object_index) = scene_distance(scene, p, config.time.seconds);
-        if distance < config.surface_epsilon {
+        let eval = scene_distance(scene, p, config.time.seconds);
+        if eval.distance < config.surface_epsilon {
             let normal =
                 estimate_normal(scene, p, config.surface_epsilon * 2.0, config.time.seconds);
             return Some(Hit {
                 position: p,
                 normal,
-                object_index,
+                material: eval.material,
             });
         }
 
-        t += distance.max(config.surface_epsilon * 0.5);
+        t += eval.distance.max(config.surface_epsilon * 0.5);
         if t > config.max_distance {
             return None;
         }
@@ -315,12 +321,12 @@ fn soft_shadow(scene: &Scene, origin: V3, direction: V3, config: RenderConfig) -
     let mut visibility: f32 = 1.0;
     for _ in 0..config.shadow_steps {
         let p = origin + direction * t;
-        let (distance, _) = scene_distance(scene, p, config.time.seconds);
-        if distance < config.surface_epsilon {
+        let eval = scene_distance(scene, p, config.time.seconds);
+        if eval.distance < config.surface_epsilon {
             return 0.0;
         }
-        visibility = visibility.min(12.0 * distance / t.max(0.001));
-        t += distance.max(0.01);
+        visibility = visibility.min(12.0 * eval.distance / t.max(0.001));
+        t += eval.distance.max(0.01);
         if t > config.max_distance {
             break;
         }
@@ -333,33 +339,201 @@ fn estimate_normal(scene: &Scene, p: V3, eps: f32, time: f32) -> V3 {
     let ey = V3::new(0.0, eps, 0.0);
     let ez = V3::new(0.0, 0.0, eps);
 
-    let dx = scene_distance(scene, p + ex, time).0 - scene_distance(scene, p - ex, time).0;
-    let dy = scene_distance(scene, p + ey, time).0 - scene_distance(scene, p - ey, time).0;
-    let dz = scene_distance(scene, p + ez, time).0 - scene_distance(scene, p - ez, time).0;
+    let dx =
+        scene_distance(scene, p + ex, time).distance - scene_distance(scene, p - ex, time).distance;
+    let dy =
+        scene_distance(scene, p + ey, time).distance - scene_distance(scene, p - ey, time).distance;
+    let dz =
+        scene_distance(scene, p + ez, time).distance - scene_distance(scene, p - ez, time).distance;
 
     V3::new(dx, dy, dz).normalized()
 }
 
-fn scene_distance(scene: &Scene, point: V3, time: f32) -> (f32, usize) {
-    let mut best = f32::INFINITY;
-    let mut index = 0usize;
-
-    for (i, object) in scene.sdf.objects.iter().enumerate() {
-        let mut p = point;
-        let mut distance_scale = 1.0;
-
-        for modifier in &object.modifiers {
-            apply_modifier(&mut p, &mut distance_scale, modifier, scene.sdf.seed, time);
+fn scene_distance(scene: &Scene, point: V3, time: f32) -> NodeEval {
+    if !matches!(scene.sdf.root, SdfNode::Empty) {
+        evaluate_node(&scene.sdf.root, point, scene.sdf.seed, time, None)
+    } else {
+        let mut best = NodeEval {
+            distance: f32::INFINITY,
+            material: SdfMaterial::default(),
+        };
+        for object in &scene.sdf.objects {
+            let eval = evaluate_object(object, point, scene.sdf.seed, time);
+            if eval.distance < best.distance {
+                best = eval;
+            }
         }
+        best
+    }
+}
 
-        let distance = eval_primitive(&object.primitive, p, scene.sdf.seed, time) * distance_scale;
-        if distance < best {
-            best = distance;
-            index = i;
+fn evaluate_node(
+    node: &SdfNode,
+    point: V3,
+    scene_seed: u32,
+    time: f32,
+    hint: Option<f32>,
+) -> NodeEval {
+    match node {
+        SdfNode::Empty => NodeEval {
+            distance: f32::INFINITY,
+            material: SdfMaterial::default(),
+        },
+        SdfNode::Primitive { object } => evaluate_object(object, point, scene_seed, time),
+        SdfNode::Group { children } | SdfNode::Union { children } => {
+            let mut best = NodeEval {
+                distance: f32::INFINITY,
+                material: SdfMaterial::default(),
+            };
+            for child in children {
+                let child_eval = evaluate_node(child, point, scene_seed, time, Some(best.distance));
+                if child_eval.distance < best.distance {
+                    best = child_eval;
+                    if let Some(h) = hint
+                        && best.distance <= h
+                    {
+                        break;
+                    }
+                }
+            }
+            best
+        }
+        SdfNode::SmoothUnion { children, k } => {
+            let mut acc = NodeEval {
+                distance: f32::INFINITY,
+                material: SdfMaterial::default(),
+            };
+            for child in children {
+                let next = evaluate_node(child, point, scene_seed, time, hint);
+                if !acc.distance.is_finite() {
+                    acc = next;
+                } else {
+                    let h = ((*k - (acc.distance - next.distance).abs()).max(0.0) / k.max(1e-6))
+                        .powi(2)
+                        * 0.25;
+                    let d = acc.distance.min(next.distance) - h * *k;
+                    let mat = if next.distance < acc.distance {
+                        next.material.clone()
+                    } else {
+                        acc.material.clone()
+                    };
+                    acc = NodeEval {
+                        distance: d,
+                        material: mat,
+                    };
+                }
+            }
+            acc
+        }
+        SdfNode::Subtract { base, subtract } => {
+            let mut base_eval = evaluate_node(base, point, scene_seed, time, hint);
+            if subtract.is_empty() {
+                return base_eval;
+            }
+            let mut d_sub = f32::INFINITY;
+            for n in subtract {
+                let e = evaluate_node(n, point, scene_seed, time, Some(d_sub));
+                d_sub = d_sub.min(e.distance);
+            }
+            base_eval.distance = smooth_max(base_eval.distance, -d_sub, 0.0);
+            base_eval
+        }
+        SdfNode::Intersect { children } => {
+            if children.is_empty() {
+                return NodeEval {
+                    distance: f32::INFINITY,
+                    material: SdfMaterial::default(),
+                };
+            }
+            let mut acc = evaluate_node(&children[0], point, scene_seed, time, hint);
+            for child in &children[1..] {
+                let e = evaluate_node(child, point, scene_seed, time, hint);
+                if e.distance > acc.distance {
+                    acc.material = e.material.clone();
+                }
+                acc.distance = acc.distance.max(e.distance);
+            }
+            acc
+        }
+        SdfNode::Blend { children, weights } => {
+            if children.is_empty() {
+                return NodeEval {
+                    distance: f32::INFINITY,
+                    material: SdfMaterial::default(),
+                };
+            }
+            let mut sum_w = 0.0;
+            let mut dist = 0.0;
+            let mut nearest = NodeEval {
+                distance: f32::INFINITY,
+                material: SdfMaterial::default(),
+            };
+            for (i, child) in children.iter().enumerate() {
+                let w = weights.get(i).copied().unwrap_or(1.0).max(0.0001);
+                let e = evaluate_node(child, point, scene_seed, time, hint);
+                dist += e.distance * w;
+                sum_w += w;
+                if e.distance < nearest.distance {
+                    nearest = e;
+                }
+            }
+            nearest.distance = dist / sum_w.max(0.0001);
+            nearest
+        }
+        SdfNode::Transform {
+            modifiers,
+            child,
+            bounds_radius,
+        } => {
+            let mut p = point;
+            let mut scale = 1.0;
+            for modifier in modifiers {
+                apply_modifier(&mut p, &mut scale, modifier, scene_seed, time);
+            }
+            if let Some(r) = bounds_radius {
+                let bound_d = p.length() - *r;
+                if let Some(h) = hint
+                    && bound_d > h
+                {
+                    return NodeEval {
+                        distance: bound_d,
+                        material: SdfMaterial::default(),
+                    };
+                }
+            }
+            let mut eval = evaluate_node(
+                child,
+                p,
+                scene_seed,
+                time,
+                hint.map(|h| h / scale.max(1e-6)),
+            );
+            eval.distance *= scale;
+            eval
         }
     }
+}
 
-    (best, index)
+fn evaluate_object(object: &SdfObject, point: V3, scene_seed: u32, time: f32) -> NodeEval {
+    let mut p = point;
+    let mut distance_scale = 1.0;
+    for modifier in &object.modifiers {
+        apply_modifier(&mut p, &mut distance_scale, modifier, scene_seed, time);
+    }
+    if let Some(r) = object.bounds_radius {
+        let bound_d = p.length() - r;
+        if bound_d > 4.0 {
+            return NodeEval {
+                distance: bound_d,
+                material: object.material.clone(),
+            };
+        }
+    }
+    let distance = eval_primitive(&object.primitive, p, scene_seed, time) * distance_scale;
+    NodeEval {
+        distance,
+        material: object.material.clone(),
+    }
 }
 
 fn apply_modifier(
@@ -495,21 +669,17 @@ fn sdf_mandelbulb(p: V3, power: f32, iterations: u32, bailout: f32) -> f32 {
     let mut z = p;
     let mut dr = 1.0;
     let mut r = 0.0;
-
     for _ in 0..iterations {
         r = z.length();
         if r > bailout {
             break;
         }
-
         let theta = (z.z / r.max(1e-6)).acos();
         let phi = z.y.atan2(z.x);
         dr = r.powf(power - 1.0) * power * dr + 1.0;
-
         let zr = r.powf(power);
         let theta = theta * power;
         let phi = phi * power;
-
         z = V3::new(
             theta.sin() * phi.cos(),
             phi.sin() * theta.sin(),
@@ -517,15 +687,25 @@ fn sdf_mandelbulb(p: V3, power: f32, iterations: u32, bailout: f32) -> f32 {
         ) * zr
             + p;
     }
-
     0.5 * r.max(1e-6).ln() * r / dr.max(1e-6)
+}
+
+fn smooth_min(a: f32, b: f32, k: f32) -> f32 {
+    if k <= 0.0 {
+        return a.min(b);
+    }
+    let h = (0.5 + 0.5 * (b - a) / k).clamp(0.0, 1.0);
+    a * h + b * (1.0 - h) - k * h * (1.0 - h)
+}
+
+fn smooth_max(a: f32, b: f32, k: f32) -> f32 {
+    -smooth_min(-a, -b, k)
 }
 
 fn generate_camera_ray(scene: &Scene, x: u32, y: u32, width: u32, height: u32) -> Ray {
     let cam = &scene.sdf.camera;
     let origin = from_vec3(cam.position);
     let target = from_vec3(cam.target);
-
     let forward = (target - origin).normalized();
     let world_up = if forward.y.abs() > 0.999 {
         V3::new(0.0, 0.0, 1.0)
@@ -534,17 +714,14 @@ fn generate_camera_ray(scene: &Scene, x: u32, y: u32, width: u32, height: u32) -
     };
     let right = forward.cross(world_up).normalized();
     let up = right.cross(forward).normalized();
-
     let nx = (x as f32 + 0.5) / width as f32;
     let ny = (y as f32 + 0.5) / height as f32;
     let sx = 2.0 * nx - 1.0;
     let sy = 1.0 - 2.0 * ny;
-
     let fov_scale = (cam.fov_degrees.to_radians() * 0.5).tan();
     let aspect = cam.aspect_ratio;
     let direction =
         (forward + right * (sx * aspect * fov_scale) + up * (sy * fov_scale)).normalized();
-
     Ray { origin, direction }
 }
 
@@ -578,24 +755,19 @@ struct V2 {
     x: f32,
     y: f32,
 }
-
 impl V2 {
     fn new(x: f32, y: f32) -> Self {
         Self { x, y }
     }
-
     fn zero() -> Self {
         Self { x: 0.0, y: 0.0 }
     }
-
     fn max(self, rhs: Self) -> Self {
         Self::new(self.x.max(rhs.x), self.y.max(rhs.y))
     }
-
     fn length(self) -> f32 {
         (self.x * self.x + self.y * self.y).sqrt()
     }
-
     fn max_component(self) -> f32 {
         self.x.max(self.y)
     }
@@ -607,32 +779,25 @@ struct V3 {
     y: f32,
     z: f32,
 }
-
 impl V3 {
     fn new(x: f32, y: f32, z: f32) -> Self {
         Self { x, y, z }
     }
-
     fn splat(v: f32) -> Self {
         Self::new(v, v, v)
     }
-
     fn zero() -> Self {
         Self::splat(0.0)
     }
-
     fn length(self) -> f32 {
         (self.x * self.x + self.y * self.y + self.z * self.z).sqrt()
     }
-
     fn normalized(self) -> Self {
         self / self.length().max(1e-6)
     }
-
     fn dot(self, rhs: Self) -> f32 {
         self.x * rhs.x + self.y * rhs.y + self.z * rhs.z
     }
-
     fn cross(self, rhs: Self) -> Self {
         Self::new(
             self.y * rhs.z - self.z * rhs.y,
@@ -640,23 +805,18 @@ impl V3 {
             self.x * rhs.y - self.y * rhs.x,
         )
     }
-
     fn abs(self) -> Self {
         Self::new(self.x.abs(), self.y.abs(), self.z.abs())
     }
-
     fn max(self, rhs: Self) -> Self {
         Self::new(self.x.max(rhs.x), self.y.max(rhs.y), self.z.max(rhs.z))
     }
-
     fn max_component(self) -> f32 {
         self.x.max(self.y).max(self.z)
     }
-
     fn hadamard(self, rhs: Self) -> Self {
         Self::new(self.x * rhs.x, self.y * rhs.y, self.z * rhs.z)
     }
-
     fn clamp01(self) -> Self {
         Self::new(
             self.x.clamp(0.0, 1.0),
@@ -665,44 +825,78 @@ impl V3 {
         )
     }
 }
-
 impl std::ops::Add for V3 {
     type Output = Self;
-    fn add(self, rhs: Self) -> Self::Output {
+    fn add(self, rhs: Self) -> Self {
         Self::new(self.x + rhs.x, self.y + rhs.y, self.z + rhs.z)
     }
 }
-
 impl std::ops::Sub for V3 {
     type Output = Self;
-    fn sub(self, rhs: Self) -> Self::Output {
+    fn sub(self, rhs: Self) -> Self {
         Self::new(self.x - rhs.x, self.y - rhs.y, self.z - rhs.z)
     }
 }
-
 impl std::ops::Mul<f32> for V3 {
     type Output = Self;
-    fn mul(self, rhs: f32) -> Self::Output {
-        Self::new(self.x * rhs, self.y * rhs, self.z * rhs)
+    fn mul(self, r: f32) -> Self {
+        Self::new(self.x * r, self.y * r, self.z * r)
     }
 }
-
 impl std::ops::Div<f32> for V3 {
     type Output = Self;
-    fn div(self, rhs: f32) -> Self::Output {
-        Self::new(self.x / rhs, self.y / rhs, self.z / rhs)
+    fn div(self, r: f32) -> Self {
+        Self::new(self.x / r, self.y / r, self.z / r)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{RenderConfig, RenderTime, evaluate_material, render_sdf_scene_with_config};
+    use super::{
+        RenderConfig, RenderTime, evaluate_material, render_sdf_scene_with_config, smooth_min,
+    };
     use aurex_scene::{
-        Scene, SdfCamera, SdfLighting, SdfMaterial, SdfMaterialType, SdfModifier, SdfObject,
-        SdfPattern, SdfPrimitive, Vec3,
+        Scene, SdfCamera, SdfLighting, SdfMaterial, SdfMaterialType, SdfModifier, SdfNode,
+        SdfObject, SdfPattern, SdfPrimitive, Vec3,
     };
 
     fn sample_scene() -> Scene {
+        let sphere = SdfNode::Primitive {
+            object: SdfObject {
+                primitive: SdfPrimitive::Sphere { radius: 1.0 },
+                modifiers: vec![],
+                material: SdfMaterial {
+                    material_type: SdfMaterialType::NeonGrid,
+                    base_color: Vec3::new(0.3, 0.95, 1.0),
+                    emissive_strength: 0.7,
+                    roughness: 0.2,
+                    pattern: SdfPattern::Bands,
+                    parameters: std::collections::BTreeMap::new(),
+                },
+                bounds_radius: Some(1.2),
+            },
+        };
+
+        let box_node = SdfNode::Transform {
+            modifiers: vec![SdfModifier::Translate {
+                offset: Vec3::new(1.1, 0.0, 0.0),
+            }],
+            child: Box::new(SdfNode::Primitive {
+                object: SdfObject {
+                    primitive: SdfPrimitive::Box {
+                        size: Vec3::new(0.45, 0.45, 0.45),
+                    },
+                    modifiers: vec![],
+                    material: SdfMaterial {
+                        material_type: SdfMaterialType::Plasma,
+                        ..SdfMaterial::default()
+                    },
+                    bounds_radius: Some(1.0),
+                },
+            }),
+            bounds_radius: Some(2.0),
+        };
+
         Scene {
             sdf: aurex_scene::SdfScene {
                 seed: 2027,
@@ -720,20 +914,11 @@ mod tests {
                         color: Vec3::new(1.0, 0.95, 0.9),
                     }],
                 },
-                objects: vec![SdfObject {
-                    primitive: SdfPrimitive::Sphere { radius: 1.0 },
-                    modifiers: vec![SdfModifier::Translate {
-                        offset: Vec3::new(0.0, 0.0, 0.0),
-                    }],
-                    material: SdfMaterial {
-                        material_type: SdfMaterialType::NeonGrid,
-                        base_color: Vec3::new(0.3, 0.95, 1.0),
-                        emissive_strength: 0.7,
-                        roughness: 0.2,
-                        pattern: SdfPattern::Bands,
-                        parameters: std::collections::BTreeMap::new(),
-                    },
-                }],
+                objects: vec![],
+                root: SdfNode::SmoothUnion {
+                    children: vec![sphere, box_node],
+                    k: 0.35,
+                },
             },
         }
     }
@@ -748,7 +933,6 @@ mod tests {
                 ..RenderConfig::default()
             },
         );
-
         assert_eq!(frame.width, 64);
         assert_eq!(frame.height, 36);
         assert_eq!(frame.pixels.len(), 64 * 36);
@@ -765,7 +949,6 @@ mod tests {
         };
         let a = render_sdf_scene_with_config(&sample_scene(), config);
         let b = render_sdf_scene_with_config(&sample_scene(), config);
-
         assert_eq!(a.pixels, b.pixels);
         assert_eq!(a.bloom_prepass, b.bloom_prepass);
     }
@@ -790,7 +973,13 @@ mod tests {
             RenderTime { seconds: 2.0 },
             1,
         );
-
         assert_ne!(a.color, b.color);
+    }
+
+    #[test]
+    fn smooth_min_blends_distances() {
+        let hard = (-0.2f32).min(0.1);
+        let smooth = smooth_min(-0.2, 0.1, 0.3);
+        assert!(smooth <= hard + 0.05);
     }
 }
