@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::{collections::BTreeMap, path::Path};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub struct Vec3 {
@@ -23,6 +23,8 @@ pub struct Scene {
 pub struct SdfScene {
     pub camera: SdfCamera,
     pub lighting: SdfLighting,
+    #[serde(default)]
+    pub seed: u32,
     pub objects: Vec<SdfObject>,
 }
 
@@ -127,20 +129,72 @@ pub struct KeyLight {
     pub color: Vec3,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct SdfMaterial {
-    #[serde(default = "default_color")]
-    pub color: Vec3,
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum SdfMaterialType {
+    SolidColor,
+    NeonGrid,
+    Plasma,
+    FractalMetal,
+    NoiseSurface,
+    Holographic,
+    Lava,
+    Wireframe,
 }
 
-fn default_color() -> Vec3 {
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum SdfPattern {
+    None,
+    Bands,
+    Rings,
+    Checker,
+    Noise,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SdfMaterial {
+    #[serde(default)]
+    pub material_type: SdfMaterialType,
+    #[serde(default = "default_base_color", alias = "color")]
+    pub base_color: Vec3,
+    #[serde(default)]
+    pub emissive_strength: f32,
+    #[serde(default = "default_roughness")]
+    pub roughness: f32,
+    #[serde(default)]
+    pub pattern: SdfPattern,
+    #[serde(default)]
+    pub parameters: BTreeMap<String, f32>,
+}
+
+fn default_base_color() -> Vec3 {
     Vec3::new(0.75, 0.85, 1.0)
+}
+
+fn default_roughness() -> f32 {
+    0.45
+}
+
+impl Default for SdfMaterialType {
+    fn default() -> Self {
+        Self::SolidColor
+    }
+}
+
+impl Default for SdfPattern {
+    fn default() -> Self {
+        Self::None
+    }
 }
 
 impl Default for SdfMaterial {
     fn default() -> Self {
         Self {
-            color: default_color(),
+            material_type: SdfMaterialType::SolidColor,
+            base_color: default_base_color(),
+            emissive_strength: 0.0,
+            roughness: default_roughness(),
+            pattern: SdfPattern::None,
+            parameters: BTreeMap::new(),
         }
     }
 }
@@ -158,12 +212,13 @@ pub fn load_scene_from_json_path(
 
 #[cfg(test)]
 mod tests {
-    use super::{Scene, load_scene_from_json_str};
+    use super::{Scene, SdfMaterialType, load_scene_from_json_str};
 
     #[test]
     fn parses_scene_json() {
         let json = r#"{
             "sdf": {
+                "seed": 101,
                 "camera": {
                     "position": {"x": 0.0, "y": 0.0, "z": -5.0},
                     "target": {"x": 0.0, "y": 0.0, "z": 0.0},
@@ -176,12 +231,25 @@ mod tests {
                 },
                 "objects": [{
                     "primitive": {"Sphere": {"radius": 1.0}},
-                    "modifiers": []
+                    "modifiers": [],
+                    "material": {
+                        "material_type": "NeonGrid",
+                        "base_color": {"x": 0.0, "y": 1.0, "z": 1.0},
+                        "emissive_strength": 0.8,
+                        "roughness": 0.1,
+                        "pattern": "Bands",
+                        "parameters": {"grid_scale": 6.0}
+                    }
                 }]
             }
         }"#;
 
         let scene: Scene = load_scene_from_json_str(json).expect("scene json should parse");
         assert_eq!(scene.sdf.objects.len(), 1);
+        assert_eq!(scene.sdf.seed, 101);
+        assert_eq!(
+            scene.sdf.objects[0].material.material_type,
+            SdfMaterialType::NeonGrid
+        );
     }
 }

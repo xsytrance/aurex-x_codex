@@ -1,5 +1,6 @@
 {
   "sdf": {
+    "seed": 9001,
     "camera": {
       "position": { "x": 0.0, "y": 0.0, "z": -6.0 },
       "target": { "x": 0.0, "y": 0.0, "z": 0.0 },
@@ -24,12 +25,31 @@
           { "NoiseDisplacement": { "amplitude": 0.1, "frequency": 2.1, "seed": 77 } },
           { "Mirror": { "normal": { "x": 1.0, "y": 0.0, "z": 0.0 }, "offset": 0.0 } }
         ],
-        "material": { "color": { "x": 0.75, "y": 0.9, "z": 1.0 } }
+        "material": {
+          "material_type": "Plasma",
+          "base_color": { "x": 0.75, "y": 0.9, "z": 1.0 },
+          "emissive_strength": 0.92,
+          "roughness": 0.35,
+          "pattern": "Noise",
+          "parameters": {
+            "speed": 2.2,
+            "frequency": 3.1
+          }
+        }
       },
       {
         "primitive": { "NoiseField": { "radius": 2.8, "amplitude": 0.25, "frequency": 1.6, "seed": 123 } },
         "modifiers": [],
-        "material": { "color": { "x": 0.22, "y": 0.33, "z": 0.6 } }
+        "material": {
+          "material_type": "Holographic",
+          "base_color": { "x": 0.22, "y": 0.33, "z": 0.6 },
+          "emissive_strength": 0.45,
+          "roughness": 0.18,
+          "pattern": "Bands",
+          "parameters": {
+            "shift_speed": 3.0
+          }
+        }
       }
     ]
   }

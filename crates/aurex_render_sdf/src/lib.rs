@@ -1,5 +1,21 @@
-use aurex_scene::{Scene, SdfModifier, SdfObject, SdfPrimitive, Vec3};
+pub mod noise;
+
+use aurex_scene::{
+    Scene, SdfMaterial, SdfMaterialType, SdfModifier, SdfPattern, SdfPrimitive, Vec3,
+};
 use bytemuck::{Pod, Zeroable};
+use noise::{NoiseVec3, fbm, value_noise};
+
+#[derive(Debug, Clone, Copy)]
+pub struct RenderTime {
+    pub seconds: f32,
+}
+
+impl Default for RenderTime {
+    fn default() -> Self {
+        Self { seconds: 0.0 }
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct RenderConfig {
@@ -9,6 +25,8 @@ pub struct RenderConfig {
     pub max_distance: f32,
     pub surface_epsilon: f32,
     pub shadow_steps: u32,
+    pub time: RenderTime,
+    pub output_bloom_prepass: bool,
 }
 
 impl Default for RenderConfig {
@@ -20,12 +38,14 @@ impl Default for RenderConfig {
             max_distance: 120.0,
             surface_epsilon: 0.001,
             shadow_steps: 48,
+            time: RenderTime::default(),
+            output_bloom_prepass: true,
         }
     }
 }
 
 #[repr(C)]
-#[derive(Debug, Clone, Copy, Pod, Zeroable)]
+#[derive(Debug, Clone, Copy, Pod, Zeroable, PartialEq, Eq)]
 pub struct Rgba8 {
     pub r: u8,
     pub g: u8,
@@ -38,6 +58,14 @@ pub struct RenderedFrame {
     pub width: u32,
     pub height: u32,
     pub pixels: Vec<Rgba8>,
+    pub bloom_prepass: Option<Vec<f32>>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct MaterialEvaluation {
+    pub color: [f32; 3],
+    pub emission: f32,
+    pub roughness: f32,
 }
 
 pub fn render_sdf_scene(scene: &Scene) -> RenderedFrame {
@@ -46,11 +74,18 @@ pub fn render_sdf_scene(scene: &Scene) -> RenderedFrame {
 
 pub fn render_sdf_scene_with_config(scene: &Scene, config: RenderConfig) -> RenderedFrame {
     let mut pixels = Vec::with_capacity((config.width * config.height) as usize);
+    let mut bloom_prepass = config
+        .output_bloom_prepass
+        .then(|| Vec::with_capacity((config.width * config.height) as usize));
+
     for y in 0..config.height {
         for x in 0..config.width {
             let ray = generate_camera_ray(scene, x, y, config.width, config.height);
-            let color = shade_ray(scene, ray.origin, ray.direction, config);
+            let (color, emission) = shade_ray(scene, ray.origin, ray.direction, config);
             pixels.push(to_rgba8(color));
+            if let Some(bloom) = &mut bloom_prepass {
+                bloom.push(emission.max(0.0));
+            }
         }
     }
 
@@ -58,11 +93,125 @@ pub fn render_sdf_scene_with_config(scene: &Scene, config: RenderConfig) -> Rend
         width: config.width,
         height: config.height,
         pixels,
+        bloom_prepass,
     }
 }
 
 pub fn wgpu_backend_marker() -> wgpu::Features {
     wgpu::Features::empty()
+}
+
+pub fn evaluate_material(
+    material: &SdfMaterial,
+    position: [f32; 3],
+    normal: [f32; 3],
+    time: RenderTime,
+    scene_seed: u32,
+) -> MaterialEvaluation {
+    let p = V3::new(position[0], position[1], position[2]);
+    let n = V3::new(normal[0], normal[1], normal[2]).normalized();
+    let t = time.seconds;
+    let seed = scene_seed as i32;
+    let param =
+        |key: &str, fallback: f32| material.parameters.get(key).copied().unwrap_or(fallback);
+
+    let base = from_vec3(material.base_color);
+    let pattern_mix = apply_pattern(material.pattern.clone(), p, t, seed);
+
+    let (raw_color, emission_boost, roughness_mul) = match material.material_type {
+        SdfMaterialType::SolidColor => (base, 0.0, 1.0),
+        SdfMaterialType::NeonGrid => {
+            let scale = param("grid_scale", 7.0);
+            let pulse = param("pulse_speed", 3.5);
+            let line_w = param("line_width", 0.08).clamp(0.01, 0.35);
+            let gx = (p.x * scale + t * pulse).sin().abs();
+            let gz = (p.z * scale + t * pulse * 0.7).sin().abs();
+            let line = (1.0 - ((gx.min(gz) - line_w).max(0.0) / (1.0 - line_w))).clamp(0.0, 1.0);
+            (base * (0.25 + 1.2 * line), 0.8 * line, 0.55)
+        }
+        SdfMaterialType::Plasma => {
+            let speed = param("speed", 1.5);
+            let freq = param("frequency", 2.2);
+            let wave = (p.x * freq + t * speed).sin()
+                + (p.y * (freq * 1.7) - t * speed * 0.6).sin()
+                + (p.z * (freq * 1.3) + t * speed * 0.9).sin();
+            let plasma = 0.5 + 0.5 * (wave / 3.0);
+            let hue = V3::new(plasma, 1.0 - plasma, (plasma * 1.7).sin().abs());
+            (base.hadamard(hue) * 1.2, 0.65 * plasma, 0.8)
+        }
+        SdfMaterialType::FractalMetal => {
+            let n1 = fbm(
+                NoiseVec3::new(p.x * 1.3 + t * 0.05, p.y * 1.3, p.z * 1.3),
+                5,
+                2.0,
+                0.5,
+                seed,
+            );
+            let fresnel = (1.0 - n.dot(V3::new(0.0, 0.0, -1.0)).abs()).powf(3.0);
+            (
+                base * (0.8 + 0.35 * n1.abs()) + V3::splat(fresnel * 0.35),
+                0.05,
+                0.35,
+            )
+        }
+        SdfMaterialType::NoiseSurface => {
+            let f = param("noise_frequency", 2.8);
+            let n2 = fbm(
+                NoiseVec3::new(p.x * f, p.y * f, p.z * f + t * 0.1),
+                6,
+                2.0,
+                0.5,
+                seed,
+            );
+            (base * (0.55 + 0.65 * n2.abs()), 0.0, 0.95)
+        }
+        SdfMaterialType::Holographic => {
+            let view_angle = 0.5 + 0.5 * n.dot(V3::new(0.3, 0.9, 0.2)).clamp(-1.0, 1.0);
+            let phase = t * param("shift_speed", 2.4) + p.y * 3.0;
+            let rainbow = V3::new(
+                (phase).sin() * 0.5 + 0.5,
+                (phase + 2.094).sin() * 0.5 + 0.5,
+                (phase + 4.188).sin() * 0.5 + 0.5,
+            );
+            (
+                base.hadamard(rainbow) * (0.5 + view_angle),
+                0.75 * view_angle,
+                0.2,
+            )
+        }
+        SdfMaterialType::Lava => {
+            let flow = fbm(
+                NoiseVec3::new(p.x * 2.4 + t * 0.35, p.y * 1.7, p.z * 2.4 - t * 0.2),
+                5,
+                2.0,
+                0.55,
+                seed,
+            );
+            let hot = (flow * 1.7).clamp(0.0, 1.0);
+            let lava = V3::new(1.0, 0.3 + 0.6 * hot, 0.05 + 0.15 * hot);
+            (base.hadamard(lava) * (0.5 + hot), 0.9 * hot, 0.7)
+        }
+        SdfMaterialType::Wireframe => {
+            let scale = param("wire_scale", 8.0);
+            let width = param("wire_width", 0.06);
+            let wx = ((p.x * scale).fract() - 0.5).abs();
+            let wy = ((p.y * scale).fract() - 0.5).abs();
+            let wz = ((p.z * scale).fract() - 0.5).abs();
+            let edge = ((width - wx.min(wy).min(wz)) / width.max(0.001)).clamp(0.0, 1.0);
+            (base * (0.2 + 1.4 * edge), 0.5 * edge, 0.4)
+        }
+    };
+
+    let col = raw_color * (0.7 + 0.3 * pattern_mix);
+    MaterialEvaluation {
+        color: [
+            col.x.clamp(0.0, 1.0),
+            col.y.clamp(0.0, 1.0),
+            col.z.clamp(0.0, 1.0),
+        ],
+        emission: (material.emissive_strength + emission_boost).max(0.0),
+        roughness: (material.roughness * roughness_mul).clamp(0.02, 1.0),
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -78,37 +227,73 @@ struct Hit {
     object_index: usize,
 }
 
-fn shade_ray(scene: &Scene, origin: V3, direction: V3, config: RenderConfig) -> V3 {
+fn shade_ray(scene: &Scene, origin: V3, direction: V3, config: RenderConfig) -> (V3, f32) {
     if let Some(hit) = march_scene(scene, origin, direction, config) {
-        let mut color = V3::splat(scene.sdf.lighting.ambient_light);
-        let base = material_color(&scene.sdf.objects[hit.object_index]);
+        let object = &scene.sdf.objects[hit.object_index];
+        let m = evaluate_material(
+            &object.material,
+            [hit.position.x, hit.position.y, hit.position.z],
+            [hit.normal.x, hit.normal.y, hit.normal.z],
+            config.time,
+            scene.sdf.seed,
+        );
+        let base = V3::new(m.color[0], m.color[1], m.color[2]);
+        let mut color = base * scene.sdf.lighting.ambient_light;
 
         for key in &scene.sdf.lighting.key_lights {
             let ldir = from_vec3(key.direction).normalized() * -1.0;
             let lambert = hit.normal.dot(ldir).max(0.0);
             let shadow = soft_shadow(scene, hit.position + hit.normal * 0.005, ldir, config);
-            let light_color = from_vec3(key.color) * key.intensity * lambert * shadow;
-            color = color + base.hadamard(light_color);
+            let half_vec = (ldir - direction).normalized();
+            let specular = hit
+                .normal
+                .dot(half_vec)
+                .max(0.0)
+                .powf((1.0 - m.roughness) * 48.0 + 2.0);
+            let light_color = from_vec3(key.color) * key.intensity;
+            color = color
+                + base.hadamard(light_color) * (lambert * shadow)
+                + light_color * specular * (1.0 - m.roughness) * 0.25;
         }
 
-        return color.clamp01();
+        color = color + base * m.emission;
+        return (color.clamp01(), m.emission);
     }
 
     let t = 0.5 * (direction.y + 1.0);
-    V3::new(0.05, 0.08, 0.12) * (1.0 - t) + V3::new(0.25, 0.3, 0.4) * t
+    (
+        V3::new(0.05, 0.08, 0.12) * (1.0 - t) + V3::new(0.25, 0.3, 0.4) * t,
+        0.0,
+    )
 }
 
-fn material_color(object: &SdfObject) -> V3 {
-    from_vec3(object.material.color)
+fn apply_pattern(pattern: SdfPattern, p: V3, time: f32, seed: i32) -> f32 {
+    match pattern {
+        SdfPattern::None => 1.0,
+        SdfPattern::Bands => (0.5 + 0.5 * (p.y * 8.0 + time).sin()).clamp(0.0, 1.0),
+        SdfPattern::Rings => (0.5 + 0.5 * (p.length() * 10.0 - time * 1.4).sin()).clamp(0.0, 1.0),
+        SdfPattern::Checker => {
+            let c = ((p.x * 4.0).floor() as i32 + (p.z * 4.0).floor() as i32).abs();
+            if c % 2 == 0 { 1.0 } else { 0.6 }
+        }
+        SdfPattern::Noise => (0.6
+            + 0.4
+                * value_noise(
+                    NoiseVec3::new(p.x * 3.0 + time * 0.2, p.y * 3.0, p.z * 3.0),
+                    seed,
+                ))
+        .clamp(0.0, 1.0),
+    }
 }
 
 fn march_scene(scene: &Scene, origin: V3, direction: V3, config: RenderConfig) -> Option<Hit> {
     let mut t = 0.0;
     for _ in 0..config.max_steps {
         let p = origin + direction * t;
-        let (distance, object_index) = scene_distance(scene, p);
+        let (distance, object_index) = scene_distance(scene, p, config.time.seconds);
         if distance < config.surface_epsilon {
-            let normal = estimate_normal(scene, p, config.surface_epsilon * 2.0);
+            let normal =
+                estimate_normal(scene, p, config.surface_epsilon * 2.0, config.time.seconds);
             return Some(Hit {
                 position: p,
                 normal,
@@ -116,7 +301,7 @@ fn march_scene(scene: &Scene, origin: V3, direction: V3, config: RenderConfig) -
             });
         }
 
-        t += distance;
+        t += distance.max(config.surface_epsilon * 0.5);
         if t > config.max_distance {
             return None;
         }
@@ -130,7 +315,7 @@ fn soft_shadow(scene: &Scene, origin: V3, direction: V3, config: RenderConfig) -
     let mut visibility: f32 = 1.0;
     for _ in 0..config.shadow_steps {
         let p = origin + direction * t;
-        let (distance, _) = scene_distance(scene, p);
+        let (distance, _) = scene_distance(scene, p, config.time.seconds);
         if distance < config.surface_epsilon {
             return 0.0;
         }
@@ -143,19 +328,19 @@ fn soft_shadow(scene: &Scene, origin: V3, direction: V3, config: RenderConfig) -
     visibility.clamp(0.0, 1.0)
 }
 
-fn estimate_normal(scene: &Scene, p: V3, eps: f32) -> V3 {
+fn estimate_normal(scene: &Scene, p: V3, eps: f32, time: f32) -> V3 {
     let ex = V3::new(eps, 0.0, 0.0);
     let ey = V3::new(0.0, eps, 0.0);
     let ez = V3::new(0.0, 0.0, eps);
 
-    let dx = scene_distance(scene, p + ex).0 - scene_distance(scene, p - ex).0;
-    let dy = scene_distance(scene, p + ey).0 - scene_distance(scene, p - ey).0;
-    let dz = scene_distance(scene, p + ez).0 - scene_distance(scene, p - ez).0;
+    let dx = scene_distance(scene, p + ex, time).0 - scene_distance(scene, p - ex, time).0;
+    let dy = scene_distance(scene, p + ey, time).0 - scene_distance(scene, p - ey, time).0;
+    let dz = scene_distance(scene, p + ez, time).0 - scene_distance(scene, p - ez, time).0;
 
     V3::new(dx, dy, dz).normalized()
 }
 
-fn scene_distance(scene: &Scene, point: V3) -> (f32, usize) {
+fn scene_distance(scene: &Scene, point: V3, time: f32) -> (f32, usize) {
     let mut best = f32::INFINITY;
     let mut index = 0usize;
 
@@ -164,10 +349,10 @@ fn scene_distance(scene: &Scene, point: V3) -> (f32, usize) {
         let mut distance_scale = 1.0;
 
         for modifier in &object.modifiers {
-            apply_modifier(&mut p, &mut distance_scale, modifier);
+            apply_modifier(&mut p, &mut distance_scale, modifier, scene.sdf.seed, time);
         }
 
-        let distance = eval_primitive(&object.primitive, p) * distance_scale;
+        let distance = eval_primitive(&object.primitive, p, scene.sdf.seed, time) * distance_scale;
         if distance < best {
             best = distance;
             index = i;
@@ -177,7 +362,13 @@ fn scene_distance(scene: &Scene, point: V3) -> (f32, usize) {
     (best, index)
 }
 
-fn apply_modifier(p: &mut V3, distance_scale: &mut f32, modifier: &SdfModifier) {
+fn apply_modifier(
+    p: &mut V3,
+    distance_scale: &mut f32,
+    modifier: &SdfModifier,
+    scene_seed: u32,
+    time: f32,
+) {
     match modifier {
         SdfModifier::Repeat { cell } => {
             let cell = from_vec3(*cell);
@@ -217,7 +408,14 @@ fn apply_modifier(p: &mut V3, distance_scale: &mut f32, modifier: &SdfModifier) 
             frequency,
             seed,
         } => {
-            let n = noise3(*p * *frequency, *seed as i32);
+            let n = value_noise(
+                NoiseVec3::new(
+                    p.x * *frequency + time * 0.25,
+                    p.y * *frequency,
+                    p.z * *frequency,
+                ),
+                scene_seed as i32 + *seed as i32,
+            );
             p.x += n * *amplitude;
             p.y += n * *amplitude;
             p.z += n * *amplitude;
@@ -232,7 +430,7 @@ fn apply_modifier(p: &mut V3, distance_scale: &mut f32, modifier: &SdfModifier) 
     }
 }
 
-fn eval_primitive(primitive: &SdfPrimitive, p: V3) -> f32 {
+fn eval_primitive(primitive: &SdfPrimitive, p: V3, scene_seed: u32, time: f32) -> f32 {
     match primitive {
         SdfPrimitive::Sphere { radius } => p.length() - *radius,
         SdfPrimitive::Box { size } => {
@@ -263,7 +461,7 @@ fn eval_primitive(primitive: &SdfPrimitive, p: V3) -> f32 {
             let b = from_vec3(*b);
             let pa = p - a;
             let ba = b - a;
-            let h = (pa.dot(ba) / ba.dot(ba)).clamp(0.0, 1.0);
+            let h = (pa.dot(ba) / ba.dot(ba).max(1e-6)).clamp(0.0, 1.0);
             (pa - ba * h).length() - *radius
         }
         SdfPrimitive::Mandelbulb {
@@ -277,7 +475,17 @@ fn eval_primitive(primitive: &SdfPrimitive, p: V3) -> f32 {
             frequency,
             seed,
         } => {
-            let n = noise3(p * *frequency, *seed as i32);
+            let n = fbm(
+                NoiseVec3::new(
+                    p.x * *frequency + time * 0.15,
+                    p.y * *frequency,
+                    p.z * *frequency,
+                ),
+                5,
+                2.0,
+                0.5,
+                scene_seed as i32 + *seed as i32,
+            );
             p.length() - *radius + n * *amplitude
         }
     }
@@ -310,7 +518,7 @@ fn sdf_mandelbulb(p: V3, power: f32, iterations: u32, bailout: f32) -> f32 {
             + p;
     }
 
-    0.5 * r.ln() * r / dr
+    0.5 * r.max(1e-6).ln() * r / dr.max(1e-6)
 }
 
 fn generate_camera_ray(scene: &Scene, x: u32, y: u32, width: u32, height: u32) -> Ray {
@@ -319,7 +527,11 @@ fn generate_camera_ray(scene: &Scene, x: u32, y: u32, width: u32, height: u32) -
     let target = from_vec3(cam.target);
 
     let forward = (target - origin).normalized();
-    let world_up = V3::new(0.0, 1.0, 0.0);
+    let world_up = if forward.y.abs() > 0.999 {
+        V3::new(0.0, 0.0, 1.0)
+    } else {
+        V3::new(0.0, 1.0, 0.0)
+    };
     let right = forward.cross(world_up).normalized();
     let up = right.cross(forward).normalized();
 
@@ -346,11 +558,6 @@ fn repeat_axis(value: f32, cell: f32) -> f32 {
 fn rotate_axis_angle(p: V3, axis: V3, angle: f32) -> V3 {
     let (s, c) = angle.sin_cos();
     p * c + axis.cross(p) * s + axis * axis.dot(p) * (1.0 - c)
-}
-
-fn noise3(p: V3, seed: i32) -> f32 {
-    let x = (p.x * 127.1 + p.y * 311.7 + p.z * 74.7 + seed as f32 * 13.37).sin() * 43758.5453;
-    (x.fract() * 2.0) - 1.0
 }
 
 fn to_rgba8(color: V3) -> Rgba8 {
@@ -489,12 +696,16 @@ impl std::ops::Div<f32> for V3 {
 
 #[cfg(test)]
 mod tests {
-    use super::{RenderConfig, render_sdf_scene_with_config};
-    use aurex_scene::{Scene, SdfCamera, SdfLighting, SdfModifier, SdfObject, SdfPrimitive, Vec3};
+    use super::{RenderConfig, RenderTime, evaluate_material, render_sdf_scene_with_config};
+    use aurex_scene::{
+        Scene, SdfCamera, SdfLighting, SdfMaterial, SdfMaterialType, SdfModifier, SdfObject,
+        SdfPattern, SdfPrimitive, Vec3,
+    };
 
     fn sample_scene() -> Scene {
         Scene {
             sdf: aurex_scene::SdfScene {
+                seed: 2027,
                 camera: SdfCamera {
                     position: Vec3::new(0.0, 0.0, -4.0),
                     target: Vec3::new(0.0, 0.0, 0.0),
@@ -514,8 +725,13 @@ mod tests {
                     modifiers: vec![SdfModifier::Translate {
                         offset: Vec3::new(0.0, 0.0, 0.0),
                     }],
-                    material: aurex_scene::SdfMaterial {
-                        color: Vec3::new(0.7, 0.9, 1.0),
+                    material: SdfMaterial {
+                        material_type: SdfMaterialType::NeonGrid,
+                        base_color: Vec3::new(0.3, 0.95, 1.0),
+                        emissive_strength: 0.7,
+                        roughness: 0.2,
+                        pattern: SdfPattern::Bands,
+                        parameters: std::collections::BTreeMap::new(),
                     },
                 }],
             },
@@ -536,6 +752,7 @@ mod tests {
         assert_eq!(frame.width, 64);
         assert_eq!(frame.height, 36);
         assert_eq!(frame.pixels.len(), 64 * 36);
+        assert_eq!(frame.bloom_prepass.as_ref().map(|v| v.len()), Some(64 * 36));
     }
 
     #[test]
@@ -543,20 +760,37 @@ mod tests {
         let config = RenderConfig {
             width: 40,
             height: 24,
+            time: RenderTime { seconds: 4.0 },
             ..RenderConfig::default()
         };
         let a = render_sdf_scene_with_config(&sample_scene(), config);
         let b = render_sdf_scene_with_config(&sample_scene(), config);
 
-        assert_eq!(a.pixels.len(), b.pixels.len());
-        let checksum_a: u64 = a.pixels.iter().fold(0u64, |acc, px| {
-            acc.wrapping_mul(1099511628211)
-                .wrapping_add(px.r as u64 + ((px.g as u64) << 8) + ((px.b as u64) << 16))
-        });
-        let checksum_b: u64 = b.pixels.iter().fold(0u64, |acc, px| {
-            acc.wrapping_mul(1099511628211)
-                .wrapping_add(px.r as u64 + ((px.g as u64) << 8) + ((px.b as u64) << 16))
-        });
-        assert_eq!(checksum_a, checksum_b);
+        assert_eq!(a.pixels, b.pixels);
+        assert_eq!(a.bloom_prepass, b.bloom_prepass);
+    }
+
+    #[test]
+    fn evaluate_material_animated_changes_with_time() {
+        let material = SdfMaterial {
+            material_type: SdfMaterialType::Plasma,
+            ..SdfMaterial::default()
+        };
+        let a = evaluate_material(
+            &material,
+            [0.2, 0.3, 0.4],
+            [0.0, 1.0, 0.0],
+            RenderTime { seconds: 0.0 },
+            1,
+        );
+        let b = evaluate_material(
+            &material,
+            [0.2, 0.3, 0.4],
+            [0.0, 1.0, 0.0],
+            RenderTime { seconds: 2.0 },
+            1,
+        );
+
+        assert_ne!(a.color, b.color);
     }
 }

@@ -1,5 +1,6 @@
 {
   "sdf": {
+    "seed": 1337,
     "camera": {
       "position": { "x": 0.0, "y": 1.1, "z": -5.5 },
       "target": { "x": 0.0, "y": 0.2, "z": 0.0 },
@@ -23,12 +24,30 @@
           { "Scale": { "factor": 1.2 } },
           { "Rotate": { "axis": { "x": 0.0, "y": 1.0, "z": 0.0 }, "radians": 0.4 } }
         ],
-        "material": { "color": { "x": 0.9, "y": 0.75, "z": 0.45 } }
+        "material": {
+          "material_type": "FractalMetal",
+          "base_color": { "x": 0.9, "y": 0.75, "z": 0.45 },
+          "emissive_strength": 0.08,
+          "roughness": 0.22,
+          "pattern": "Rings",
+          "parameters": {
+            "micro_noise": 1.6
+          }
+        }
       },
       {
         "primitive": { "Plane": { "normal": { "x": 0.0, "y": 1.0, "z": 0.0 }, "offset": 1.0 } },
         "modifiers": [],
-        "material": { "color": { "x": 0.12, "y": 0.1, "z": 0.08 } }
+        "material": {
+          "material_type": "NoiseSurface",
+          "base_color": { "x": 0.12, "y": 0.1, "z": 0.08 },
+          "emissive_strength": 0.0,
+          "roughness": 0.9,
+          "pattern": "Noise",
+          "parameters": {
+            "noise_frequency": 3.2
+          }
+        }
       }
     ]
   }
