@@ -12,6 +12,14 @@ impl Vec3 {
     pub const fn new(x: f32, y: f32, z: f32) -> Self {
         Self { x, y, z }
     }
+
+    pub fn lerp(self, rhs: Self, t: f32) -> Self {
+        Self::new(
+            self.x + (rhs.x - self.x) * t,
+            self.y + (rhs.y - self.y) * t,
+            self.z + (rhs.z - self.z) * t,
+        )
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -29,6 +37,240 @@ pub struct SdfScene {
     pub objects: Vec<SdfObject>,
     #[serde(default)]
     pub root: SdfNode,
+    #[serde(default)]
+    pub timeline: Option<SceneTimeline>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SceneTimeline {
+    pub duration: f32,
+    #[serde(default)]
+    pub loops: bool,
+    #[serde(default)]
+    pub keyframes: Vec<TimelineKeyframe>,
+    #[serde(default)]
+    pub events: Vec<TimelineEvent>,
+    #[serde(default)]
+    pub camera_path: Option<CameraPath>,
+}
+
+impl SceneTimeline {
+    pub fn normalized_time(&self, time_seconds: f32) -> f32 {
+        let duration = self.duration.max(1e-6);
+        if self.loops {
+            time_seconds.rem_euclid(duration)
+        } else {
+            time_seconds.clamp(0.0, duration)
+        }
+    }
+
+    pub fn sample_keyframe_value(&self, target: &str, time_seconds: f32) -> Option<TimelineValue> {
+        let t = self.normalized_time(time_seconds);
+        let mut keys: Vec<&TimelineKeyframe> = self
+            .keyframes
+            .iter()
+            .filter(|k| k.target == target)
+            .collect();
+
+        if keys.is_empty() {
+            return None;
+        }
+
+        keys.sort_by(|a, b| {
+            a.time
+                .partial_cmp(&b.time)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        let prev = keys
+            .iter()
+            .rev()
+            .find(|k| k.time <= t)
+            .copied()
+            .unwrap_or(keys[0]);
+        let next = keys
+            .iter()
+            .find(|k| k.time >= t)
+            .copied()
+            .unwrap_or(keys[keys.len() - 1]);
+
+        if std::ptr::eq(prev, next) {
+            return Some(prev.value.clone());
+        }
+
+        let span = (next.time - prev.time).max(1e-6);
+        let alpha = ((t - prev.time) / span).clamp(0.0, 1.0);
+        let shaped = prev.interpolation.apply(alpha);
+        TimelineValue::interpolate(&prev.value, &next.value, shaped).or(Some(prev.value.clone()))
+    }
+
+    pub fn event_strength(&self, hook: AudioSyncHook, time_seconds: f32) -> f32 {
+        let t = self.normalized_time(time_seconds);
+        let mut strength: f32 = 0.0;
+        for event in &self.events {
+            if event.audio_hook == Some(hook) {
+                let dt = (t - event.time).abs();
+                let window = 0.12;
+                let pulse = (1.0 - dt / window).clamp(0.0, 1.0);
+                strength = strength.max(pulse * pulse);
+            }
+        }
+        strength
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TimelineKeyframe {
+    pub time: f32,
+    pub target: String,
+    pub value: TimelineValue,
+    #[serde(default)]
+    pub interpolation: InterpolationType,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum TimelineValue {
+    Float { value: f32 },
+    Vec3 { value: Vec3 },
+}
+
+impl TimelineValue {
+    fn interpolate(a: &Self, b: &Self, t: f32) -> Option<Self> {
+        match (a, b) {
+            (TimelineValue::Float { value: a }, TimelineValue::Float { value: b }) => {
+                Some(TimelineValue::Float {
+                    value: *a + (*b - *a) * t,
+                })
+            }
+            (TimelineValue::Vec3 { value: a }, TimelineValue::Vec3 { value: b }) => {
+                Some(TimelineValue::Vec3 {
+                    value: a.lerp(*b, t),
+                })
+            }
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum InterpolationType {
+    Linear,
+    EaseIn,
+    EaseOut,
+    Smoothstep,
+}
+
+impl Default for InterpolationType {
+    fn default() -> Self {
+        Self::Linear
+    }
+}
+
+impl InterpolationType {
+    pub fn apply(&self, t: f32) -> f32 {
+        let t = t.clamp(0.0, 1.0);
+        match self {
+            InterpolationType::Linear => t,
+            InterpolationType::EaseIn => t * t,
+            InterpolationType::EaseOut => 1.0 - (1.0 - t) * (1.0 - t),
+            InterpolationType::Smoothstep => t * t * (3.0 - 2.0 * t),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TimelineEvent {
+    pub time: f32,
+    pub name: String,
+    #[serde(default)]
+    pub audio_hook: Option<AudioSyncHook>,
+    #[serde(default)]
+    pub parameters: BTreeMap<String, f32>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum AudioSyncHook {
+    Kick,
+    Snare,
+    Bass,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CameraPath {
+    pub path_type: CameraPathType,
+    pub origin: Vec3,
+    pub target: Vec3,
+    #[serde(default = "default_camera_radius")]
+    pub radius: f32,
+    #[serde(default = "default_camera_speed")]
+    pub speed: f32,
+    #[serde(default)]
+    pub height: f32,
+}
+
+fn default_camera_radius() -> f32 {
+    6.0
+}
+
+fn default_camera_speed() -> f32 {
+    1.0
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum CameraPathType {
+    Orbit,
+    Flythrough,
+    Spiral,
+    Dolly,
+}
+
+impl CameraPath {
+    pub fn sample(&self, time_seconds: f32, base: &SdfCamera, duration: f32) -> SdfCamera {
+        let phase = (time_seconds / duration.max(1e-6)) * self.speed;
+        let mut camera = base.clone();
+        match self.path_type {
+            CameraPathType::Orbit => {
+                let ang = phase * std::f32::consts::TAU;
+                camera.position = Vec3::new(
+                    self.origin.x + ang.cos() * self.radius,
+                    self.origin.y + self.height,
+                    self.origin.z + ang.sin() * self.radius,
+                );
+                camera.target = self.target;
+            }
+            CameraPathType::Flythrough => {
+                camera.position = Vec3::new(
+                    self.origin.x,
+                    self.origin.y + self.height,
+                    self.origin.z + phase * self.radius,
+                );
+                camera.target = Vec3::new(
+                    self.target.x,
+                    self.target.y,
+                    self.target.z + phase * self.radius,
+                );
+            }
+            CameraPathType::Spiral => {
+                let ang = phase * std::f32::consts::TAU;
+                let r = self.radius * (1.0 + 0.2 * phase);
+                camera.position = Vec3::new(
+                    self.origin.x + ang.cos() * r,
+                    self.origin.y + self.height + phase,
+                    self.origin.z + ang.sin() * r,
+                );
+                camera.target = self.target;
+            }
+            CameraPathType::Dolly => {
+                camera.position = Vec3::new(
+                    self.origin.x + phase * self.radius,
+                    self.origin.y + self.height,
+                    self.origin.z,
+                );
+                camera.target = self.target;
+            }
+        }
+        camera
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -259,7 +501,11 @@ pub fn load_scene_from_json_path(
 
 #[cfg(test)]
 mod tests {
-    use super::{Scene, SdfMaterialType, SdfNode, load_scene_from_json_str};
+    use super::{
+        AudioSyncHook, InterpolationType, Scene, SceneTimeline, SdfMaterialType, SdfNode,
+        TimelineValue, Vec3, load_scene_from_json_str,
+    };
+    use std::collections::BTreeMap;
 
     #[test]
     fn parses_scene_json() {
@@ -275,6 +521,17 @@ mod tests {
                 "lighting": {
                     "ambient_light": 0.2,
                     "key_lights": []
+                },
+                "timeline": {
+                    "duration": 8.0,
+                    "loops": true,
+                    "keyframes": [
+                      {"time": 0.0, "target": "camera.position", "value": {"Vec3": {"value": {"x": 0.0, "y": 0.0, "z": -6.0}}}, "interpolation": "Smoothstep"},
+                      {"time": 4.0, "target": "camera.position", "value": {"Vec3": {"value": {"x": 0.0, "y": 1.0, "z": -4.0}}}, "interpolation": "Linear"}
+                    ],
+                    "events": [
+                      {"time": 1.0, "name": "kick", "audio_hook": "Kick"}
+                    ]
                 },
                 "root": {
                     "Union": {
@@ -295,10 +552,9 @@ mod tests {
 
         let scene: Scene = load_scene_from_json_str(json).expect("scene json should parse");
         assert_eq!(scene.sdf.seed, 101);
+        assert!(scene.sdf.timeline.is_some());
         match scene.sdf.root {
-            SdfNode::Union { children } => {
-                assert_eq!(children.len(), 2);
-            }
+            SdfNode::Union { children } => assert_eq!(children.len(), 2),
             _ => panic!("expected union root"),
         }
     }
@@ -329,5 +585,48 @@ mod tests {
             SdfMaterialType::Plasma
         );
         assert_eq!(scene.sdf.objects[0].material.base_color.x, 1.0);
+    }
+
+    #[test]
+    fn timeline_sampling_and_interpolation_work() {
+        let timeline = SceneTimeline {
+            duration: 10.0,
+            loops: true,
+            keyframes: vec![
+                super::TimelineKeyframe {
+                    time: 0.0,
+                    target: "camera.position".to_string(),
+                    value: TimelineValue::Vec3 {
+                        value: Vec3::new(0.0, 0.0, -6.0),
+                    },
+                    interpolation: InterpolationType::Smoothstep,
+                },
+                super::TimelineKeyframe {
+                    time: 10.0,
+                    target: "camera.position".to_string(),
+                    value: TimelineValue::Vec3 {
+                        value: Vec3::new(0.0, 2.0, -4.0),
+                    },
+                    interpolation: InterpolationType::Linear,
+                },
+            ],
+            events: vec![super::TimelineEvent {
+                time: 2.0,
+                name: "kick".into(),
+                audio_hook: Some(AudioSyncHook::Kick),
+                parameters: BTreeMap::new(),
+            }],
+            camera_path: None,
+        };
+
+        let v = timeline
+            .sample_keyframe_value("camera.position", 5.0)
+            .expect("keyframe sample");
+        match v {
+            TimelineValue::Vec3 { value } => assert!(value.y > 0.2),
+            _ => panic!("expected vec3"),
+        }
+
+        assert!(timeline.event_strength(AudioSyncHook::Kick, 2.0) > 0.9);
     }
 }

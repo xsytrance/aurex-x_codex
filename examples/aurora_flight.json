@@ -1,0 +1,99 @@
+{
+  "sdf": {
+    "seed": 4242,
+    "camera": {
+      "position": { "x": 0.0, "y": 1.0, "z": -8.0 },
+      "target": { "x": 0.0, "y": 0.0, "z": 0.0 },
+      "fov_degrees": 62.0,
+      "aspect_ratio": 1.7777778
+    },
+    "lighting": {
+      "ambient_light": 0.15,
+      "key_lights": [
+        {
+          "direction": { "x": -0.3, "y": -1.0, "z": -0.2 },
+          "intensity": 1.0,
+          "color": { "x": 0.4, "y": 0.9, "z": 1.0 }
+        }
+      ]
+    },
+    "timeline": {
+      "duration": 12.0,
+      "loops": true,
+      "camera_path": {
+        "path_type": "Flythrough",
+        "origin": { "x": 0.0, "y": 0.9, "z": -9.0 },
+        "target": { "x": 0.0, "y": 0.0, "z": -1.0 },
+        "radius": 18.0,
+        "speed": 1.0,
+        "height": 0.3
+      },
+      "keyframes": [
+        { "time": 0.0, "target": "light.intensity", "value": { "Float": { "value": 0.8 } }, "interpolation": "EaseIn" },
+        { "time": 6.0, "target": "light.intensity", "value": { "Float": { "value": 1.4 } }, "interpolation": "EaseOut" },
+        { "time": 12.0, "target": "light.intensity", "value": { "Float": { "value": 0.9 } }, "interpolation": "Smoothstep" },
+        { "time": 0.0, "target": "material.emissive_strength", "value": { "Float": { "value": 0.55 } }, "interpolation": "Linear" },
+        { "time": 6.0, "target": "material.emissive_strength", "value": { "Float": { "value": 1.2 } }, "interpolation": "EaseOut" },
+        { "time": 12.0, "target": "material.emissive_strength", "value": { "Float": { "value": 0.65 } }, "interpolation": "Linear" },
+        { "time": 0.0, "target": "tunnel.radius", "value": { "Float": { "value": 1.7 } }, "interpolation": "Smoothstep" },
+        { "time": 12.0, "target": "tunnel.radius", "value": { "Float": { "value": 2.0 } }, "interpolation": "Smoothstep" }
+      ],
+      "events": [
+        { "time": 1.0, "name": "kick", "audio_hook": "Kick" },
+        { "time": 2.5, "name": "snare", "audio_hook": "Snare" },
+        { "time": 4.0, "name": "bass", "audio_hook": "Bass" },
+        { "time": 6.5, "name": "kick", "audio_hook": "Kick" },
+        { "time": 8.0, "name": "snare", "audio_hook": "Snare" },
+        { "time": 10.0, "name": "bass", "audio_hook": "Bass" }
+      ]
+    },
+    "root": {
+      "SmoothUnion": {
+        "k": 0.28,
+        "children": [
+          {
+            "Transform": {
+              "modifiers": [
+                { "Repeat": { "cell": { "x": 0.0, "y": 0.0, "z": 2.2 } } },
+                { "Twist": { "strength": 0.1 } }
+              ],
+              "bounds_radius": 4.0,
+              "child": {
+                "Primitive": {
+                  "object": {
+                    "primitive": { "Torus": { "major_radius": 1.8, "minor_radius": 0.16 } },
+                    "bounds_radius": 2.2,
+                    "material": {
+                      "material_type": "NeonGrid",
+                      "base_color": { "x": 0.2, "y": 0.95, "z": 1.0 },
+                      "emissive_strength": 0.8,
+                      "roughness": 0.15,
+                      "pattern": "Bands",
+                      "parameters": { "grid_scale": 8.0, "pulse_speed": 4.2, "line_width": 0.05 }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "Primitive": {
+              "object": {
+                "primitive": { "NoiseField": { "radius": 2.9, "amplitude": 0.22, "frequency": 1.5, "seed": 99 } },
+                "bounds_radius": 3.2,
+                "material": {
+                  "material_type": "Holographic",
+                  "base_color": { "x": 0.35, "y": 0.5, "z": 0.95 },
+                  "emissive_strength": 0.4,
+                  "roughness": 0.2,
+                  "pattern": "Noise",
+                  "parameters": { "shift_speed": 3.3 }
+                }
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}

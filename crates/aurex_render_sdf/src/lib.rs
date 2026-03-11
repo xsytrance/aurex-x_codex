@@ -1,8 +1,8 @@
 pub mod noise;
 
 use aurex_scene::{
-    Scene, SdfMaterial, SdfMaterialType, SdfModifier, SdfNode, SdfObject, SdfPattern, SdfPrimitive,
-    Vec3,
+    AudioSyncHook, Scene, SdfMaterial, SdfMaterialType, SdfModifier, SdfNode, SdfObject,
+    SdfPattern, SdfPrimitive, TimelineValue, Vec3,
 };
 use bytemuck::{Pod, Zeroable};
 use noise::{NoiseVec3, fbm, value_noise};
@@ -69,11 +69,18 @@ pub struct MaterialEvaluation {
     pub roughness: f32,
 }
 
-pub fn render_sdf_scene(scene: &Scene) -> RenderedFrame {
-    render_sdf_scene_with_config(scene, RenderConfig::default())
+pub fn render_sdf_scene(scene: &Scene, time: RenderTime) -> RenderedFrame {
+    render_sdf_scene_with_config(
+        scene,
+        RenderConfig {
+            time,
+            ..RenderConfig::default()
+        },
+    )
 }
 
 pub fn render_sdf_scene_with_config(scene: &Scene, config: RenderConfig) -> RenderedFrame {
+    let animated_scene = scene_at_time(scene, config.time);
     let mut pixels = Vec::with_capacity((config.width * config.height) as usize);
     let mut bloom_prepass = config
         .output_bloom_prepass
@@ -81,8 +88,8 @@ pub fn render_sdf_scene_with_config(scene: &Scene, config: RenderConfig) -> Rend
 
     for y in 0..config.height {
         for x in 0..config.width {
-            let ray = generate_camera_ray(scene, x, y, config.width, config.height);
-            let (color, emission) = shade_ray(scene, ray.origin, ray.direction, config);
+            let ray = generate_camera_ray(&animated_scene, x, y, config.width, config.height);
+            let (color, emission) = shade_ray(&animated_scene, ray.origin, ray.direction, config);
             pixels.push(to_rgba8(color));
             if let Some(bloom) = &mut bloom_prepass {
                 bloom.push(emission.max(0.0));
@@ -232,6 +239,162 @@ struct Hit {
 struct NodeEval {
     distance: f32,
     material: SdfMaterial,
+}
+
+fn scene_at_time(scene: &Scene, time: RenderTime) -> Scene {
+    let mut animated = scene.clone();
+    let Some(timeline) = animated.sdf.timeline.clone() else {
+        return animated;
+    };
+
+    let t = timeline.normalized_time(time.seconds);
+
+    if let Some(path) = &timeline.camera_path {
+        animated.sdf.camera = path.sample(t, &animated.sdf.camera, timeline.duration);
+    }
+
+    if let Some(TimelineValue::Vec3 { value }) =
+        timeline.sample_keyframe_value("camera.position", t)
+    {
+        animated.sdf.camera.position = value;
+    }
+    if let Some(TimelineValue::Vec3 { value }) = timeline.sample_keyframe_value("camera.target", t)
+    {
+        animated.sdf.camera.target = value;
+    }
+
+    if let Some(TimelineValue::Float { value }) =
+        timeline.sample_keyframe_value("light.intensity", t)
+    {
+        for l in &mut animated.sdf.lighting.key_lights {
+            l.intensity = value;
+        }
+    }
+
+    if let Some(TimelineValue::Float { value }) =
+        timeline.sample_keyframe_value("material.emissive_strength", t)
+    {
+        apply_to_all_materials(
+            &mut animated.sdf.root,
+            &mut animated.sdf.objects,
+            &mut |m| {
+                m.emissive_strength = value;
+            },
+        );
+    }
+
+    if let Some(TimelineValue::Float { value }) = timeline.sample_keyframe_value("tunnel.radius", t)
+    {
+        apply_to_primitives(
+            &mut animated.sdf.root,
+            &mut animated.sdf.objects,
+            &mut |p| {
+                if let SdfPrimitive::Torus { major_radius, .. } = p {
+                    *major_radius = value;
+                }
+            },
+        );
+    }
+
+    let kick = timeline.event_strength(AudioSyncHook::Kick, t);
+    let snare = timeline.event_strength(AudioSyncHook::Snare, t);
+    let bass = timeline.event_strength(AudioSyncHook::Bass, t);
+
+    if kick > 0.0 {
+        animated.sdf.camera.position.y += 0.08 * kick;
+    }
+    if snare > 0.0 {
+        apply_to_primitives(
+            &mut animated.sdf.root,
+            &mut animated.sdf.objects,
+            &mut |p| {
+                if let SdfPrimitive::Torus { minor_radius, .. } = p {
+                    *minor_radius *= 1.0 + 0.25 * snare;
+                }
+            },
+        );
+    }
+    if bass > 0.0 {
+        apply_to_primitives(
+            &mut animated.sdf.root,
+            &mut animated.sdf.objects,
+            &mut |p| {
+                if let SdfPrimitive::Mandelbulb { bailout, .. } = p {
+                    *bailout *= 1.0 + 0.4 * bass;
+                }
+            },
+        );
+    }
+
+    animated
+}
+
+fn apply_to_all_materials(
+    root: &mut SdfNode,
+    objects: &mut [SdfObject],
+    f: &mut dyn FnMut(&mut SdfMaterial),
+) {
+    for o in objects {
+        f(&mut o.material);
+    }
+    apply_to_node_materials(root, f);
+}
+
+fn apply_to_node_materials(node: &mut SdfNode, f: &mut dyn FnMut(&mut SdfMaterial)) {
+    match node {
+        SdfNode::Primitive { object } => f(&mut object.material),
+        SdfNode::Group { children }
+        | SdfNode::Union { children }
+        | SdfNode::SmoothUnion { children, .. }
+        | SdfNode::Intersect { children }
+        | SdfNode::Blend { children, .. } => {
+            for child in children {
+                apply_to_node_materials(child, f);
+            }
+        }
+        SdfNode::Subtract { base, subtract } => {
+            apply_to_node_materials(base, f);
+            for n in subtract {
+                apply_to_node_materials(n, f);
+            }
+        }
+        SdfNode::Transform { child, .. } => apply_to_node_materials(child, f),
+        SdfNode::Empty => {}
+    }
+}
+
+fn apply_to_primitives(
+    root: &mut SdfNode,
+    objects: &mut [SdfObject],
+    f: &mut dyn FnMut(&mut SdfPrimitive),
+) {
+    for o in objects {
+        f(&mut o.primitive);
+    }
+    apply_to_node_primitives(root, f);
+}
+
+fn apply_to_node_primitives(node: &mut SdfNode, f: &mut dyn FnMut(&mut SdfPrimitive)) {
+    match node {
+        SdfNode::Primitive { object } => f(&mut object.primitive),
+        SdfNode::Group { children }
+        | SdfNode::Union { children }
+        | SdfNode::SmoothUnion { children, .. }
+        | SdfNode::Intersect { children }
+        | SdfNode::Blend { children, .. } => {
+            for child in children {
+                apply_to_node_primitives(child, f);
+            }
+        }
+        SdfNode::Subtract { base, subtract } => {
+            apply_to_node_primitives(base, f);
+            for n in subtract {
+                apply_to_node_primitives(n, f);
+            }
+        }
+        SdfNode::Transform { child, .. } => apply_to_node_primitives(child, f),
+        SdfNode::Empty => {}
+    }
 }
 
 fn shade_ray(scene: &Scene, origin: V3, direction: V3, config: RenderConfig) -> (V3, f32) {
@@ -919,6 +1082,7 @@ mod tests {
                     children: vec![sphere, box_node],
                     k: 0.35,
                 },
+                timeline: None,
             },
         }
     }
