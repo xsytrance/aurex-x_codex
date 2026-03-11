@@ -1,3 +1,5 @@
+pub mod generators;
+
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::Path};
 
@@ -39,6 +41,8 @@ pub struct SdfScene {
     pub root: SdfNode,
     #[serde(default)]
     pub timeline: Option<SceneTimeline>,
+    #[serde(default)]
+    pub generator: Option<generators::SceneGenerator>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

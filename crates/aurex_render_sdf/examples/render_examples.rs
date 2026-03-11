@@ -15,6 +15,9 @@ fn main() {
         "examples/fractal_temple.json",
         "examples/particle_storm.json",
         "examples/aurora_flight.json",
+        "examples/psy_tunnel.json",
+        "examples/fractal_temple_world.json",
+        "examples/circuit_world.json",
     ];
 
     for scene_path in scenes {

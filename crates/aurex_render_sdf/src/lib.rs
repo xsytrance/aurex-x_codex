@@ -3,6 +3,7 @@ pub mod noise;
 use aurex_scene::{
     AudioSyncHook, Scene, SdfMaterial, SdfMaterialType, SdfModifier, SdfNode, SdfObject,
     SdfPattern, SdfPrimitive, TimelineValue, Vec3,
+    generators::{self, SceneGenerator},
 };
 use bytemuck::{Pod, Zeroable};
 use noise::{NoiseVec3, fbm, value_noise};
@@ -259,90 +260,149 @@ struct NodeEval {
 
 fn scene_at_time(scene: &Scene, time: RenderTime) -> Scene {
     let mut animated = scene.clone();
-    let Some(timeline) = animated.sdf.timeline.clone() else {
-        return animated;
-    };
+    let mut t = time.seconds;
 
-    let t = timeline.normalized_time(time.seconds);
+    if let Some(timeline) = animated.sdf.timeline.clone() {
+        t = timeline.normalized_time(time.seconds);
 
-    if let Some(path) = &timeline.camera_path {
-        animated.sdf.camera = path.sample(t, &animated.sdf.camera, timeline.duration);
-    }
+        if let Some(path) = &timeline.camera_path {
+            animated.sdf.camera = path.sample(t, &animated.sdf.camera, timeline.duration);
+        }
 
-    if let Some(TimelineValue::Vec3 { value }) =
-        timeline.sample_keyframe_value("camera.position", t)
-    {
-        animated.sdf.camera.position = value;
-    }
-    if let Some(TimelineValue::Vec3 { value }) = timeline.sample_keyframe_value("camera.target", t)
-    {
-        animated.sdf.camera.target = value;
-    }
+        if let Some(TimelineValue::Vec3 { value }) =
+            timeline.sample_keyframe_value("camera.position", t)
+        {
+            animated.sdf.camera.position = value;
+        }
+        if let Some(TimelineValue::Vec3 { value }) =
+            timeline.sample_keyframe_value("camera.target", t)
+        {
+            animated.sdf.camera.target = value;
+        }
 
-    if let Some(TimelineValue::Float { value }) =
-        timeline.sample_keyframe_value("light.intensity", t)
-    {
-        for l in &mut animated.sdf.lighting.key_lights {
-            l.intensity = value;
+        if let Some(TimelineValue::Float { value }) =
+            timeline.sample_keyframe_value("light.intensity", t)
+        {
+            for l in &mut animated.sdf.lighting.key_lights {
+                l.intensity = value;
+            }
+        }
+
+        if let Some(TimelineValue::Float { value }) =
+            timeline.sample_keyframe_value("material.emissive_strength", t)
+        {
+            apply_to_all_materials(
+                &mut animated.sdf.root,
+                &mut animated.sdf.objects,
+                &mut |m| {
+                    m.emissive_strength = value;
+                },
+            );
+        }
+
+        if let Some(TimelineValue::Float { value }) =
+            timeline.sample_keyframe_value("tunnel.radius", t)
+        {
+            apply_to_primitives(
+                &mut animated.sdf.root,
+                &mut animated.sdf.objects,
+                &mut |p| {
+                    if let SdfPrimitive::Torus { major_radius, .. } = p {
+                        *major_radius = value;
+                    }
+                },
+            );
+        }
+
+        if let Some(generator) = &mut animated.sdf.generator {
+            apply_generator_keyframes(generator, &timeline, t);
+        }
+
+        let kick = timeline.event_strength(AudioSyncHook::Kick, t);
+        let snare = timeline.event_strength(AudioSyncHook::Snare, t);
+        let bass = timeline.event_strength(AudioSyncHook::Bass, t);
+
+        if kick > 0.0 {
+            animated.sdf.camera.position.y += 0.08 * kick;
+        }
+        if snare > 0.0 {
+            apply_to_primitives(
+                &mut animated.sdf.root,
+                &mut animated.sdf.objects,
+                &mut |p| {
+                    if let SdfPrimitive::Torus { minor_radius, .. } = p {
+                        *minor_radius *= 1.0 + 0.25 * snare;
+                    }
+                },
+            );
+        }
+        if bass > 0.0 {
+            apply_to_primitives(
+                &mut animated.sdf.root,
+                &mut animated.sdf.objects,
+                &mut |p| {
+                    if let SdfPrimitive::Mandelbulb { bailout, .. } = p {
+                        *bailout *= 1.0 + 0.4 * bass;
+                    }
+                },
+            );
         }
     }
 
-    if let Some(TimelineValue::Float { value }) =
-        timeline.sample_keyframe_value("material.emissive_strength", t)
-    {
-        apply_to_all_materials(
-            &mut animated.sdf.root,
-            &mut animated.sdf.objects,
-            &mut |m| {
-                m.emissive_strength = value;
-            },
-        );
-    }
-
-    if let Some(TimelineValue::Float { value }) = timeline.sample_keyframe_value("tunnel.radius", t)
-    {
-        apply_to_primitives(
-            &mut animated.sdf.root,
-            &mut animated.sdf.objects,
-            &mut |p| {
-                if let SdfPrimitive::Torus { major_radius, .. } = p {
-                    *major_radius = value;
-                }
-            },
-        );
-    }
-
-    let kick = timeline.event_strength(AudioSyncHook::Kick, t);
-    let snare = timeline.event_strength(AudioSyncHook::Snare, t);
-    let bass = timeline.event_strength(AudioSyncHook::Bass, t);
-
-    if kick > 0.0 {
-        animated.sdf.camera.position.y += 0.08 * kick;
-    }
-    if snare > 0.0 {
-        apply_to_primitives(
-            &mut animated.sdf.root,
-            &mut animated.sdf.objects,
-            &mut |p| {
-                if let SdfPrimitive::Torus { minor_radius, .. } = p {
-                    *minor_radius *= 1.0 + 0.25 * snare;
-                }
-            },
-        );
-    }
-    if bass > 0.0 {
-        apply_to_primitives(
-            &mut animated.sdf.root,
-            &mut animated.sdf.objects,
-            &mut |p| {
-                if let SdfPrimitive::Mandelbulb { bailout, .. } = p {
-                    *bailout *= 1.0 + 0.4 * bass;
-                }
-            },
-        );
+    if let Some(generator) = &animated.sdf.generator {
+        animated.sdf.root = generators::expand_generator(generator, animated.sdf.seed, t);
     }
 
     animated
+}
+
+fn apply_generator_keyframes(
+    generator: &mut SceneGenerator,
+    timeline: &aurex_scene::SceneTimeline,
+    t: f32,
+) {
+    if let Some(TimelineValue::Float { value }) =
+        timeline.sample_keyframe_value("generator.tunnel.radius", t)
+    {
+        if let SceneGenerator::Tunnel(g) = generator {
+            g.radius = value;
+        }
+    }
+    if let Some(TimelineValue::Float { value }) =
+        timeline.sample_keyframe_value("generator.tunnel.twist", t)
+    {
+        if let SceneGenerator::Tunnel(g) = generator {
+            g.twist = value;
+        }
+    }
+    if let Some(TimelineValue::Float { value }) =
+        timeline.sample_keyframe_value("generator.temple.fractal_scale", t)
+    {
+        if let SceneGenerator::FractalTemple(g) = generator {
+            g.fractal_scale = value;
+        }
+    }
+    if let Some(TimelineValue::Float { value }) =
+        timeline.sample_keyframe_value("generator.circuit.component_density", t)
+    {
+        if let SceneGenerator::CircuitBoard(g) = generator {
+            g.component_density = value;
+        }
+    }
+    if let Some(TimelineValue::Float { value }) =
+        timeline.sample_keyframe_value("generator.galaxy.rotation_speed", t)
+    {
+        if let SceneGenerator::ParticleGalaxy(g) = generator {
+            g.rotation_speed = value;
+        }
+    }
+    if let Some(TimelineValue::Float { value }) =
+        timeline.sample_keyframe_value("generator.galaxy.radius", t)
+    {
+        if let SceneGenerator::ParticleGalaxy(g) = generator {
+            g.radius = value;
+        }
+    }
 }
 
 fn apply_to_all_materials(
@@ -1184,6 +1244,7 @@ mod tests {
                     k: 0.35,
                 },
                 timeline: None,
+                generator: None,
             },
         }
     }
