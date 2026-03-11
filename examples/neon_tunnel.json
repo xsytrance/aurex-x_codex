@@ -1,0 +1,35 @@
+{
+  "sdf": {
+    "camera": {
+      "position": { "x": 0.0, "y": 0.5, "z": -7.0 },
+      "target": { "x": 0.0, "y": 0.0, "z": 0.0 },
+      "fov_degrees": 62.0,
+      "aspect_ratio": 1.7777778
+    },
+    "lighting": {
+      "ambient_light": 0.12,
+      "key_lights": [
+        {
+          "direction": { "x": -0.4, "y": -1.0, "z": -0.2 },
+          "intensity": 1.1,
+          "color": { "x": 0.3, "y": 0.8, "z": 1.0 }
+        }
+      ]
+    },
+    "objects": [
+      {
+        "primitive": { "Torus": { "major_radius": 1.8, "minor_radius": 0.2 } },
+        "modifiers": [
+          { "Repeat": { "cell": { "x": 0.0, "y": 0.0, "z": 2.4 } } },
+          { "Twist": { "strength": 0.12 } }
+        ],
+        "material": { "color": { "x": 0.2, "y": 0.9, "z": 1.0 } }
+      },
+      {
+        "primitive": { "Plane": { "normal": { "x": 0.0, "y": 1.0, "z": 0.0 }, "offset": 1.2 } },
+        "modifiers": [],
+        "material": { "color": { "x": 0.06, "y": 0.08, "z": 0.12 } }
+      }
+    ]
+  }
+}
