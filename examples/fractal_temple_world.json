@@ -1,0 +1,44 @@
+{
+  "sdf": {
+    "seed": 900,
+    "camera": {
+      "position": {"x": 0.0, "y": 2.2, "z": -10.0},
+      "target": {"x": 0.0, "y": 0.2, "z": 0.0},
+      "fov_degrees": 55.0,
+      "aspect_ratio": 1.7777778
+    },
+    "lighting": {
+      "ambient_light": 0.18,
+      "fog_color": {"x": 0.09, "y": 0.07, "z": 0.06},
+      "fog_density": 0.03,
+      "fog_height_falloff": 0.08,
+      "key_lights": [
+        {
+          "direction": {"x": -0.4, "y": -1.0, "z": -0.35},
+          "intensity": 1.25,
+          "color": {"x": 1.0, "y": 0.88, "z": 0.65}
+        }
+      ]
+    },
+    "timeline": {
+      "duration": 12.0,
+      "loops": true,
+      "keyframes": [
+        {"time": 0.0, "target": "generator.temple.fractal_scale", "value": {"Float": {"value": 0.9}}, "interpolation": "EaseIn"},
+        {"time": 6.0, "target": "generator.temple.fractal_scale", "value": {"Float": {"value": 1.3}}, "interpolation": "EaseOut"},
+        {"time": 12.0, "target": "generator.temple.fractal_scale", "value": {"Float": {"value": 0.9}}, "interpolation": "Smoothstep"}
+      ],
+      "events": [
+        {"time": 3.0, "name": "bass", "audio_hook": "Bass"}
+      ]
+    },
+    "generator": {
+      "FractalTemple": {
+        "grid_size": 7,
+        "pillar_height": 1.3,
+        "pillar_spacing": 2.2,
+        "fractal_scale": 1.0
+      }
+    }
+  }
+}
