@@ -1,3 +1,4 @@
+pub mod fields;
 pub mod generators;
 
 use serde::{Deserialize, Serialize};
@@ -43,6 +44,8 @@ pub struct SdfScene {
     pub timeline: Option<SceneTimeline>,
     #[serde(default)]
     pub generator: Option<generators::SceneGenerator>,
+    #[serde(default)]
+    pub fields: Vec<fields::SceneField>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

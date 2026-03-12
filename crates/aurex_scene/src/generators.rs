@@ -1,4 +1,6 @@
-use crate::{SdfMaterial, SdfMaterialType, SdfModifier, SdfNode, SdfObject, SdfPrimitive, Vec3};
+use crate::{
+    SdfMaterial, SdfMaterialType, SdfModifier, SdfNode, SdfObject, SdfPrimitive, Vec3, fields,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -41,20 +43,32 @@ pub struct ParticleGalaxyGenerator {
     pub rotation_speed: f32,
 }
 
-pub fn expand_generator(generator: &SceneGenerator, scene_seed: u32, time: f32) -> SdfNode {
+pub fn expand_generator(
+    generator: &SceneGenerator,
+    scene_seed: u32,
+    time: f32,
+    scene_fields: &[crate::fields::SceneField],
+) -> SdfNode {
     match generator {
-        SceneGenerator::Tunnel(g) => expand_tunnel(g, scene_seed, time),
-        SceneGenerator::FractalTemple(g) => expand_temple(g, scene_seed),
-        SceneGenerator::CircuitBoard(g) => expand_circuit(g, scene_seed),
-        SceneGenerator::ParticleGalaxy(g) => expand_galaxy(g, scene_seed, time),
+        SceneGenerator::Tunnel(g) => expand_tunnel(g, scene_seed, time, scene_fields),
+        SceneGenerator::FractalTemple(g) => expand_temple(g, scene_seed, scene_fields, time),
+        SceneGenerator::CircuitBoard(g) => expand_circuit(g, scene_seed, scene_fields, time),
+        SceneGenerator::ParticleGalaxy(g) => expand_galaxy(g, scene_seed, time, scene_fields),
     }
 }
 
-fn expand_tunnel(g: &TunnelGenerator, _seed: u32, time: f32) -> SdfNode {
+fn expand_tunnel(
+    g: &TunnelGenerator,
+    seed: u32,
+    time: f32,
+    scene_fields: &[crate::fields::SceneField],
+) -> SdfNode {
     let mut children = Vec::new();
     for i in 0..g.segment_count.max(1) {
         let z = i as f32 * g.repeat_distance;
-        let r = g.radius * (1.0 + 0.07 * ((time * 0.8) + i as f32 * 0.37).sin());
+        let pos = Vec3::new(0.0, 0.0, z);
+        let fs = fields::sample_fields(scene_fields, pos, time, seed);
+        let r = g.radius * (1.0 + 0.07 * ((time * 0.8) + i as f32 * 0.37).sin()) + fs.scalar * 0.08;
         children.push(SdfNode::Transform {
             modifiers: vec![
                 SdfModifier::Translate {
@@ -89,7 +103,12 @@ fn expand_tunnel(g: &TunnelGenerator, _seed: u32, time: f32) -> SdfNode {
     SdfNode::Group { children }
 }
 
-fn expand_temple(g: &FractalTempleGenerator, seed: u32) -> SdfNode {
+fn expand_temple(
+    g: &FractalTempleGenerator,
+    seed: u32,
+    scene_fields: &[crate::fields::SceneField],
+    time: f32,
+) -> SdfNode {
     let mut pillars = Vec::new();
     let half = g.grid_size as i32 / 2;
     for x in -half..=half {
@@ -97,6 +116,8 @@ fn expand_temple(g: &FractalTempleGenerator, seed: u32) -> SdfNode {
             if x.abs() <= 1 && z.abs() <= 1 {
                 continue;
             }
+            let fs =
+                fields::sample_fields(scene_fields, Vec3::new(x as f32, 0.0, z as f32), time, seed);
             pillars.push(SdfNode::Transform {
                 modifiers: vec![SdfModifier::Translate {
                     offset: Vec3::new(
@@ -109,8 +130,8 @@ fn expand_temple(g: &FractalTempleGenerator, seed: u32) -> SdfNode {
                 child: Box::new(SdfNode::Primitive {
                     object: SdfObject {
                         primitive: SdfPrimitive::Cylinder {
-                            radius: 0.2 + hash01(seed, x, z) * 0.08,
-                            half_height: g.pillar_height,
+                            radius: 0.2 + hash01(seed, x, z) * 0.08 + fs.energy * 0.03,
+                            half_height: g.pillar_height * (1.0 + fs.scalar.abs() * 0.08),
                         },
                         modifiers: vec![],
                         material: SdfMaterial {
@@ -155,14 +176,21 @@ fn expand_temple(g: &FractalTempleGenerator, seed: u32) -> SdfNode {
     }
 }
 
-fn expand_circuit(g: &CircuitBoardGenerator, seed: u32) -> SdfNode {
+fn expand_circuit(
+    g: &CircuitBoardGenerator,
+    seed: u32,
+    scene_fields: &[crate::fields::SceneField],
+    time: f32,
+) -> SdfNode {
     let mut children = Vec::new();
     let n = g.grid_resolution.max(2) as i32;
     let half = n / 2;
 
     for x in -half..=half {
         for z in -half..=half {
-            let h = hash01(seed, x, z);
+            let fs =
+                fields::sample_fields(scene_fields, Vec3::new(x as f32, 0.0, z as f32), time, seed);
+            let h = (hash01(seed, x, z) + fs.energy * 0.25).clamp(0.0, 1.0);
             if h < g.component_density {
                 let tower_h = 0.12 + h * g.height_variation;
                 children.push(SdfNode::Transform {
@@ -228,14 +256,22 @@ fn expand_circuit(g: &CircuitBoardGenerator, seed: u32) -> SdfNode {
     SdfNode::Group { children }
 }
 
-fn expand_galaxy(g: &ParticleGalaxyGenerator, seed: u32, time: f32) -> SdfNode {
+fn expand_galaxy(
+    g: &ParticleGalaxyGenerator,
+    seed: u32,
+    time: f32,
+    scene_fields: &[crate::fields::SceneField],
+) -> SdfNode {
     let mut children = Vec::new();
     let count = g.particle_count.max(8);
 
     for i in 0..count {
         let a = i as f32 / count as f32 * std::f32::consts::TAU;
         let phase = a + time * g.rotation_speed;
-        let radial_jitter = 1.0 + (hash01(seed, i as i32, 13) - 0.5) * g.noise_spread;
+        let base = Vec3::new((i as f32 * 0.1).cos(), 0.0, (i as f32 * 0.1).sin());
+        let fs = fields::sample_fields(scene_fields, base, time, seed);
+        let radial_jitter =
+            1.0 + (hash01(seed, i as i32, 13) - 0.5) * g.noise_spread + fs.scalar * 0.05;
         let r = g.radius * radial_jitter.max(0.1);
         let y = (hash01(seed, i as i32, 27) - 0.5) * g.noise_spread * g.radius * 0.35;
         let pos = Vec3::new(phase.cos() * r, y, phase.sin() * r);
@@ -289,8 +325,8 @@ mod tests {
             noise_spread: 0.5,
             rotation_speed: 1.2,
         });
-        let a = expand_generator(&g, 42, 1.0);
-        let b = expand_generator(&g, 42, 1.0);
+        let a = expand_generator(&g, 42, 1.0, &[]);
+        let b = expand_generator(&g, 42, 1.0, &[]);
         assert_eq!(a, b);
     }
 
@@ -323,7 +359,7 @@ mod tests {
             }),
         ];
         for g in gs {
-            let node = expand_generator(&g, 7, 0.5);
+            let node = expand_generator(&g, 7, 0.5, &[]);
             assert!(!matches!(node, crate::SdfNode::Empty));
         }
     }

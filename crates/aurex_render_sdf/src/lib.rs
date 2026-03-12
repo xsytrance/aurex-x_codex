@@ -3,6 +3,7 @@ pub mod noise;
 use aurex_scene::{
     AudioSyncHook, Scene, SdfMaterial, SdfMaterialType, SdfModifier, SdfNode, SdfObject,
     SdfPattern, SdfPrimitive, TimelineValue, Vec3,
+    fields::{self, FieldSample},
     generators::{self, SceneGenerator},
 };
 use bytemuck::{Pod, Zeroable};
@@ -318,6 +319,8 @@ fn scene_at_time(scene: &Scene, time: RenderTime) -> Scene {
             apply_generator_keyframes(generator, &timeline, t);
         }
 
+        apply_field_keyframes(&mut animated, &timeline, t);
+
         let kick = timeline.event_strength(AudioSyncHook::Kick, t);
         let snare = timeline.event_strength(AudioSyncHook::Snare, t);
         let bass = timeline.event_strength(AudioSyncHook::Bass, t);
@@ -350,7 +353,8 @@ fn scene_at_time(scene: &Scene, time: RenderTime) -> Scene {
     }
 
     if let Some(generator) = &animated.sdf.generator {
-        animated.sdf.root = generators::expand_generator(generator, animated.sdf.seed, t);
+        animated.sdf.root =
+            generators::expand_generator(generator, animated.sdf.seed, t, &animated.sdf.fields);
     }
 
     animated
@@ -403,6 +407,45 @@ fn apply_generator_keyframes(
             g.radius = value;
         }
     }
+}
+
+fn apply_field_keyframes(scene: &mut Scene, timeline: &aurex_scene::SceneTimeline, t: f32) {
+    if let Some(TimelineValue::Float { value }) =
+        timeline.sample_keyframe_value("field.noise.strength", t)
+    {
+        for f in &mut scene.sdf.fields {
+            if let aurex_scene::fields::SceneField::Noise(n) = f {
+                n.strength = value;
+            }
+        }
+    }
+    if let Some(TimelineValue::Float { value }) =
+        timeline.sample_keyframe_value("field.pulse.frequency", t)
+    {
+        for f in &mut scene.sdf.fields {
+            if let aurex_scene::fields::SceneField::Pulse(p) = f {
+                p.frequency = value;
+            }
+        }
+    }
+    if let Some(TimelineValue::Vec3 { value }) =
+        timeline.sample_keyframe_value("field.flow.direction", t)
+    {
+        for f in &mut scene.sdf.fields {
+            if let aurex_scene::fields::SceneField::Flow(fl) = f {
+                fl.direction = value;
+            }
+        }
+    }
+}
+
+fn sample_scene_fields(scene: &Scene, p: V3, time: f32) -> FieldSample {
+    fields::sample_fields(
+        &scene.sdf.fields,
+        Vec3::new(p.x, p.y, p.z),
+        time,
+        scene.sdf.seed,
+    )
 }
 
 fn apply_to_all_materials(
@@ -482,8 +525,9 @@ fn shade_ray(scene: &Scene, origin: V3, direction: V3, config: RenderConfig) -> 
             config.time,
             scene.sdf.seed,
         );
-        let base = V3::new(m.color[0], m.color[1], m.color[2]);
-        let mut color = base * scene.sdf.lighting.ambient_light;
+        let field = sample_scene_fields(scene, hit.position, config.time.seconds);
+        let base = V3::new(m.color[0], m.color[1], m.color[2]) * (1.0 + field.scalar * 0.08);
+        let mut color = base * (scene.sdf.lighting.ambient_light + field.energy * 0.03);
 
         let ao = if config.enable_ambient_occlusion {
             ambient_occlusion(scene, hit.position, hit.normal, config)
@@ -511,8 +555,8 @@ fn shade_ray(scene: &Scene, origin: V3, direction: V3, config: RenderConfig) -> 
                 + light_color * specular * (1.0 - m.roughness) * 0.25 * shadow;
         }
 
-        color = color + base * m.emission;
-        color = color + base * hit.distance_glow * 0.25;
+        color = color + base * (m.emission + field.energy * 0.15);
+        color = color + base * hit.distance_glow * (0.25 + field.energy * 0.08);
 
         if config.enable_scattering {
             color =
@@ -538,7 +582,8 @@ fn shade_ray(scene: &Scene, origin: V3, direction: V3, config: RenderConfig) -> 
 
 fn apply_fog(scene: &Scene, surface_color: V3, position: V3, distance: f32) -> V3 {
     let fog_color = from_vec3(scene.sdf.lighting.fog_color);
-    let density = scene.sdf.lighting.fog_density.max(0.0);
+    let fields = sample_scene_fields(scene, position, distance * 0.03);
+    let density = (scene.sdf.lighting.fog_density + fields.energy * 0.05).max(0.0);
     let height = scene.sdf.lighting.fog_height_falloff.max(0.0);
     let height_term = (-height * position.y.max(0.0)).exp();
     let fog = 1.0 - (-density * distance * height_term).exp();
@@ -577,7 +622,12 @@ fn light_scattering(
                 .dot(ldir)
                 .max(0.0)
                 .powf(config.shadow_softness.max(1.0) * 0.25);
-            let c = from_vec3(key.color) * key.intensity * phase * transmittance * 0.02;
+            let f = sample_scene_fields(scene, p, config.time.seconds);
+            let c = from_vec3(key.color)
+                * key.intensity
+                * phase
+                * transmittance
+                * (0.02 + f.energy * 0.01);
             accum = accum + c;
         }
         t += step;
@@ -671,15 +721,17 @@ fn estimate_normal(scene: &Scene, p: V3, eps: f32, time: f32) -> V3 {
 }
 
 fn scene_distance(scene: &Scene, point: V3, time: f32) -> NodeEval {
+    let field = sample_scene_fields(scene, point, time);
+    let warped = point + V3::new(field.vector.x, field.vector.y, field.vector.z) * 0.08;
     if !matches!(scene.sdf.root, SdfNode::Empty) {
-        evaluate_node(&scene.sdf.root, point, scene.sdf.seed, time, None)
+        evaluate_node(&scene.sdf.root, warped, scene.sdf.seed, time, None)
     } else {
         let mut best = NodeEval {
             distance: f32::INFINITY,
             material: SdfMaterial::default(),
         };
         for object in &scene.sdf.objects {
-            let eval = evaluate_object(object, point, scene.sdf.seed, time);
+            let eval = evaluate_object(object, warped, scene.sdf.seed, time);
             if eval.distance < best.distance {
                 best = eval;
             }
@@ -1245,6 +1297,14 @@ mod tests {
                 },
                 timeline: None,
                 generator: None,
+                fields: vec![aurex_scene::fields::SceneField::Pulse(
+                    aurex_scene::fields::PulseField {
+                        origin: Vec3::new(0.0, 0.0, 0.0),
+                        frequency: 2.0,
+                        amplitude: 0.5,
+                        falloff: 0.2,
+                    },
+                )],
             },
         }
     }
