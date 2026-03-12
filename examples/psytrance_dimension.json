@@ -1,0 +1,42 @@
+{
+  "sdf": {
+    "seed": 444,
+    "camera": {
+      "position": {"x": 0.0, "y": 0.7, "z": -10.0},
+      "target": {"x": 0.0, "y": 0.0, "z": -2.0},
+      "fov_degrees": 63.0,
+      "aspect_ratio": 1.7777778
+    },
+    "lighting": {
+      "ambient_light": 0.1,
+      "fog_color": {"x": 0.04, "y": 0.08, "z": 0.18},
+      "fog_density": 0.09,
+      "fog_height_falloff": 0.18,
+      "key_lights": [
+        {"direction": {"x": -0.3, "y": -1.0, "z": -0.2}, "intensity": 1.2, "color": {"x": 0.3, "y": 0.95, "z": 1.0}}
+      ]
+    },
+    "fields": [
+      {"Noise": {"scale": 1.5, "strength": 0.55, "octaves": 5, "speed": 1.2}},
+      {"Flow": {"direction": {"x": 0.8, "y": 0.1, "z": 1.0}, "turbulence": 0.85, "strength": 0.65}},
+      {"Audio": {"band": "Bass", "strength": 1.2, "radius": 24.0}}
+    ],
+    "generator": {
+      "Tunnel": {"radius": 1.9, "segment_count": 18, "twist": 0.12, "repeat_distance": 2.0}
+    },
+    "audio": {
+      "tempo": 148.0,
+      "seed": 444,
+      "tracks": [
+        {"name": "bass", "volume": 0.9, "patterns": [{"loops": 8, "notes": [{"pitch": 40, "duration_beats": 0.25, "velocity": 0.8, "instrument": "bass"}]}]},
+        {"name": "lead", "volume": 0.5, "patterns": [{"loops": 4, "notes": [{"pitch": 64, "duration_beats": 0.5, "velocity": 0.7, "instrument": "lead"}]}]}
+      ],
+      "voice": {
+        "preset": "Alien",
+        "phonemes": ["AH", "EE", "OH", "OO"],
+        "base_pitch_hz": 190.0,
+        "phoneme_duration": 0.18
+      }
+    }
+  }
+}

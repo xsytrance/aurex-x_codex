@@ -1,0 +1,51 @@
+{
+  "sdf": {
+    "seed": 404,
+    "camera": {
+      "position": {"x": 0.0, "y": 0.8, "z": -7.0},
+      "target": {"x": 0.0, "y": 0.0, "z": 0.0},
+      "fov_degrees": 60.0,
+      "aspect_ratio": 1.7777778
+    },
+    "lighting": {
+      "ambient_light": 0.12,
+      "fog_color": {"x": 0.07, "y": 0.05, "z": 0.2},
+      "fog_density": 0.08,
+      "fog_height_falloff": 0.1,
+      "key_lights": [
+        {"direction": {"x": -0.2, "y": -1.0, "z": -0.3}, "intensity": 1.0, "color": {"x": 0.6, "y": 0.8, "z": 1.0}}
+      ]
+    },
+    "harmonics": {
+      "geometry": {"band": "Bass", "strength": 1.1},
+      "materials": {"band": "High", "strength": 1.0},
+      "particles": {"band": "Melody", "strength": 0.9},
+      "fields": [
+        {"center": {"x": 0.0, "y": 0.0, "z": 0.0}, "radius": 14.0, "falloff": 0.8, "strength": 1.0, "band": "Bass"}
+      ]
+    },
+    "generator": {
+      "Tunnel": {"radius": 1.8, "segment_count": 16, "twist": 0.12, "repeat_distance": 2.0}
+    },
+    "objects": [
+      {
+        "primitive": {"Sphere": {"radius": 0.9}},
+        "modifiers": [{"Translate": {"offset": {"x": 0.0, "y": -0.2, "z": 3.0}}}],
+        "material": {
+          "material_type": "SpectralReactive",
+          "base_color": {"x": 0.6, "y": 0.9, "z": 1.0},
+          "emissive_strength": 0.3,
+          "roughness": 0.2,
+          "pattern": "Noise",
+          "parameters": {}
+        },
+        "bounds_radius": 1.5
+      }
+    ],
+    "audio": {
+      "tempo": 142.0,
+      "seed": 404,
+      "tracks": [{"name": "bass", "volume": 0.9, "patterns": [{"loops": 8, "notes": [{"pitch": 36, "duration_beats": 0.5, "velocity": 1.0, "instrument": "kick"}]}]}]
+    }
+  }
+}
