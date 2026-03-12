@@ -51,7 +51,55 @@ pub struct SdfScene {
     #[serde(default)]
     pub harmonics: Option<harmonics::SceneHarmonicsConfig>,
     #[serde(default)]
+    pub rhythm: Option<RhythmSpaceConfig>,
+    #[serde(default)]
     pub audio: Option<ProceduralAudioConfig>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum RhythmParticleMode {
+    Bass,
+    Snare,
+    Melody,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub struct TimeWarpConfig {
+    #[serde(default = "default_time_scale")]
+    pub time_scale: f32,
+    #[serde(default)]
+    pub time_delay: f32,
+    #[serde(default)]
+    pub time_echo: f32,
+    #[serde(default)]
+    pub time_reverse: bool,
+}
+
+fn default_time_scale() -> f32 {
+    1.0
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RhythmSpaceConfig {
+    #[serde(default)]
+    pub beat_geometry: bool,
+    #[serde(default)]
+    pub echo_effect: bool,
+    #[serde(default)]
+    pub particle_mode: Option<RhythmParticleMode>,
+    #[serde(default)]
+    pub time_warp: Option<TimeWarpConfig>,
+}
+
+impl Default for RhythmSpaceConfig {
+    fn default() -> Self {
+        Self {
+            beat_geometry: false,
+            echo_effect: false,
+            particle_mode: None,
+            time_warp: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

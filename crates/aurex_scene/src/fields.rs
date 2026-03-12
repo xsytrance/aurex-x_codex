@@ -7,6 +7,7 @@ pub enum SceneField {
     Flow(FlowField),
     Pulse(PulseField),
     Audio(AudioField),
+    Rhythm(RhythmField),
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
@@ -30,6 +31,25 @@ pub struct PulseField {
     pub frequency: f32,
     pub amplitude: f32,
     pub falloff: f32,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub struct RhythmField {
+    pub beat_strength: f32,
+    pub measure_strength: f32,
+    pub phrase_strength: f32,
+    pub tempo: f32,
+}
+
+pub fn sample_rhythm(field: RhythmField, time: f32) -> f32 {
+    let beat_pos = time / (60.0 / field.tempo.max(1.0));
+    let beat_phase = beat_pos.fract();
+    let measure_phase = (beat_pos / 4.0).fract();
+    let phrase_phase = (beat_pos / 16.0).fract();
+    let beat = (1.0 - beat_phase).powf(2.0) * field.beat_strength;
+    let measure = (1.0 - measure_phase).powf(2.0) * field.measure_strength;
+    let phrase = (1.0 - phrase_phase).powf(2.0) * field.phrase_strength;
+    beat + measure + phrase
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -83,6 +103,7 @@ pub fn sample_field(field: &SceneField, position: Vec3, time: f32, scene_seed: u
         SceneField::Flow(f) => sample_flow_field(*f, position, time, scene_seed),
         SceneField::Pulse(f) => sample_pulse_field(*f, position, time),
         SceneField::Audio(f) => sample_audio_field(*f, position, time, scene_seed),
+        SceneField::Rhythm(f) => sample_rhythm_field(*f, position, time),
     }
 }
 
@@ -155,6 +176,18 @@ fn sample_pulse_field(field: PulseField, position: Vec3, time: f32) -> FieldSamp
     }
 }
 
+fn sample_rhythm_field(field: RhythmField, position: Vec3, time: f32) -> FieldSample {
+    let r = sample_rhythm(field, time);
+    let d = (position.x * position.x + position.z * position.z).sqrt();
+    let radial = (1.0 - d / 25.0).clamp(0.0, 1.0);
+    let e = r * radial;
+    FieldSample {
+        scalar: e,
+        vector: Vec3::new(0.0, e * 0.8, 0.0),
+        energy: e.abs(),
+    }
+}
+
 fn sample_audio_field(field: AudioField, position: Vec3, time: f32, seed: u32) -> FieldSample {
     let band_phase = match field.band {
         AudioBand::Kick => 1.0,
@@ -185,8 +218,8 @@ fn hash3(x: f32, y: f32, z: f32, seed: u32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        AudioBand, AudioField, FieldSample, FlowField, NoiseField, PulseField, SceneField,
-        sample_fields,
+        AudioBand, AudioField, FieldSample, FlowField, NoiseField, PulseField, RhythmField,
+        SceneField, sample_fields,
     };
     use crate::Vec3;
 
@@ -214,6 +247,12 @@ mod tests {
                 band: AudioBand::Kick,
                 strength: 0.8,
                 radius: 10.0,
+            }),
+            SceneField::Rhythm(RhythmField {
+                beat_strength: 1.0,
+                measure_strength: 0.5,
+                phrase_strength: 0.3,
+                tempo: 140.0,
             }),
         ];
         let a = sample_fields(&fields, Vec3::new(1.0, 0.5, -2.0), 1.2, 42);

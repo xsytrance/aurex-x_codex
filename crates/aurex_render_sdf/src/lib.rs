@@ -2,8 +2,8 @@ pub mod noise;
 
 use aurex_audio::{analysis::AudioFeatures, analyze_procedural_audio};
 use aurex_scene::{
-    AudioSyncHook, Scene, SdfMaterial, SdfMaterialType, SdfModifier, SdfNode, SdfObject,
-    SdfPattern, SdfPrimitive, TimelineValue, Vec3,
+    AudioSyncHook, RhythmParticleMode, Scene, SdfMaterial, SdfMaterialType, SdfModifier, SdfNode,
+    SdfObject, SdfPattern, SdfPrimitive, TimelineValue, Vec3,
     fields::{self, FieldSample},
     generators::{self, SceneGenerator},
     harmonics::HarmonicBand,
@@ -141,8 +141,9 @@ pub fn evaluate_material(
     let param =
         |key: &str, fallback: f32| material.parameters.get(key).copied().unwrap_or(fallback);
 
+    let rhythm_t = param("rhythm_time", t);
     let base = from_vec3(material.base_color);
-    let pattern_mix = apply_pattern(material.pattern.clone(), p, t, seed);
+    let pattern_mix = apply_pattern(material.pattern.clone(), p, rhythm_t, seed);
 
     let (raw_color, emission_boost, roughness_mul) = match material.material_type {
         SdfMaterialType::SolidColor => (base, 0.0, 1.0),
@@ -150,17 +151,17 @@ pub fn evaluate_material(
             let scale = param("grid_scale", 7.0);
             let pulse = param("pulse_speed", 3.5);
             let line_w = param("line_width", 0.08).clamp(0.01, 0.35);
-            let gx = (p.x * scale + t * pulse).sin().abs();
-            let gz = (p.z * scale + t * pulse * 0.7).sin().abs();
+            let gx = (p.x * scale + rhythm_t * pulse).sin().abs();
+            let gz = (p.z * scale + rhythm_t * pulse * 0.7).sin().abs();
             let line = (1.0 - ((gx.min(gz) - line_w).max(0.0) / (1.0 - line_w))).clamp(0.0, 1.0);
             (base * (0.25 + 1.2 * line), 0.8 * line, 0.55)
         }
         SdfMaterialType::Plasma => {
             let speed = param("speed", 1.5);
             let freq = param("frequency", 2.2);
-            let wave = (p.x * freq + t * speed).sin()
-                + (p.y * (freq * 1.7) - t * speed * 0.6).sin()
-                + (p.z * (freq * 1.3) + t * speed * 0.9).sin();
+            let wave = (p.x * freq + rhythm_t * speed).sin()
+                + (p.y * (freq * 1.7) - rhythm_t * speed * 0.6).sin()
+                + (p.z * (freq * 1.3) + rhythm_t * speed * 0.9).sin();
             let plasma = 0.5 + 0.5 * (wave / 3.0);
             let hue = V3::new(plasma, 1.0 - plasma, (plasma * 1.7).sin().abs());
             (base.hadamard(hue) * 1.2, 0.65 * plasma, 0.8)
@@ -223,15 +224,18 @@ pub fn evaluate_material(
             let high = param("harmonic_high", 0.0);
             let harmonic_energy = param("harmonic_energy", 0.0);
             let dominant = param("dominant_frequency", 220.0).max(1.0);
-            let pitch_phase = (t * dominant * 0.005).sin().abs();
-            let neon_flicker =
-                (high * 1.7 + (t * (16.0 + dominant * 0.01)).sin().abs()).clamp(0.0, 1.8);
-            let bass_pulse = (low * 1.2 + (t * 2.0).sin().abs() * low * 0.6).clamp(0.0, 1.8);
+            let beat_phase = param("rhythm_beat_phase", 0.5);
+            let pitch_phase = (rhythm_t * dominant * 0.005).sin().abs();
+            let neon_flicker = (high * 1.7
+                + (rhythm_t * (16.0 + dominant * 0.01)).sin().abs()
+                + (1.0 - beat_phase) * 0.25)
+                .clamp(0.0, 1.8);
+            let bass_pulse = (low * 1.2 + (rhythm_t * 2.0).sin().abs() * low * 0.6).clamp(0.0, 1.8);
             let surface_distort = fbm(
                 NoiseVec3::new(
                     p.x * (2.0 + high),
                     p.y * (2.0 + mid),
-                    p.z * (2.0 + high) + t * 0.7,
+                    p.z * (2.0 + high) + rhythm_t * 0.7,
                 ),
                 4,
                 2.0,
@@ -389,6 +393,7 @@ fn scene_at_time(scene: &Scene, time: RenderTime) -> Scene {
 
     let af = apply_audio_to_scene(&mut animated, t);
     apply_harmonics_to_scene(&mut animated, af, t);
+    let rhythm_t = apply_rhythm_space_to_scene(&mut animated, af, t);
 
     if af.kick_energy > 0.0 || af.bass_energy > 0.0 || af.high_energy > 0.0 {
         animated
@@ -404,8 +409,12 @@ fn scene_at_time(scene: &Scene, time: RenderTime) -> Scene {
     }
 
     if let Some(generator) = &animated.sdf.generator {
-        animated.sdf.root =
-            generators::expand_generator(generator, animated.sdf.seed, t, &animated.sdf.fields);
+        animated.sdf.root = generators::expand_generator(
+            generator,
+            animated.sdf.seed,
+            rhythm_t,
+            &animated.sdf.fields,
+        );
     }
 
     animated
@@ -504,6 +513,10 @@ fn apply_audio_to_scene(scene: &mut Scene, t: f32) -> AudioFeatures {
             high_freq_energy: 0.0,
             dominant_frequency: 0.0,
             harmonic_ratios: [0.0, 0.0, 0.0],
+            current_beat: 0,
+            current_measure: 0,
+            current_phrase: 0,
+            beat_phase: 0.0,
             spectral_centroid: 0.0,
             tempo: 120.0,
         }
@@ -611,6 +624,137 @@ fn apply_harmonics_to_scene(scene: &mut Scene, features: AudioFeatures, t: f32) 
                 },
             ));
     }
+}
+
+fn apply_rhythm_space_to_scene(scene: &mut Scene, features: AudioFeatures, t: f32) -> f32 {
+    let Some(cfg) = scene.sdf.rhythm.clone() else {
+        return t;
+    };
+
+    let mut rhythm_time = t;
+    if let Some(warp) = cfg.time_warp {
+        let mut scaled = t * warp.time_scale.max(0.01);
+        scaled -= warp.time_delay.max(0.0);
+        if warp.time_reverse {
+            scaled = -scaled;
+        }
+        let echo = (t - warp.time_delay.max(0.0)).max(0.0) * warp.time_echo.clamp(0.0, 1.0);
+        rhythm_time = scaled + echo;
+    }
+
+    if cfg.beat_geometry {
+        let beat_pulse = (1.0 - features.beat_phase).powf(2.0);
+        if let Some(generator) = &mut scene.sdf.generator {
+            match generator {
+                SceneGenerator::Tunnel(g) => {
+                    g.radius *= 1.0 + beat_pulse * 0.08;
+                }
+                SceneGenerator::FractalTemple(g) => {
+                    let measure_gate = if features.current_beat % 4 == 0 {
+                        1.0
+                    } else {
+                        0.0
+                    };
+                    let phrase_gate = if features.current_beat % 16 == 0 {
+                        1.0
+                    } else {
+                        0.0
+                    };
+                    g.pillar_height *= 1.0 + measure_gate * 0.08 + phrase_gate * 0.18;
+                    g.fractal_scale *= 1.0 + phrase_gate * 0.1;
+                }
+                SceneGenerator::CircuitBoard(g) => {
+                    let snare_like = (features.mid_energy + features.high_energy) * 0.5;
+                    g.trace_width *= 1.0 + snare_like * 0.06;
+                    g.height_variation *= 1.0 + snare_like * 0.1;
+                }
+                SceneGenerator::ParticleGalaxy(g) => {
+                    g.rotation_speed *= 1.0 + beat_pulse * 0.08;
+                }
+                SceneGenerator::HarmonicParticleField(g) => {
+                    g.thickness *= 1.0 + beat_pulse * 0.1;
+                }
+            }
+        }
+    }
+
+    if cfg.echo_effect {
+        let beat_pulse = (1.0 - features.beat_phase).powf(2.0);
+        if beat_pulse > 0.72 {
+            let echoed = scene.sdf.root.clone();
+            scene.sdf.root = SdfNode::Group {
+                children: vec![
+                    scene.sdf.root.clone(),
+                    SdfNode::Transform {
+                        modifiers: vec![SdfModifier::Translate {
+                            offset: Vec3::new(0.0, 0.0, 0.2 + beat_pulse * 0.8),
+                        }],
+                        bounds_radius: Some(128.0),
+                        child: Box::new(echoed),
+                    },
+                ],
+            };
+        }
+    }
+
+    if let Some(mode) = cfg.particle_mode {
+        let (band, strength) = match mode {
+            RhythmParticleMode::Bass => (
+                aurex_scene::fields::AudioBand::Bass,
+                (1.0 - features.beat_phase) * 1.2,
+            ),
+            RhythmParticleMode::Snare => (
+                aurex_scene::fields::AudioBand::Mid,
+                (features.current_beat % 2) as f32 * 0.8,
+            ),
+            RhythmParticleMode::Melody => (
+                aurex_scene::fields::AudioBand::High,
+                features.high_freq_energy * 0.9,
+            ),
+        };
+        scene
+            .sdf
+            .fields
+            .push(aurex_scene::fields::SceneField::Audio(
+                aurex_scene::fields::AudioField {
+                    band,
+                    strength: strength.max(0.01),
+                    radius: 16.0 + features.current_measure as f32 * 0.25,
+                },
+            ));
+        scene
+            .sdf
+            .fields
+            .push(aurex_scene::fields::SceneField::Rhythm(
+                aurex_scene::fields::RhythmField {
+                    beat_strength: (1.0 - features.beat_phase).max(0.0),
+                    measure_strength: if features.current_beat % 4 == 0 {
+                        1.0
+                    } else {
+                        0.35
+                    },
+                    phrase_strength: if features.current_beat % 16 == 0 {
+                        1.0
+                    } else {
+                        0.2
+                    },
+                    tempo: features.tempo.max(1.0),
+                },
+            ));
+    }
+
+    apply_to_all_materials(&mut scene.sdf.root, &mut scene.sdf.objects, &mut |m| {
+        m.parameters
+            .insert("rhythm_beat_phase".into(), features.beat_phase);
+        m.parameters
+            .insert("rhythm_measure".into(), features.current_measure as f32);
+        m.parameters
+            .insert("rhythm_phrase".into(), features.current_phrase as f32);
+        m.parameters.insert("rhythm_time".into(), rhythm_time);
+    });
+
+    scene.sdf.camera.position.y += (1.0 - features.beat_phase) * 0.04;
+    rhythm_time
 }
 
 fn sample_scene_fields(scene: &Scene, p: V3, time: f32) -> FieldSample {
@@ -1480,6 +1624,7 @@ mod tests {
                     },
                 )],
                 harmonics: None,
+                rhythm: None,
                 audio: Some(aurex_audio::default_demo_audio_config(2027)),
             },
         }

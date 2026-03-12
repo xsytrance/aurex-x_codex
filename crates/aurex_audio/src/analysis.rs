@@ -12,6 +12,10 @@ pub struct AudioFeatures {
     pub high_freq_energy: f32,
     pub dominant_frequency: f32,
     pub harmonic_ratios: [f32; 3],
+    pub current_beat: u32,
+    pub current_measure: u32,
+    pub current_phrase: u32,
+    pub beat_phase: f32,
     pub spectral_centroid: f32,
     pub tempo: f32,
 }
@@ -38,6 +42,12 @@ pub fn analyze_sequence(seq: &AudioSequence, t: f32, seed: u32) -> AudioFeatures
     let centroid = (kick * 80.0 + bass * 180.0 + mid * 1200.0 + high * 4200.0)
         / (kick + bass + mid + high + 1e-6);
 
+    let beat_position = t / (60.0 / seq.bpm.max(1.0));
+    let current_beat = beat_position.floor().max(0.0) as u32;
+    let current_measure = current_beat / 4;
+    let current_phrase = current_measure / 4;
+    let beat_phase = beat_position.fract().clamp(0.0, 1.0);
+
     AudioFeatures {
         kick_energy: kick,
         bass_energy: bass,
@@ -48,6 +58,10 @@ pub fn analyze_sequence(seq: &AudioSequence, t: f32, seed: u32) -> AudioFeatures
         high_freq_energy,
         dominant_frequency,
         harmonic_ratios: [r1, r2, r3],
+        current_beat,
+        current_measure,
+        current_phrase,
+        beat_phase,
         spectral_centroid: centroid,
         tempo: seq.bpm,
     }
@@ -74,5 +88,7 @@ mod tests {
         assert_eq!(a, b);
         assert!(a.dominant_frequency >= 0.0);
         assert!(a.harmonic_ratios.iter().all(|r| *r >= 0.0 && *r <= 8.0));
+        assert!(a.beat_phase >= 0.0 && a.beat_phase <= 1.0);
+        assert_eq!(a.current_measure, a.current_beat / 4);
     }
 }
