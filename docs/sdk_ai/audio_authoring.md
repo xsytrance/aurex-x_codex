@@ -44,12 +44,27 @@ Use this guide to generate valid Aurex-X audio JSON.
 ## Suggested Parameter Ranges
 
 - `tempo`: 60-200
+- `golden_tempo_mode.tempo_drift`: 0.02-0.12 (optional)
 - oscillator `frequency`: 20-4000
 - oscillator `amplitude`: 0-1
 - filter `cutoff`: 20-20000
 - envelope ADSR: 0.001-4.0
 - distortion `drive`: 0-4
 - reverb `room_size`: 0-2
+
+
+## Optional Golden Tempo Mode
+
+You can enable deterministic golden-ratio tempo evolution by setting:
+
+```json
+"golden_tempo_mode": { "tempo_drift": 0.0618 }
+```
+
+Behavior:
+- Phrase bars follow Fibonacci lengths: `5, 8, 13, 21` (repeating).
+- Tempo modulation is deterministic from `seed`, phrase phase, and `phi = 1.61803398875`.
+- If omitted, tempo remains fixed at `audio.tempo`.
 
 ## Audio-Visual Integration Tips
 

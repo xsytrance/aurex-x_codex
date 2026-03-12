@@ -1,0 +1,29 @@
+{
+  "scene_name": "Golden Tempo Progression",
+  "seed": 30303,
+  "audio": {
+    "tempo": 144.0,
+    "seed": 1337,
+    "golden_tempo_mode": {
+      "tempo_drift": 0.045
+    },
+    "tracks": [
+      {
+        "name": "arpeggio",
+        "volume": 0.8,
+        "patterns": [
+          {
+            "loops": 47,
+            "notes": [
+              { "pitch": 64, "duration_beats": 0.5, "velocity": 0.7, "instrument": "lead" },
+              { "pitch": 67, "duration_beats": 0.5, "velocity": 0.7, "instrument": "lead" },
+              { "pitch": 71, "duration_beats": 1.0, "velocity": 0.75, "instrument": "lead" },
+              { "pitch": 72, "duration_beats": 2.0, "velocity": 0.6, "instrument": "pad" }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "notes": "Use this to audition golden-ratio drift over a full 5+8+13+21 bar phrase cycle."
+}

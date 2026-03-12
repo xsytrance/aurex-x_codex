@@ -6,7 +6,7 @@
 
 - `synth` module (modular synth graph)
 - `voice` module (formant-based vocal synthesis)
-- `sequencer` module (pattern/track music sequencing)
+- `sequencer` module (pattern/track music sequencing + optional golden tempo mode)
 - `analysis` module (audio features for visuals)
 
 `aurex_scene::SdfScene` includes:
@@ -48,6 +48,10 @@ Sampling API:
 - `sequencer::AudioPattern`
 - `sequencer::AudioTrack`
 - `sequencer::AudioSequence`
+- `sequencer::GoldenTempoMode` (optional)
+  - `tempo_drift` (default `0.0618`)
+  - `phi = 1.61803398875` deterministic modulation basis
+  - Fibonacci phrase lengths in bars: `5, 8, 13, 21`
 
 ### Analysis
 
@@ -61,6 +65,15 @@ Sampling API:
 - `analyze_sequence(sequence, t, seed)`
 - `analyze_procedural_audio(config, t)`
 
+
+### Golden Tempo Theory
+
+`GoldenTempoMode` is an optional sequencer mode that keeps playback deterministic while introducing macro-structure tied to the golden ratio (`phi`).
+
+- Phrase evolution follows Fibonacci bar lengths: `5 -> 8 -> 13 -> 21`, then repeats.
+- Tempo drifts around base BPM using a deterministic golden-ratio curve (seed + phrase phase only, no random runtime state).
+- The mode is opt-in: omitting `golden_tempo_mode` preserves legacy fixed-tempo behavior.
+
 ## Scene JSON Schema (Audio)
 
 ```json
@@ -68,6 +81,9 @@ Sampling API:
   "audio": {
     "tempo": 140.0,
     "seed": 13370,
+    "golden_tempo_mode": {
+      "tempo_drift": 0.0618
+    },
     "tracks": [
       {
         "name": "kick",
@@ -129,3 +145,8 @@ Sampling API:
 - Harmonic geometry: `docs/sdk/harmonic_system.md`
 - Rhythm-space/time-warp: `docs/sdk/rhythm_space_system.md`
 
+
+## Golden Tempo Examples
+
+- `examples/golden_tempo_fibonacci_phrases.json`
+- `examples/golden_tempo_progression.json`
