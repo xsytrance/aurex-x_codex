@@ -1,16 +1,51 @@
+pub mod cache;
+pub mod cone_march;
+pub mod diagnostics;
+pub mod domain;
+pub mod fractals;
+pub mod gpu;
+pub mod lod;
 pub mod noise;
+pub mod particles;
+pub mod post;
+pub mod stages;
+pub mod temporal;
+pub mod volumetric;
 
 use aurex_audio::{analysis::AudioFeatures, analyze_procedural_audio};
 use aurex_scene::{
     AudioSyncHook, RhythmParticleMode, Scene, SdfMaterial, SdfMaterialType, SdfModifier, SdfNode,
     SdfObject, SdfPattern, SdfPrimitive, TimelineValue, Vec3,
+    automation::{self, AutomationInput},
+    camera::CameraSyncInput,
+    director::CameraDirector,
+    director_rules::DirectorRuleSet,
+    effect_graph,
     fields::{self, FieldSample},
     generators::{self, SceneGenerator},
     harmonics::HarmonicBand,
     patterns::{PatternContext, PatternNetwork, sample_network},
+    transition::TransitionContext,
 };
 use bytemuck::{Pod, Zeroable};
+use cache::{EffectGraphEvalCache, FieldSampleCache, PatternSampleCache};
+use cone_march::{ConeMarchConfig, cone_step, shadow_cone_factor};
+use diagnostics::{CacheStats, FrameDiagnostics};
+use domain::{
+    Axis, fold_space, kaleidoscope_fold, mirror_fold, repeat_axis as domain_repeat_axis,
+    repeat_grid as domain_repeat_grid, repeat_polar as domain_repeat_polar, repeat_sphere,
+};
+use fractals::kifs_fractal;
+use lod::{LodConfig, lod_activation_count, lod_iterations, reset_lod_counters};
 use noise::{NoiseVec3, fbm, value_noise};
+use particles::{ParticleConfig, particle_overlay};
+use post::{PostProcessConfig, process_pixel};
+use std::sync::{Mutex, OnceLock};
+use std::time::Instant;
+use temporal::{
+    TemporalBuffer, TemporalConfig, TemporalEffect, apply_temporal_feedback, to_rgba8_pixels,
+};
+use volumetric::{VolumetricConfig, apply_volumetric};
 
 #[derive(Debug, Clone, Copy)]
 pub struct RenderTime {
@@ -20,6 +55,29 @@ pub struct RenderTime {
 impl Default for RenderTime {
     fn default() -> Self {
         Self { seconds: 0.0 }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct QualitySettings {
+    pub pattern_quality: f32,
+    pub field_quality: f32,
+    pub volumetric_quality: f32,
+    pub raymarch_quality: f32,
+    pub transition_quality: f32,
+    pub post_quality: f32,
+}
+
+impl Default for QualitySettings {
+    fn default() -> Self {
+        Self {
+            pattern_quality: 1.0,
+            field_quality: 1.0,
+            volumetric_quality: 1.0,
+            raymarch_quality: 1.0,
+            transition_quality: 1.0,
+            post_quality: 1.0,
+        }
     }
 }
 
@@ -40,6 +98,24 @@ pub struct RenderConfig {
     pub enable_scattering: bool,
     pub time: RenderTime,
     pub output_bloom_prepass: bool,
+    pub adaptive_raymarch: bool,
+    pub min_step_scale: f32,
+    pub max_step_scale: f32,
+    pub far_field_boost: f32,
+    pub cone_step_multiplier: f32,
+    pub cone_shadow_factor: f32,
+    pub surface_thickness_estimation: f32,
+    pub adaptive_step_scale: f32,
+    pub distance_bias: f32,
+    pub fractal_iteration_limit: u32,
+    pub fractal_lod_scale: f32,
+    pub detail_falloff: f32,
+    pub volumetric_density: f32,
+    pub scatter_strength: f32,
+    pub light_beam_strength: f32,
+    pub quality: QualitySettings,
+    pub output_diagnostics: bool,
+    pub post: PostProcessConfig,
 }
 
 impl Default for RenderConfig {
@@ -60,6 +136,24 @@ impl Default for RenderConfig {
             enable_scattering: true,
             time: RenderTime::default(),
             output_bloom_prepass: true,
+            adaptive_raymarch: true,
+            min_step_scale: 0.4,
+            max_step_scale: 1.8,
+            far_field_boost: 1.5,
+            cone_step_multiplier: 1.25,
+            cone_shadow_factor: 0.8,
+            surface_thickness_estimation: 0.02,
+            adaptive_step_scale: 1.0,
+            distance_bias: 1.0,
+            fractal_iteration_limit: 14,
+            fractal_lod_scale: 0.9,
+            detail_falloff: 0.7,
+            volumetric_density: 0.08,
+            scatter_strength: 0.45,
+            light_beam_strength: 0.5,
+            quality: QualitySettings::default(),
+            output_diagnostics: false,
+            post: PostProcessConfig::default(),
         }
     }
 }
@@ -81,11 +175,41 @@ pub struct RenderedFrame {
     pub bloom_prepass: Option<Vec<f32>>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenderPipelineStage {
+    Geometry,
+    MaterialShading,
+    PatternSampling,
+    Particles,
+    PostProcessing,
+    TemporalFeedback,
+}
+
+pub const RENDER_PIPELINE_STAGES: [RenderPipelineStage; 6] = [
+    RenderPipelineStage::Geometry,
+    RenderPipelineStage::MaterialShading,
+    RenderPipelineStage::PatternSampling,
+    RenderPipelineStage::Particles,
+    RenderPipelineStage::PostProcessing,
+    RenderPipelineStage::TemporalFeedback,
+];
+
 #[derive(Debug, Clone, Copy)]
 pub struct MaterialEvaluation {
     pub color: [f32; 3],
     pub emission: f32,
     pub roughness: f32,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct RendererState {
+    pub effect_graph_cache: EffectGraphEvalCache,
+    pub(crate) temporal_buffer: TemporalBuffer,
+}
+
+fn shared_renderer_state() -> &'static Mutex<RendererState> {
+    static RENDERER_STATE: OnceLock<Mutex<RendererState>> = OnceLock::new();
+    RENDERER_STATE.get_or_init(|| Mutex::new(RendererState::default()))
 }
 
 pub fn render_sdf_scene(scene: &Scene, time: RenderTime) -> RenderedFrame {
@@ -99,31 +223,222 @@ pub fn render_sdf_scene(scene: &Scene, time: RenderTime) -> RenderedFrame {
 }
 
 pub fn render_sdf_scene_with_config(scene: &Scene, config: RenderConfig) -> RenderedFrame {
-    let animated_scene = scene_at_time(scene, config.time);
-    let mut pixels = Vec::with_capacity((config.width * config.height) as usize);
+    let (frame, _) = render_sdf_scene_with_diagnostics(scene, config);
+    frame
+}
+
+pub fn render_sdf_scene_with_diagnostics(
+    scene: &Scene,
+    config: RenderConfig,
+) -> (RenderedFrame, FrameDiagnostics) {
+    let mut state = shared_renderer_state()
+        .lock()
+        .expect("renderer state mutex should not be poisoned");
+    render_sdf_scene_with_state_and_diagnostics(scene, config, &mut state)
+}
+
+pub fn render_sdf_scene_with_state_and_diagnostics(
+    scene: &Scene,
+    config: RenderConfig,
+    state: &mut RendererState,
+) -> (RenderedFrame, FrameDiagnostics) {
+    let frame_start = Instant::now();
+    let mut diagnostics = FrameDiagnostics::default();
+    reset_lod_counters();
+    diagnostics.stages.extend([
+        "ScenePreprocess",
+        "EffectGraphEvaluation",
+        "GeometrySdf",
+        "MaterialPattern",
+        "LightingAtmosphere",
+        "Particles",
+        "PostProcessing",
+        "TemporalFeedback",
+    ]);
+
+    let animated_scene = scene_at_time(
+        scene,
+        config.time,
+        Some(&mut diagnostics),
+        &mut state.effect_graph_cache,
+    );
+    let mut post_colors = Vec::with_capacity((config.width * config.height) as usize);
+    let mut depth_buffer = Vec::with_capacity((config.width * config.height) as usize);
     let mut bloom_prepass = config
         .output_bloom_prepass
         .then(|| Vec::with_capacity((config.width * config.height) as usize));
 
+    let mut pattern_cache = PatternSampleCache::default();
+    let mut field_cache = FieldSampleCache::default();
+
+    let mut geometry_ns = 0_u128;
+    let mut cone_step_reduction_acc = 0.0_f64;
+    let mut material_pattern_ns = 0_u128;
+    let mut lighting_atmosphere_ns = 0_u128;
+    let mut particles_ns = 0_u128;
+    let mut post_ns = 0_u128;
+
     for y in 0..config.height {
         for x in 0..config.width {
             let ray = generate_camera_ray(&animated_scene, x, y, config.width, config.height);
-            let (color, emission) = shade_ray(&animated_scene, ray.origin, ray.direction, config);
-            pixels.push(to_rgba8(color));
+            let (
+                color,
+                emission,
+                march_steps,
+                sample_position,
+                sample_depth,
+                step_reduction,
+                stage_times,
+            ) = shade_ray(&animated_scene, ray.origin, ray.direction, config);
+
+            geometry_ns += stage_times.geometry_ns;
+            material_pattern_ns += stage_times.material_pattern_ns;
+            lighting_atmosphere_ns += stage_times.lighting_atmosphere_ns;
+            cone_step_reduction_acc += step_reduction as f64;
+
+            let key = cache::SampleKey::from_world(
+                sample_position,
+                config.time.seconds,
+                animated_scene.sdf.seed,
+            );
+            if pattern_cache.get(key).is_none() {
+                pattern_cache.insert(key, emission);
+            }
+            if field_cache.get(key).is_none() {
+                field_cache.insert(
+                    key,
+                    [color.x, color.y, color.z, emission, march_steps as f32],
+                );
+            }
+
+            let uv = (
+                (x as f32 + 0.5) / config.width as f32,
+                (y as f32 + 0.5) / config.height as f32,
+            );
+            let particles_start = Instant::now();
+            let audio = analyze_procedural_audio_opt(&animated_scene, config.time.seconds);
+            let particle = particle_overlay(
+                uv,
+                config.time.seconds,
+                animated_scene.sdf.seed,
+                audio.0,
+                audio.1,
+                audio.2,
+                ParticleConfig {
+                    density: (0.02 + audio.0 * 0.25).clamp(0.0, 1.0),
+                    intensity: 0.6,
+                },
+            );
+            particles_ns += particles_start.elapsed().as_nanos();
+
+            let post_start = Instant::now();
+            let post_color = process_pixel(
+                (color + particle).clamp01(),
+                emission,
+                uv,
+                animated_scene.sdf.seed,
+                PostProcessConfig {
+                    vignette: config.post.vignette * config.quality.post_quality,
+                    film_grain: config.post.film_grain * config.quality.post_quality,
+                    ..config.post
+                },
+            );
+            post_ns += post_start.elapsed().as_nanos();
+            post_colors.push(post_color);
+            depth_buffer.push(sample_depth);
             if let Some(bloom) = &mut bloom_prepass {
                 bloom.push(emission.max(0.0));
             }
+            diagnostics.stats.rays_traced += 1;
+            diagnostics.stats.raymarch_steps_total += march_steps as u64;
         }
     }
 
-    RenderedFrame {
-        width: config.width,
-        height: config.height,
-        pixels,
-        bloom_prepass,
-    }
-}
+    diagnostics.add_stage_duration("GeometrySdf", geometry_ns as f64 / 1_000_000.0);
+    diagnostics.add_stage_duration("MaterialPattern", material_pattern_ns as f64 / 1_000_000.0);
+    diagnostics.add_stage_duration(
+        "LightingAtmosphere",
+        lighting_atmosphere_ns as f64 / 1_000_000.0,
+    );
+    diagnostics.add_stage_duration("Particles", particles_ns as f64 / 1_000_000.0);
+    diagnostics.add_stage_duration("PostProcessing", post_ns as f64 / 1_000_000.0);
 
+    let temporal_start = Instant::now();
+    let temporal_effects: Vec<TemporalEffect> = animated_scene
+        .sdf
+        .temporal_effects
+        .iter()
+        .cloned()
+        .map(TemporalEffect::from)
+        .collect();
+    let (beat_phase, current_measure, harmonic_energy, dominant_frequency) =
+        if let Some(audio) = &animated_scene.sdf.audio {
+            let af = analyze_procedural_audio(audio, config.time.seconds);
+            let harmonic =
+                (af.harmonic_ratios[0] + af.harmonic_ratios[1] + af.harmonic_ratios[2]) / 3.0;
+            (
+                af.beat_phase,
+                af.current_measure,
+                harmonic,
+                af.dominant_frequency,
+            )
+        } else {
+            (0.0, 0_u32, 0.0, 220.0)
+        };
+    let final_colors = apply_temporal_feedback(
+        &post_colors,
+        &depth_buffer,
+        config.width,
+        config.height,
+        &mut state.temporal_buffer,
+        TemporalConfig::default(),
+        &temporal_effects,
+        beat_phase,
+        current_measure,
+        harmonic_energy,
+        dominant_frequency,
+    );
+    diagnostics.add_stage_duration(
+        "TemporalFeedback",
+        temporal_start.elapsed().as_secs_f64() * 1000.0,
+    );
+    let pixels = to_rgba8_pixels(&final_colors);
+
+    let effect_graph_evals = diagnostics.stats.cache.effect_graph_evals;
+    diagnostics.stats.temporal_buffer_size = (state.temporal_buffer.history.len() as u64)
+        * (config.width as u64)
+        * (config.height as u64);
+    diagnostics.stats.temporal_history_depth = state.temporal_buffer.history.len() as u32;
+
+    diagnostics.stats.average_step_reduction = if diagnostics.stats.rays_traced > 0 {
+        cone_step_reduction_acc / diagnostics.stats.rays_traced as f64
+    } else {
+        0.0
+    };
+
+    diagnostics.stats.cache = CacheStats {
+        pattern_hits: pattern_cache.hits,
+        pattern_misses: pattern_cache.misses,
+        field_hits: field_cache.hits,
+        field_misses: field_cache.misses,
+        effect_graph_evals,
+    };
+
+    diagnostics.total_frame_time_ms = frame_start.elapsed().as_secs_f64() * 1000.0;
+    diagnostics.stats.stage_time_ms_total = diagnostics.total_frame_time_ms;
+    diagnostics.stats.lod_activation_count = lod_activation_count();
+    diagnostics.finalize_stage_percentages();
+
+    (
+        RenderedFrame {
+            width: config.width,
+            height: config.height,
+            pixels,
+            bloom_prepass,
+        },
+        diagnostics,
+    )
+}
 pub fn wgpu_backend_marker() -> wgpu::Features {
     wgpu::Features::empty()
 }
@@ -325,6 +640,15 @@ struct Hit {
     material: SdfMaterial,
     distance_traveled: f32,
     distance_glow: f32,
+    march_steps: u32,
+    step_reduction_estimate: f32,
+}
+
+#[derive(Clone, Copy, Default)]
+struct RayStageDurations {
+    geometry_ns: u128,
+    material_pattern_ns: u128,
+    lighting_atmosphere_ns: u128,
 }
 
 #[derive(Clone)]
@@ -333,15 +657,121 @@ struct NodeEval {
     material: SdfMaterial,
 }
 
-fn scene_at_time(scene: &Scene, time: RenderTime) -> Scene {
+fn scene_at_time(
+    scene: &Scene,
+    time: RenderTime,
+    mut diagnostics: Option<&mut FrameDiagnostics>,
+    effect_graph_cache: &mut EffectGraphEvalCache,
+) -> Scene {
+    let preprocess_start = Instant::now();
     let mut animated = scene.clone();
     let mut t = time.seconds;
+
+    let af_preview = if let Some(cfg) = &animated.sdf.audio {
+        analyze_procedural_audio(cfg, t)
+    } else {
+        AudioFeatures {
+            kick_energy: 0.0,
+            bass_energy: 0.0,
+            mid_energy: 0.0,
+            high_energy: 0.0,
+            low_freq_energy: 0.0,
+            mid_freq_energy: 0.0,
+            high_freq_energy: 0.0,
+            dominant_frequency: 0.0,
+            harmonic_ratios: [0.0, 0.0, 0.0],
+            current_beat: 0,
+            current_measure: 0,
+            current_phrase: 0,
+            beat_phase: 0.0,
+            spectral_centroid: 0.0,
+            tempo: 120.0,
+        }
+    };
+
+    if let Some(demo_sequence) = animated.sdf.demo_sequence.clone() {
+        let rule_set = DirectorRuleSet::default();
+        if let Some(blended) = demo_sequence.blend_scene_at_time(
+            &animated,
+            t,
+            TransitionContext {
+                seed: animated.sdf.seed,
+                time_seconds: t,
+                beat: af_preview.current_beat as f32 + af_preview.beat_phase,
+                measure: af_preview.current_measure as f32,
+                phrase: af_preview.current_phrase as f32,
+                tempo: af_preview.tempo,
+                low_freq_energy: af_preview.low_freq_energy,
+                mid_freq_energy: af_preview.mid_freq_energy,
+                high_freq_energy: af_preview.high_freq_energy,
+                dominant_frequency: af_preview.dominant_frequency,
+            },
+            &rule_set,
+        ) {
+            animated = blended;
+        } else {
+            demo_sequence.apply_at_time(&mut animated, t);
+        }
+    }
+
+    if let Some(graph) = animated.sdf.effect_graph.clone() {
+        let eg_start = Instant::now();
+        let seed = animated.sdf.seed;
+        if !effect_graph_cache.should_reuse(seed, t) {
+            graph.evaluate_scene(
+                &mut animated,
+                effect_graph::EffectContext {
+                    time_seconds: t,
+                    seed,
+                    bass_energy: af_preview.bass_energy,
+                    mid_energy: af_preview.mid_energy,
+                    high_energy: af_preview.high_energy,
+                    tempo: af_preview.tempo,
+                    beat_phase: af_preview.beat_phase,
+                },
+            );
+            effect_graph_cache.mark_evaluated(seed, t);
+            if let Some(d) = diagnostics.as_deref_mut() {
+                d.stats.cache.effect_graph_evals += 1;
+            }
+        }
+        if let Some(d) = diagnostics.as_deref_mut() {
+            d.add_stage_duration(
+                "EffectGraphEvaluation",
+                eg_start.elapsed().as_secs_f64() * 1000.0,
+            );
+        }
+    }
 
     if let Some(timeline) = animated.sdf.timeline.clone() {
         t = timeline.normalized_time(time.seconds);
 
         if let Some(path) = &timeline.camera_path {
             animated.sdf.camera = path.sample(t, &animated.sdf.camera, timeline.duration);
+        }
+
+        if let Some(rig) = &timeline.cinematic_camera {
+            let sync = CameraSyncInput {
+                beat: timeline.event_strength(AudioSyncHook::Kick, t),
+                phrase: timeline.event_strength(AudioSyncHook::Snare, t),
+                tempo: 120.0,
+            };
+            animated.sdf.camera = rig.sample(&animated.sdf.camera, t, timeline.duration, sync);
+        } else if let Some(sequence) = &timeline.shot_sequence {
+            let director = CameraDirector::default();
+            if let Some(shot) = director.shot_for_time(sequence, t) {
+                let sync = CameraSyncInput {
+                    beat: timeline.event_strength(AudioSyncHook::Kick, t),
+                    phrase: timeline.event_strength(AudioSyncHook::Bass, t),
+                    tempo: 120.0,
+                };
+                animated.sdf.camera = shot.camera.sample(
+                    &animated.sdf.camera,
+                    t - shot.start,
+                    (shot.end - shot.start).max(1e-3),
+                    sync,
+                );
+            }
         }
 
         if let Some(TimelineValue::Vec3 { value }) =
@@ -428,6 +858,28 @@ fn scene_at_time(scene: &Scene, time: RenderTime) -> Scene {
 
     let af = apply_audio_to_scene(&mut animated, t);
     apply_harmonics_to_scene(&mut animated, af, t);
+
+    if !animated.sdf.automation_tracks.is_empty() {
+        let bindings = animated.sdf.automation_tracks.clone();
+        let seed = animated.sdf.seed;
+        automation::apply_bindings(
+            &mut animated,
+            &bindings,
+            AutomationInput {
+                time_seconds: t,
+                beat: af.current_beat as f32 + af.beat_phase,
+                measure: af.current_measure as f32,
+                phrase: af.current_phrase as f32,
+                tempo: af.tempo,
+                bass: af.bass_energy,
+                mid: af.mid_energy,
+                high: af.high_energy,
+                dominant_frequency: af.dominant_frequency,
+            },
+            seed,
+        );
+    }
+
     let rhythm_t = apply_rhythm_space_to_scene(&mut animated, af, t);
     apply_scene_pattern_networks(&mut animated, af, rhythm_t);
 
@@ -444,12 +896,27 @@ fn scene_at_time(scene: &Scene, time: RenderTime) -> Scene {
             ));
     }
 
-    if let Some(generator) = &animated.sdf.generator {
+    if let Some(stack) = &animated.sdf.generator_stack {
+        animated.sdf.root = generators::expand_generator_stack(
+            stack,
+            animated.sdf.seed,
+            rhythm_t,
+            &animated.sdf.fields,
+            animated.sdf.runtime_modulation.unwrap_or_default(),
+        );
+    } else if let Some(generator) = &animated.sdf.generator {
         animated.sdf.root = generators::expand_generator(
             generator,
             animated.sdf.seed,
             rhythm_t,
             &animated.sdf.fields,
+        );
+    }
+
+    if let Some(d) = diagnostics.as_deref_mut() {
+        d.add_stage_duration(
+            "ScenePreprocess",
+            preprocess_start.elapsed().as_secs_f64() * 1000.0,
         );
     }
 
@@ -620,6 +1087,7 @@ fn apply_harmonics_to_scene(scene: &mut Scene, features: AudioFeatures, t: f32) 
                     g.radius *= 1.0 + e * 0.16;
                     g.thickness *= 1.0 + e * 0.1;
                 }
+                _ => {}
             }
         }
 
@@ -710,6 +1178,7 @@ fn apply_rhythm_space_to_scene(scene: &mut Scene, features: AudioFeatures, t: f3
                 SceneGenerator::HarmonicParticleField(g) => {
                     g.thickness *= 1.0 + beat_pulse * 0.1;
                 }
+                _ => {}
             }
         }
     }
@@ -915,8 +1384,17 @@ fn apply_to_node_primitives(node: &mut SdfNode, f: &mut dyn FnMut(&mut SdfPrimit
     }
 }
 
-fn shade_ray(scene: &Scene, origin: V3, direction: V3, config: RenderConfig) -> (V3, f32) {
+fn shade_ray(
+    scene: &Scene,
+    origin: V3,
+    direction: V3,
+    config: RenderConfig,
+) -> (V3, f32, u32, V3, f32, f32, RayStageDurations) {
+    let mut timings = RayStageDurations::default();
+    let geometry_start = Instant::now();
     if let Some(hit) = march_scene(scene, origin, direction, config) {
+        timings.geometry_ns += geometry_start.elapsed().as_nanos();
+        let material_start = Instant::now();
         let m = evaluate_material(
             &hit.material,
             [hit.position.x, hit.position.y, hit.position.z],
@@ -925,6 +1403,8 @@ fn shade_ray(scene: &Scene, origin: V3, direction: V3, config: RenderConfig) -> 
             scene.sdf.seed,
         );
         let field = sample_scene_fields(scene, hit.position, config.time.seconds);
+        timings.material_pattern_ns += material_start.elapsed().as_nanos();
+        let light_start = Instant::now();
         let base = V3::new(m.color[0], m.color[1], m.color[2]) * (1.0 + field.scalar * 0.08);
         let mut color = base * (scene.sdf.lighting.ambient_light + field.energy * 0.03);
 
@@ -966,17 +1446,71 @@ fn shade_ray(scene: &Scene, origin: V3, direction: V3, config: RenderConfig) -> 
             color = apply_fog(scene, color, hit.position, hit.distance_traveled);
         }
 
+        let audio = analyze_procedural_audio_opt(scene, config.time.seconds);
+        color = apply_volumetric(
+            color,
+            hit.distance_traveled,
+            audio.2,
+            VolumetricConfig {
+                volumetric_density: scene
+                    .sdf
+                    .lighting
+                    .volumetric
+                    .beam_density
+                    .max(config.volumetric_density),
+                scatter_strength: scene
+                    .sdf
+                    .lighting
+                    .volumetric
+                    .beam_falloff
+                    .max(config.scatter_strength),
+                fog_color: [
+                    scene.sdf.lighting.fog_color.x,
+                    scene.sdf.lighting.fog_color.y,
+                    scene.sdf.lighting.fog_color.z,
+                ],
+                light_beam_strength: scene
+                    .sdf
+                    .lighting
+                    .volumetric
+                    .shaft_intensity
+                    .max(config.light_beam_strength),
+            },
+        );
+
+        timings.lighting_atmosphere_ns += light_start.elapsed().as_nanos();
+
         let emission_out = (m.emission + hit.distance_glow).max(0.0);
-        return (color.clamp01(), emission_out);
+        return (
+            color.clamp01(),
+            emission_out,
+            hit.march_steps,
+            hit.position,
+            hit.distance_traveled,
+            hit.step_reduction_estimate,
+            timings,
+        );
     }
 
+    timings.geometry_ns += geometry_start.elapsed().as_nanos();
+    let sky_start = Instant::now();
     let t = 0.5 * (direction.y + 1.0);
     let mut sky = V3::new(0.05, 0.08, 0.12) * (1.0 - t) + V3::new(0.25, 0.3, 0.4) * t;
     if config.enable_scattering {
         sky = sky
             + light_scattering(scene, origin, direction, config.max_distance * 0.3, config) * 0.5;
     }
-    (sky.clamp01(), 0.0)
+    timings.lighting_atmosphere_ns += sky_start.elapsed().as_nanos();
+    let miss_position = origin + direction * config.max_distance;
+    (
+        sky.clamp01(),
+        0.0,
+        0,
+        miss_position,
+        config.max_distance,
+        0.0,
+        timings,
+    )
 }
 
 fn apply_fog(scene: &Scene, surface_color: V3, position: V3, distance: f32) -> V3 {
@@ -995,7 +1529,7 @@ fn ambient_occlusion(scene: &Scene, position: V3, normal: V3, config: RenderConf
     for i in 1..=samples {
         let expected = i as f32 * 0.08;
         let p = position + normal * expected;
-        let d = scene_distance(scene, p, config.time.seconds).distance;
+        let d = scene_distance(scene, p, config.time.seconds, config).distance;
         occ += (expected - d).max(0.0) / expected;
     }
     (1.0 - (occ / samples as f32) * config.ao_strength).clamp(0.0, 1.0)
@@ -1008,32 +1542,34 @@ fn light_scattering(
     max_t: f32,
     config: RenderConfig,
 ) -> V3 {
-    let steps = 8u32;
+    let v = &scene.sdf.lighting.volumetric;
+    let steps = v.scattering_steps.max(2);
     let mut accum = V3::zero();
     let mut t = 0.1;
-    let step = (max_t / steps as f32).max(0.1);
+    let step = (max_t / steps as f32).max(0.05);
     for _ in 0..steps {
         let p = origin + direction * t;
-        let transmittance = (-scene.sdf.lighting.fog_density.max(0.0) * t).exp();
+        let transmittance =
+            (-(scene.sdf.lighting.fog_density.max(0.0) + v.beam_density.max(0.0)) * t).exp();
         for key in &scene.sdf.lighting.key_lights {
             let ldir = from_vec3(key.direction).normalized() * -1.0;
             let phase = direction
                 .dot(ldir)
                 .max(0.0)
-                .powf(config.shadow_softness.max(1.0) * 0.25);
+                .powf(config.shadow_softness.max(1.0) * (0.2 + v.beam_falloff.max(0.0)));
             let f = sample_scene_fields(scene, p, config.time.seconds);
             let c = from_vec3(key.color)
                 * key.intensity
                 * phase
                 * transmittance
-                * (0.02 + f.energy * 0.01);
+                * (0.02 + f.energy * 0.01)
+                * (1.0 + v.shaft_intensity.max(0.0));
             accum = accum + c;
         }
         t += step;
         if t > max_t {
             break;
         }
-        let _ = p;
     }
     accum
 }
@@ -1060,24 +1596,61 @@ fn apply_pattern(pattern: SdfPattern, p: V3, time: f32, seed: i32) -> f32 {
 fn march_scene(scene: &Scene, origin: V3, direction: V3, config: RenderConfig) -> Option<Hit> {
     let mut t = 0.0;
     let mut glow = 0.0;
+    let mut march_steps = 0;
+    let mut reduction_acc = 0.0_f32;
     for _ in 0..config.max_steps {
+        march_steps += 1;
         let p = origin + direction * t;
-        let eval = scene_distance(scene, p, config.time.seconds);
+        let eval = scene_distance(scene, p, config.time.seconds, config);
         let attenuation = (-t * 0.08).exp();
         glow += eval.material.emissive_strength.max(0.0) * attenuation * 0.01;
         if eval.distance < config.surface_epsilon {
-            let normal =
-                estimate_normal(scene, p, config.surface_epsilon * 2.0, config.time.seconds);
+            let normal = estimate_normal(
+                scene,
+                p,
+                config.surface_epsilon * 2.0,
+                config.time.seconds,
+                config,
+            );
             return Some(Hit {
                 position: p,
                 normal,
                 material: eval.material,
                 distance_traveled: t,
                 distance_glow: glow,
+                march_steps,
+                step_reduction_estimate: if march_steps > 0 {
+                    reduction_acc / march_steps as f32
+                } else {
+                    0.0
+                },
             });
         }
 
-        t += eval.distance.max(config.surface_epsilon * 0.5);
+        let base_step = eval
+            .distance
+            .max(config.surface_epsilon * config.min_step_scale.max(0.05));
+        let far_factor = if config.adaptive_raymarch {
+            (1.0 + (t / config.max_distance.max(1.0)) * config.far_field_boost).clamp(
+                config.min_step_scale.max(0.05),
+                config.max_step_scale.max(config.min_step_scale.max(0.05)),
+            )
+        } else {
+            1.0
+        };
+        let adaptive_step = (base_step * far_factor * config.quality.raymarch_quality.max(0.25))
+            .max(config.surface_epsilon * 0.25);
+        let cone_cfg = ConeMarchConfig {
+            cone_step_multiplier: config.cone_step_multiplier,
+            cone_shadow_factor: config.cone_shadow_factor,
+            surface_thickness_estimation: config.surface_thickness_estimation,
+            adaptive_step_scale: config.adaptive_step_scale,
+        };
+        let stepped = cone_step(eval.distance, t, cone_cfg).max(adaptive_step);
+        reduction_acc += ((stepped - adaptive_step) / adaptive_step.max(1e-4))
+            .abs()
+            .clamp(0.0, 1.0);
+        t += stepped;
         if t > config.max_distance {
             return None;
         }
@@ -1091,12 +1664,20 @@ fn soft_shadow(scene: &Scene, origin: V3, direction: V3, config: RenderConfig) -
     let mut shadow: f32 = 1.0;
     for _ in 0..config.shadow_steps {
         let p = origin + direction * t;
-        let eval = scene_distance(scene, p, config.time.seconds);
+        let eval = scene_distance(scene, p, config.time.seconds, config);
         if eval.distance < config.surface_epsilon {
             return 0.0;
         }
-        shadow = shadow.min(config.shadow_softness * eval.distance / t.max(0.001));
-        t += eval.distance.max(0.01);
+        let cone_cfg = ConeMarchConfig {
+            cone_step_multiplier: config.cone_step_multiplier,
+            cone_shadow_factor: config.cone_shadow_factor,
+            surface_thickness_estimation: config.surface_thickness_estimation,
+            adaptive_step_scale: config.adaptive_step_scale,
+        };
+        shadow = shadow.min(
+            config.shadow_softness * shadow_cone_factor(eval.distance, cone_cfg) / t.max(0.001),
+        );
+        t += cone_step(eval.distance, t, cone_cfg).max(0.01);
         if t > config.max_distance {
             break;
         }
@@ -1104,33 +1685,33 @@ fn soft_shadow(scene: &Scene, origin: V3, direction: V3, config: RenderConfig) -
     shadow.clamp(0.0, 1.0)
 }
 
-fn estimate_normal(scene: &Scene, p: V3, eps: f32, time: f32) -> V3 {
+fn estimate_normal(scene: &Scene, p: V3, eps: f32, time: f32, config: RenderConfig) -> V3 {
     let ex = V3::new(eps, 0.0, 0.0);
     let ey = V3::new(0.0, eps, 0.0);
     let ez = V3::new(0.0, 0.0, eps);
 
-    let dx =
-        scene_distance(scene, p + ex, time).distance - scene_distance(scene, p - ex, time).distance;
-    let dy =
-        scene_distance(scene, p + ey, time).distance - scene_distance(scene, p - ey, time).distance;
-    let dz =
-        scene_distance(scene, p + ez, time).distance - scene_distance(scene, p - ez, time).distance;
+    let dx = scene_distance(scene, p + ex, time, config).distance
+        - scene_distance(scene, p - ex, time, config).distance;
+    let dy = scene_distance(scene, p + ey, time, config).distance
+        - scene_distance(scene, p - ey, time, config).distance;
+    let dz = scene_distance(scene, p + ez, time, config).distance
+        - scene_distance(scene, p - ez, time, config).distance;
 
     V3::new(dx, dy, dz).normalized()
 }
 
-fn scene_distance(scene: &Scene, point: V3, time: f32) -> NodeEval {
+fn scene_distance(scene: &Scene, point: V3, time: f32, config: RenderConfig) -> NodeEval {
     let field = sample_scene_fields(scene, point, time);
     let warped = point + V3::new(field.vector.x, field.vector.y, field.vector.z) * 0.08;
     if !matches!(scene.sdf.root, SdfNode::Empty) {
-        evaluate_node(&scene.sdf.root, warped, scene.sdf.seed, time, None)
+        evaluate_node(&scene.sdf.root, warped, scene.sdf.seed, time, None, config)
     } else {
         let mut best = NodeEval {
             distance: f32::INFINITY,
             material: SdfMaterial::default(),
         };
         for object in &scene.sdf.objects {
-            let eval = evaluate_object(object, warped, scene.sdf.seed, time);
+            let eval = evaluate_object(object, warped, scene.sdf.seed, time, config);
             if eval.distance < best.distance {
                 best = eval;
             }
@@ -1145,20 +1726,22 @@ fn evaluate_node(
     scene_seed: u32,
     time: f32,
     hint: Option<f32>,
+    config: RenderConfig,
 ) -> NodeEval {
     match node {
         SdfNode::Empty => NodeEval {
             distance: f32::INFINITY,
             material: SdfMaterial::default(),
         },
-        SdfNode::Primitive { object } => evaluate_object(object, point, scene_seed, time),
+        SdfNode::Primitive { object } => evaluate_object(object, point, scene_seed, time, config),
         SdfNode::Group { children } | SdfNode::Union { children } => {
             let mut best = NodeEval {
                 distance: f32::INFINITY,
                 material: SdfMaterial::default(),
             };
             for child in children {
-                let child_eval = evaluate_node(child, point, scene_seed, time, Some(best.distance));
+                let child_eval =
+                    evaluate_node(child, point, scene_seed, time, Some(best.distance), config);
                 if child_eval.distance < best.distance {
                     best = child_eval;
                     if let Some(h) = hint
@@ -1176,7 +1759,7 @@ fn evaluate_node(
                 material: SdfMaterial::default(),
             };
             for child in children {
-                let next = evaluate_node(child, point, scene_seed, time, hint);
+                let next = evaluate_node(child, point, scene_seed, time, hint, config);
                 if !acc.distance.is_finite() {
                     acc = next;
                 } else {
@@ -1198,13 +1781,13 @@ fn evaluate_node(
             acc
         }
         SdfNode::Subtract { base, subtract } => {
-            let mut base_eval = evaluate_node(base, point, scene_seed, time, hint);
+            let mut base_eval = evaluate_node(base, point, scene_seed, time, hint, config);
             if subtract.is_empty() {
                 return base_eval;
             }
             let mut d_sub = f32::INFINITY;
             for n in subtract {
-                let e = evaluate_node(n, point, scene_seed, time, Some(d_sub));
+                let e = evaluate_node(n, point, scene_seed, time, Some(d_sub), config);
                 d_sub = d_sub.min(e.distance);
             }
             base_eval.distance = smooth_max(base_eval.distance, -d_sub, 0.0);
@@ -1217,9 +1800,9 @@ fn evaluate_node(
                     material: SdfMaterial::default(),
                 };
             }
-            let mut acc = evaluate_node(&children[0], point, scene_seed, time, hint);
+            let mut acc = evaluate_node(&children[0], point, scene_seed, time, hint, config);
             for child in &children[1..] {
-                let e = evaluate_node(child, point, scene_seed, time, hint);
+                let e = evaluate_node(child, point, scene_seed, time, hint, config);
                 if e.distance > acc.distance {
                     acc.material = e.material.clone();
                 }
@@ -1242,7 +1825,7 @@ fn evaluate_node(
             };
             for (i, child) in children.iter().enumerate() {
                 let w = weights.get(i).copied().unwrap_or(1.0).max(0.0001);
-                let e = evaluate_node(child, point, scene_seed, time, hint);
+                let e = evaluate_node(child, point, scene_seed, time, hint, config);
                 dist += e.distance * w;
                 sum_w += w;
                 if e.distance < nearest.distance {
@@ -1279,6 +1862,7 @@ fn evaluate_node(
                 scene_seed,
                 time,
                 hint.map(|h| h / scale.max(1e-6)),
+                config,
             );
             eval.distance *= scale;
             eval
@@ -1286,7 +1870,13 @@ fn evaluate_node(
     }
 }
 
-fn evaluate_object(object: &SdfObject, point: V3, scene_seed: u32, time: f32) -> NodeEval {
+fn evaluate_object(
+    object: &SdfObject,
+    point: V3,
+    scene_seed: u32,
+    time: f32,
+    config: RenderConfig,
+) -> NodeEval {
     let mut p = point;
     let mut distance_scale = 1.0;
     for modifier in &object.modifiers {
@@ -1301,7 +1891,7 @@ fn evaluate_object(object: &SdfObject, point: V3, scene_seed: u32, time: f32) ->
             };
         }
     }
-    let distance = eval_primitive(&object.primitive, p, scene_seed, time) * distance_scale;
+    let distance = eval_primitive(&object.primitive, p, scene_seed, time, config) * distance_scale;
     NodeEval {
         distance,
         material: object.material.clone(),
@@ -1317,10 +1907,38 @@ fn apply_modifier(
 ) {
     match modifier {
         SdfModifier::Repeat { cell } => {
-            let cell = from_vec3(*cell);
-            p.x = repeat_axis(p.x, cell.x);
-            p.y = repeat_axis(p.y, cell.y);
-            p.z = repeat_axis(p.z, cell.z);
+            let rp = domain_repeat_grid(to_vec3(*p), *cell);
+            *p = from_vec3(rp);
+        }
+        SdfModifier::RepeatGrid { cell_size } => {
+            let rp = domain_repeat_grid(to_vec3(*p), *cell_size);
+            *p = from_vec3(rp);
+        }
+        SdfModifier::RepeatAxis { spacing, axis } => {
+            let ax = match axis.as_str() {
+                "x" | "X" => Axis::X,
+                "y" | "Y" => Axis::Y,
+                _ => Axis::Z,
+            };
+            let rp = domain_repeat_axis(to_vec3(*p), *spacing, ax);
+            *p = from_vec3(rp);
+        }
+        SdfModifier::RepeatPolar { sectors } => {
+            let rp = domain_repeat_polar(to_vec3(*p), *sectors);
+            *p = from_vec3(rp);
+        }
+        SdfModifier::RepeatSphere { radius } => {
+            let rp = repeat_sphere(to_vec3(*p), *radius);
+            *p = from_vec3(rp);
+        }
+        SdfModifier::MirrorFold => {
+            *p = from_vec3(mirror_fold(to_vec3(*p)));
+        }
+        SdfModifier::KaleidoscopeFold { segments } => {
+            *p = from_vec3(kaleidoscope_fold(to_vec3(*p), *segments));
+        }
+        SdfModifier::FoldSpace => {
+            *p = from_vec3(fold_space(to_vec3(*p)));
         }
         SdfModifier::Twist { strength } => {
             let angle = *strength * p.y;
@@ -1376,7 +1994,13 @@ fn apply_modifier(
     }
 }
 
-fn eval_primitive(primitive: &SdfPrimitive, p: V3, scene_seed: u32, time: f32) -> f32 {
+fn eval_primitive(
+    primitive: &SdfPrimitive,
+    p: V3,
+    scene_seed: u32,
+    time: f32,
+    config: RenderConfig,
+) -> f32 {
     match primitive {
         SdfPrimitive::Sphere { radius } => p.length() - *radius,
         SdfPrimitive::Box { size } => {
@@ -1414,7 +2038,7 @@ fn eval_primitive(primitive: &SdfPrimitive, p: V3, scene_seed: u32, time: f32) -
             power,
             iterations,
             bailout,
-        } => sdf_mandelbulb(p, *power, *iterations, *bailout),
+        } => sdf_mandelbulb(p, *power, *iterations, *bailout, config),
         SdfPrimitive::NoiseField {
             radius,
             amplitude,
@@ -1437,11 +2061,21 @@ fn eval_primitive(primitive: &SdfPrimitive, p: V3, scene_seed: u32, time: f32) -
     }
 }
 
-fn sdf_mandelbulb(p: V3, power: f32, iterations: u32, bailout: f32) -> f32 {
+fn sdf_mandelbulb(p: V3, power: f32, iterations: u32, bailout: f32, config: RenderConfig) -> f32 {
     let mut z = p;
     let mut dr = 1.0;
     let mut r = 0.0;
-    for _ in 0..iterations {
+    let lod_iters = lod_iterations(
+        iterations,
+        p.length(),
+        LodConfig {
+            distance_bias: config.distance_bias,
+            fractal_iteration_limit: config.fractal_iteration_limit,
+            fractal_lod_scale: config.fractal_lod_scale,
+            detail_falloff: config.detail_falloff,
+        },
+    );
+    for _ in 0..lod_iters {
         r = z.length();
         if r > bailout {
             break;
@@ -1459,7 +2093,9 @@ fn sdf_mandelbulb(p: V3, power: f32, iterations: u32, bailout: f32) -> f32 {
         ) * zr
             + p;
     }
-    0.5 * r.max(1e-6).ln() * r / dr.max(1e-6)
+    let base = 0.5 * r.max(1e-6).ln() * r / dr.max(1e-6);
+    let kifs = kifs_fractal(p, lod_iters.min(6), 1.2, bailout.max(2.0));
+    base * 0.8 + kifs * 0.2
 }
 
 fn smooth_min(a: f32, b: f32, k: f32) -> f32 {
@@ -1497,29 +2133,33 @@ fn generate_camera_ray(scene: &Scene, x: u32, y: u32, width: u32, height: u32) -
     Ray { origin, direction }
 }
 
-fn repeat_axis(value: f32, cell: f32) -> f32 {
-    if cell.abs() < 1e-6 {
-        return value;
-    }
-    (value + 0.5 * cell).rem_euclid(cell) - 0.5 * cell
-}
-
 fn rotate_axis_angle(p: V3, axis: V3, angle: f32) -> V3 {
     let (s, c) = angle.sin_cos();
     p * c + axis.cross(p) * s + axis * axis.dot(p) * (1.0 - c)
 }
 
-fn to_rgba8(color: V3) -> Rgba8 {
-    Rgba8 {
-        r: (color.x.clamp(0.0, 1.0) * 255.0) as u8,
-        g: (color.y.clamp(0.0, 1.0) * 255.0) as u8,
-        b: (color.z.clamp(0.0, 1.0) * 255.0) as u8,
-        a: 255,
+fn analyze_procedural_audio_opt(scene: &Scene, time_seconds: f32) -> (f32, f32, f32) {
+    if let Some(cfg) = &scene.sdf.audio {
+        let af = analyze_procedural_audio(cfg, time_seconds);
+        let harmonic =
+            (af.harmonic_ratios[0] + af.harmonic_ratios[1] + af.harmonic_ratios[2]) / 3.0;
+        let energy = (af.bass_energy + af.mid_energy + af.high_energy) / 3.0;
+        (energy, af.beat_phase, harmonic)
+    } else {
+        (0.0, 0.0, 0.0)
     }
 }
 
 fn from_vec3(v: Vec3) -> V3 {
     V3::new(v.x, v.y, v.z)
+}
+
+fn to_vec3(v: V3) -> Vec3 {
+    Vec3 {
+        x: v.x,
+        y: v.y,
+        z: v.z,
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1528,68 +2168,68 @@ struct V2 {
     y: f32,
 }
 impl V2 {
-    fn new(x: f32, y: f32) -> Self {
+    pub(crate) fn new(x: f32, y: f32) -> Self {
         Self { x, y }
     }
-    fn zero() -> Self {
+    pub(crate) fn zero() -> Self {
         Self { x: 0.0, y: 0.0 }
     }
-    fn max(self, rhs: Self) -> Self {
+    pub(crate) fn max(self, rhs: Self) -> Self {
         Self::new(self.x.max(rhs.x), self.y.max(rhs.y))
     }
-    fn length(self) -> f32 {
+    pub(crate) fn length(self) -> f32 {
         (self.x * self.x + self.y * self.y).sqrt()
     }
-    fn max_component(self) -> f32 {
+    pub(crate) fn max_component(self) -> f32 {
         self.x.max(self.y)
     }
 }
 
 #[derive(Clone, Copy, Debug)]
-struct V3 {
+pub(crate) struct V3 {
     x: f32,
     y: f32,
     z: f32,
 }
 impl V3 {
-    fn new(x: f32, y: f32, z: f32) -> Self {
+    pub(crate) fn new(x: f32, y: f32, z: f32) -> Self {
         Self { x, y, z }
     }
-    fn splat(v: f32) -> Self {
+    pub(crate) fn splat(v: f32) -> Self {
         Self::new(v, v, v)
     }
-    fn zero() -> Self {
+    pub(crate) fn zero() -> Self {
         Self::splat(0.0)
     }
-    fn length(self) -> f32 {
+    pub(crate) fn length(self) -> f32 {
         (self.x * self.x + self.y * self.y + self.z * self.z).sqrt()
     }
-    fn normalized(self) -> Self {
+    pub(crate) fn normalized(self) -> Self {
         self / self.length().max(1e-6)
     }
-    fn dot(self, rhs: Self) -> f32 {
+    pub(crate) fn dot(self, rhs: Self) -> f32 {
         self.x * rhs.x + self.y * rhs.y + self.z * rhs.z
     }
-    fn cross(self, rhs: Self) -> Self {
+    pub(crate) fn cross(self, rhs: Self) -> Self {
         Self::new(
             self.y * rhs.z - self.z * rhs.y,
             self.z * rhs.x - self.x * rhs.z,
             self.x * rhs.y - self.y * rhs.x,
         )
     }
-    fn abs(self) -> Self {
+    pub(crate) fn abs(self) -> Self {
         Self::new(self.x.abs(), self.y.abs(), self.z.abs())
     }
-    fn max(self, rhs: Self) -> Self {
+    pub(crate) fn max(self, rhs: Self) -> Self {
         Self::new(self.x.max(rhs.x), self.y.max(rhs.y), self.z.max(rhs.z))
     }
-    fn max_component(self) -> f32 {
+    pub(crate) fn max_component(self) -> f32 {
         self.x.max(self.y).max(self.z)
     }
-    fn hadamard(self, rhs: Self) -> Self {
+    pub(crate) fn hadamard(self, rhs: Self) -> Self {
         Self::new(self.x * rhs.x, self.y * rhs.y, self.z * rhs.z)
     }
-    fn clamp01(self) -> Self {
+    pub(crate) fn clamp01(self) -> Self {
         Self::new(
             self.x.clamp(0.0, 1.0),
             self.y.clamp(0.0, 1.0),
@@ -1693,6 +2333,7 @@ mod tests {
                     fog_color: Vec3::new(0.08, 0.12, 0.18),
                     fog_density: 0.03,
                     fog_height_falloff: 0.08,
+                    volumetric: Default::default(),
                 },
                 objects: vec![],
                 root: SdfNode::SmoothUnion {
@@ -1701,6 +2342,7 @@ mod tests {
                 },
                 timeline: None,
                 generator: None,
+                generator_stack: None,
                 fields: vec![aurex_scene::fields::SceneField::Pulse(
                     aurex_scene::fields::PulseField {
                         origin: Vec3::new(0.0, 0.0, 0.0),
@@ -1717,6 +2359,11 @@ mod tests {
                 harmonics: None,
                 rhythm: None,
                 audio: Some(aurex_audio::default_demo_audio_config(2027)),
+                effect_graph: None,
+                automation_tracks: vec![],
+                demo_sequence: None,
+                temporal_effects: vec![],
+                runtime_modulation: None,
             },
         }
     }

@@ -1,0 +1,66 @@
+{
+  "metadata": {
+    "title": "Boot World Hub",
+    "author": "Aurex Team",
+    "description": "Procedural hub world for launching pulses by district portals.",
+    "tags": ["hub", "boot", "world"],
+    "seed": 9200,
+    "pulse_kind": "World",
+    "duration_hint": 600.0,
+    "interactivity": "Interactive",
+    "prime_affinity": "Electronic"
+  },
+  "pulse_kind": "World",
+  "scene": {
+    "scene_path": "../boot_world.json"
+  },
+  "boot_world": {
+    "seed": 9200,
+    "districts": [
+      {
+        "id": "electronic_district",
+        "prime": "Electronic",
+        "center": {"x": -6.0, "y": 0.0, "z": 0.0},
+        "radius": 8.0,
+        "pulse_refs": ["PsytranceTunnelPulse", "InfiniteCircuitCityPulse"]
+      },
+      {
+        "id": "jazz_district",
+        "prime": "Jazz",
+        "center": {"x": 6.0, "y": 0.0, "z": 0.0},
+        "radius": 8.0,
+        "pulse_refs": ["JazzImprovisationPulse"]
+      },
+      {
+        "id": "rock_district",
+        "prime": "Rock",
+        "center": {"x": 0.0, "y": 0.0, "z": 8.0},
+        "radius": 8.0,
+        "pulse_refs": ["RockMountainPulse"]
+      },
+      {
+        "id": "ambient_district",
+        "prime": "Ambient",
+        "center": {"x": 0.0, "y": 0.0, "z": -8.0},
+        "radius": 8.0,
+        "pulse_refs": ["AmbientIntroPulse"]
+      }
+    ],
+    "portals": [
+      {
+        "id": "portal_electronic",
+        "trigger": "launch_electronic",
+        "target_node": "InfiniteCircuitCityPulse",
+        "position": {"x": -5.0, "y": 0.0, "z": 1.0},
+        "activation_radius": 1.8
+      },
+      {
+        "id": "portal_jazz",
+        "trigger": "launch_jazz",
+        "target_node": "PsytranceTunnelPulse",
+        "position": {"x": 5.0, "y": 0.0, "z": 1.0},
+        "activation_radius": 1.8
+      }
+    ]
+  }
+}
