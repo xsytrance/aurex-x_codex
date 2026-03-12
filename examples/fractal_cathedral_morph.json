@@ -1,0 +1,17 @@
+{
+  "sdf": {
+    "seed": 6202,
+    "camera": {"position": {"x": 0.0, "y": 1.2, "z": -12.0}, "target": {"x": 0.0, "y": 0.8, "z": 0.0}, "fov_degrees": 50.0, "aspect_ratio": 1.7777},
+    "lighting": {"ambient_light": 0.2, "key_lights": [{"direction": {"x": -0.2, "y": -1.0, "z": 0.3}, "intensity": 2.3, "color": {"x": 1.0, "y": 0.95, "z": 0.8}}], "fog_density": 0.02, "fog_height_falloff": 0.04},
+    "demo_sequence": {
+      "timeline": {
+        "entries": [
+          {"SceneBlock": {"scene_reference": "examples/fractal_cathedral_orbit.json", "duration": 9.0, "camera_style": "wide", "lighting_preset": "bright", "automation_tracks": []}},
+          {"Transition": {"transition_type": "FractalZoom", "duration": 2.5, "intensity": 0.8, "auto": false,
+            "spec": {"style": "CathedralBloom", "duration": 2.5, "intensity": 0.8, "distortion": 0.2, "pattern_strength": 0.5, "harmonic_strength": 0.7, "progress_signal": "Phrase"}}},
+          {"SceneBlock": {"scene_reference": "examples/harmonic_temple_growth.json", "duration": 9.0, "camera_style": "close", "lighting_preset": "dark", "automation_tracks": []}}
+        ]
+      }
+    }
+  }
+}

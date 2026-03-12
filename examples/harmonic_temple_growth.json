@@ -1,0 +1,89 @@
+{
+  "sdf": {
+    "seed": 5103,
+    "camera": {
+      "position": {
+        "x": 0.0,
+        "y": 1.5,
+        "z": -11.0
+      },
+      "target": {
+        "x": 0.0,
+        "y": 1.0,
+        "z": 0.0
+      },
+      "fov_degrees": 48.0,
+      "aspect_ratio": 1.7777
+    },
+    "lighting": {
+      "ambient_light": 0.2,
+      "key_lights": [
+        {
+          "direction": {
+            "x": -0.3,
+            "y": -1.0,
+            "z": 0.4
+          },
+          "intensity": 2.0,
+          "color": {
+            "x": 0.9,
+            "y": 0.9,
+            "z": 1.0
+          }
+        }
+      ],
+      "fog_density": 0.02,
+      "fog_height_falloff": 0.05,
+      "volumetric": {
+        "scattering_steps": 10,
+        "beam_falloff": 0.6,
+        "beam_density": 0.08,
+        "shaft_intensity": 0.6
+      }
+    },
+    "generator": {
+      "FractalTemple": {
+        "grid_size": 7,
+        "pillar_height": 4.0,
+        "pillar_spacing": 1.1,
+        "fractal_scale": 1.35
+      }
+    },
+    "harmonics": {
+      "geometry": {
+        "band": "Mid",
+        "strength": 1.2
+      },
+      "materials": {
+        "band": "High",
+        "strength": 1.0
+      },
+      "fields": [
+        {
+          "center": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": 0.0
+          },
+          "radius": 8.0,
+          "falloff": 0.8,
+          "strength": 1.0,
+          "band": "Bass"
+        }
+      ]
+    },
+    "automation_tracks": [
+      {
+        "target": "MaterialEmissive",
+        "track": {
+          "name": "bass-emissive",
+          "source": "Bass",
+          "curve": "Smoothstep",
+          "amplitude": 1.0,
+          "offset": 0.1,
+          "frequency": 1.0
+        }
+      }
+    ]
+  }
+}

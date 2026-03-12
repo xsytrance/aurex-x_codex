@@ -71,8 +71,28 @@ name = "aurex_lighting"
 version = "0.1.0"
 
 [[package]]
+name = "aurex_music"
+version = "0.1.0"
+dependencies = [
+ "aurex_audio",
+ "serde",
+]
+
+[[package]]
 name = "aurex_postfx"
 version = "0.1.0"
+
+[[package]]
+name = "aurex_pulse"
+version = "0.1.0"
+dependencies = [
+ "aurex_audio",
+ "aurex_music",
+ "aurex_render_sdf",
+ "aurex_scene",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "aurex_render"
