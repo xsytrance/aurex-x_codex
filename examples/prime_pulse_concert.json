@@ -1,0 +1,55 @@
+{
+  "sdf": {
+    "seed": 606,
+    "camera": {
+      "position": {"x": 0.0, "y": 2.0, "z": -10.0},
+      "target": {"x": 0.0, "y": 0.4, "z": 0.0},
+      "fov_degrees": 62.0,
+      "aspect_ratio": 1.7777778
+    },
+    "lighting": {
+      "ambient_light": 0.1,
+      "fog_color": {"x": 0.02, "y": 0.03, "z": 0.08},
+      "fog_density": 0.09,
+      "fog_height_falloff": 0.13,
+      "key_lights": [
+        {"direction": {"x": -0.3, "y": -1.0, "z": -0.35}, "intensity": 1.3, "color": {"x": 0.7, "y": 0.95, "z": 1.0}}
+      ]
+    },
+    "harmonics": {
+      "geometry": {"band": "Bass", "strength": 1.2},
+      "materials": {"band": "High", "strength": 1.25},
+      "particles": {"band": "Chords", "strength": 1.0},
+      "fields": [
+        {"center": {"x": 0.0, "y": 0.0, "z": 4.0}, "radius": 18.0, "falloff": 0.6, "strength": 1.0, "band": "Chords"}
+      ]
+    },
+    "generator": {
+      "HarmonicParticleField": {"particle_count": 72, "radius": 3.8, "thickness": 0.25, "mode": "ChordLattice"}
+    },
+    "objects": [
+      {
+        "primitive": {"Torus": {"major_radius": 2.2, "minor_radius": 0.28}},
+        "modifiers": [],
+        "material": {
+          "material_type": "SpectralReactive",
+          "base_color": {"x": 0.5, "y": 0.8, "z": 1.0},
+          "emissive_strength": 0.45,
+          "roughness": 0.18,
+          "pattern": "Bands",
+          "parameters": {}
+        },
+        "bounds_radius": 3.0
+      }
+    ],
+    "audio": {
+      "tempo": 150.0,
+      "seed": 606,
+      "tracks": [
+        {"name": "kick", "volume": 1.0, "patterns": [{"loops": 8, "notes": [{"pitch": 36, "duration_beats": 0.5, "velocity": 1.0, "instrument": "kick"}]}]},
+        {"name": "lead", "volume": 0.7, "patterns": [{"loops": 8, "notes": [{"pitch": 60, "duration_beats": 0.25, "velocity": 0.75, "instrument": "lead"}]}]}
+      ],
+      "synth_graph": {"Oscillator": {"osc_type": "Saw", "frequency": 110.0, "amplitude": 0.45, "phase": 0.0}}
+    }
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "sdf": {
+    "seed": 802,
+    "camera": {"position": {"x": 0.0, "y": 1.2, "z": -8.2}, "target": {"x": 0.0, "y": 0.0, "z": 0.0}, "fov_degrees": 58.0, "aspect_ratio": 1.7777778},
+    "lighting": {"ambient_light": 0.14, "fog_color": {"x": 0.06, "y": 0.04, "z": 0.13}, "fog_density": 0.08, "fog_height_falloff": 0.11, "key_lights": [{"direction": {"x": -0.2, "y": -1.0, "z": -0.3}, "intensity": 1.15, "color": {"x": 0.9, "y": 0.8, "z": 1.0}}]},
+    "patterns": [{"name": "prime_pulse", "preset": "PrimePulseTemple", "layers": []}],
+    "generator": {"FractalTemple": {"grid_size": 6, "pillar_height": 1.35, "pillar_spacing": 2.0, "fractal_scale": 1.0}},
+    "audio": {"tempo": 136.0, "seed": 802, "tracks": [{"name": "kick", "volume": 1.0, "patterns": [{"loops": 8, "notes": [{"pitch": 36, "duration_beats": 0.5, "velocity": 1.0, "instrument": "kick"}]}]}],
+      "voice": {"preset": "Choir", "phonemes": ["AH", "OH", "EE"], "base_pitch_hz": 185.0, "phoneme_duration": 0.24}}
+  }
+}

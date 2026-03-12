@@ -1,0 +1,29 @@
+{
+  "sdf": {
+    "seed": 710,
+    "camera": {"position": {"x": 0.0, "y": 1.0, "z": -8.0}, "target": {"x": 0.0, "y": 0.0, "z": 0.0}, "fov_degrees": 60.0, "aspect_ratio": 1.7777778},
+    "lighting": {
+      "ambient_light": 0.13,
+      "fog_color": {"x": 0.05, "y": 0.08, "z": 0.16},
+      "fog_density": 0.09,
+      "fog_height_falloff": 0.1,
+      "key_lights": [{"direction": {"x": -0.3, "y": -1.0, "z": -0.4}, "intensity": 1.0, "color": {"x": 0.7, "y": 0.9, "z": 1.0}}]
+    },
+    "rhythm": {
+      "beat_geometry": true,
+      "echo_effect": true,
+      "particle_mode": "Bass",
+      "time_warp": {"time_scale": 1.08, "time_delay": 0.05, "time_echo": 0.2, "time_reverse": false}
+    },
+    "fields": [
+      {"Rhythm": {"beat_strength": 1.0, "measure_strength": 0.5, "phrase_strength": 0.3, "tempo": 146.0}},
+      {"Audio": {"band": "Kick", "strength": 0.9, "radius": 24.0}}
+    ],
+    "generator": {"Tunnel": {"radius": 1.8, "segment_count": 14, "twist": 0.12, "repeat_distance": 2.0}},
+    "audio": {
+      "tempo": 146.0,
+      "seed": 710,
+      "tracks": [{"name": "kick", "volume": 1.0, "patterns": [{"loops": 8, "notes": [{"pitch": 36, "duration_beats": 0.5, "velocity": 1.0, "instrument": "kick"}]}]}]
+    }
+  }
+}

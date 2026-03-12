@@ -1,0 +1,12 @@
+{
+  "sdf": {
+    "seed": 803,
+    "camera": {"position": {"x": 0.0, "y": 0.8, "z": -7.2}, "target": {"x": 0.0, "y": 0.0, "z": 0.0}, "fov_degrees": 62.0, "aspect_ratio": 1.7777778},
+    "lighting": {"ambient_light": 0.1, "fog_color": {"x": 0.08, "y": 0.02, "z": 0.12}, "fog_density": 0.1, "fog_height_falloff": 0.1,
+      "key_lights": [{"direction": {"x": -0.3, "y": -1.0, "z": -0.4}, "intensity": 1.2, "color": {"x": 0.9, "y": 0.4, "z": 1.0}}]},
+    "patterns": [{"name": "psy", "preset": "PsySpiral", "layers": []}],
+    "rhythm": {"beat_geometry": true, "echo_effect": true, "particle_mode": "Bass", "time_warp": {"time_scale": 1.12, "time_delay": 0.02, "time_echo": 0.22, "time_reverse": false}},
+    "generator": {"Tunnel": {"radius": 1.75, "segment_count": 16, "twist": 0.16, "repeat_distance": 2.0}},
+    "audio": {"tempo": 152.0, "seed": 803, "tracks": [{"name": "bass", "volume": 0.9, "patterns": [{"loops": 8, "notes": [{"pitch": 40, "duration_beats": 0.25, "velocity": 0.85, "instrument": "bass"}]}]}]}
+  }
+}
