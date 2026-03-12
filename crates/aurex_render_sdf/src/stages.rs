@@ -8,15 +8,17 @@ pub enum RendererStage {
     MaterialPattern,
     LightingAtmosphere,
     PostProcessing,
+    TemporalFeedback,
 }
 
-pub const RENDERER_STAGES: [RendererStage; 6] = [
+pub const RENDERER_STAGES: [RendererStage; 7] = [
     RendererStage::ScenePreprocess,
     RendererStage::EffectGraphEvaluation,
     RendererStage::GeometrySdf,
     RendererStage::MaterialPattern,
     RendererStage::LightingAtmosphere,
     RendererStage::PostProcessing,
+    RendererStage::TemporalFeedback,
 ];
 
 pub struct StageExecutionResult {

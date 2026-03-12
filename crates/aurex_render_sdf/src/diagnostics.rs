@@ -14,6 +14,8 @@ pub struct RenderStats {
     pub raymarch_steps_total: u64,
     pub rays_traced: u64,
     pub stage_time_ms_total: f64,
+    pub temporal_buffer_size: u64,
+    pub temporal_history_depth: u32,
     pub cache: CacheStats,
 }
 

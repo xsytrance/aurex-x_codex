@@ -76,6 +76,38 @@ pub struct SdfScene {
     pub automation_tracks: Vec<automation::AutomationBinding>,
     #[serde(default)]
     pub demo_sequence: Option<demo::Demo>,
+    #[serde(default)]
+    pub temporal_effects: Vec<TemporalEffect>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum TemporalBlendMode {
+    AdditiveTrail,
+    DecayTrail,
+    MotionEcho,
+    BeatEcho,
+    ColorSmear,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TemporalEffect {
+    pub blend_mode: TemporalBlendMode,
+    #[serde(default = "default_temporal_decay_rate")]
+    pub decay_rate: f32,
+    #[serde(default = "default_temporal_feedback_strength")]
+    pub feedback_strength: f32,
+    #[serde(default)]
+    pub beat_sync: f32,
+    #[serde(default)]
+    pub color_shift: Vec3,
+}
+
+fn default_temporal_decay_rate() -> f32 {
+    0.92
+}
+
+fn default_temporal_feedback_strength() -> f32 {
+    0.35
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

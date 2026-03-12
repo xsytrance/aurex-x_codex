@@ -5,6 +5,7 @@ pub mod gpu;
 pub mod noise;
 pub mod post;
 pub mod stages;
+pub mod temporal;
 
 use aurex_audio::{analysis::AudioFeatures, analyze_procedural_audio};
 use aurex_scene::{
@@ -32,6 +33,9 @@ use noise::{NoiseVec3, fbm, value_noise};
 use post::{PostProcessConfig, process_pixel};
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
+use temporal::{
+    TemporalBuffer, TemporalConfig, TemporalEffect, apply_temporal_feedback, to_rgba8_pixels,
+};
 
 #[derive(Debug, Clone, Copy)]
 pub struct RenderTime {
@@ -145,13 +149,15 @@ pub enum RenderPipelineStage {
     MaterialShading,
     PatternSampling,
     PostProcessing,
+    TemporalFeedback,
 }
 
-pub const RENDER_PIPELINE_STAGES: [RenderPipelineStage; 4] = [
+pub const RENDER_PIPELINE_STAGES: [RenderPipelineStage; 5] = [
     RenderPipelineStage::Geometry,
     RenderPipelineStage::MaterialShading,
     RenderPipelineStage::PatternSampling,
     RenderPipelineStage::PostProcessing,
+    RenderPipelineStage::TemporalFeedback,
 ];
 
 #[derive(Debug, Clone, Copy)]
@@ -164,6 +170,7 @@ pub struct MaterialEvaluation {
 #[derive(Debug, Clone, Default)]
 pub struct RendererState {
     pub effect_graph_cache: EffectGraphEvalCache,
+    pub(crate) temporal_buffer: TemporalBuffer,
 }
 
 fn shared_renderer_state() -> &'static Mutex<RendererState> {
@@ -210,6 +217,7 @@ pub fn render_sdf_scene_with_state_and_diagnostics(
         "MaterialPattern",
         "LightingAtmosphere",
         "PostProcessing",
+        "TemporalFeedback",
     ]);
 
     let animated_scene = scene_at_time(
@@ -218,7 +226,8 @@ pub fn render_sdf_scene_with_state_and_diagnostics(
         Some(&mut diagnostics),
         &mut state.effect_graph_cache,
     );
-    let mut pixels = Vec::with_capacity((config.width * config.height) as usize);
+    let mut post_colors = Vec::with_capacity((config.width * config.height) as usize);
+    let mut depth_buffer = Vec::with_capacity((config.width * config.height) as usize);
     let mut bloom_prepass = config
         .output_bloom_prepass
         .then(|| Vec::with_capacity((config.width * config.height) as usize));
@@ -234,7 +243,7 @@ pub fn render_sdf_scene_with_state_and_diagnostics(
     for y in 0..config.height {
         for x in 0..config.width {
             let ray = generate_camera_ray(&animated_scene, x, y, config.width, config.height);
-            let (color, emission, march_steps, sample_position, stage_times) =
+            let (color, emission, march_steps, sample_position, sample_depth, stage_times) =
                 shade_ray(&animated_scene, ray.origin, ray.direction, config);
 
             geometry_ns += stage_times.geometry_ns;
@@ -273,7 +282,8 @@ pub fn render_sdf_scene_with_state_and_diagnostics(
                 },
             );
             post_ns += post_start.elapsed().as_nanos();
-            pixels.push(to_rgba8(post_color));
+            post_colors.push(post_color);
+            depth_buffer.push(sample_depth);
             if let Some(bloom) = &mut bloom_prepass {
                 bloom.push(emission.max(0.0));
             }
@@ -290,7 +300,53 @@ pub fn render_sdf_scene_with_state_and_diagnostics(
     );
     diagnostics.add_stage_duration("PostProcessing", post_ns as f64 / 1_000_000.0);
 
+    let temporal_start = Instant::now();
+    let temporal_effects: Vec<TemporalEffect> = animated_scene
+        .sdf
+        .temporal_effects
+        .iter()
+        .cloned()
+        .map(TemporalEffect::from)
+        .collect();
+    let (beat_phase, current_measure, harmonic_energy, dominant_frequency) =
+        if let Some(audio) = &animated_scene.sdf.audio {
+            let af = analyze_procedural_audio(audio, config.time.seconds);
+            let harmonic =
+                (af.harmonic_ratios[0] + af.harmonic_ratios[1] + af.harmonic_ratios[2]) / 3.0;
+            (
+                af.beat_phase,
+                af.current_measure,
+                harmonic,
+                af.dominant_frequency,
+            )
+        } else {
+            (0.0, 0_u32, 0.0, 220.0)
+        };
+    let final_colors = apply_temporal_feedback(
+        &post_colors,
+        &depth_buffer,
+        config.width,
+        config.height,
+        &mut state.temporal_buffer,
+        TemporalConfig::default(),
+        &temporal_effects,
+        beat_phase,
+        current_measure,
+        harmonic_energy,
+        dominant_frequency,
+    );
+    diagnostics.add_stage_duration(
+        "TemporalFeedback",
+        temporal_start.elapsed().as_secs_f64() * 1000.0,
+    );
+    let pixels = to_rgba8_pixels(&final_colors);
+
     let effect_graph_evals = diagnostics.stats.cache.effect_graph_evals;
+    diagnostics.stats.temporal_buffer_size = (state.temporal_buffer.history.len() as u64)
+        * (config.width as u64)
+        * (config.height as u64);
+    diagnostics.stats.temporal_history_depth = state.temporal_buffer.history.len() as u32;
+
     diagnostics.stats.cache = CacheStats {
         pattern_hits: pattern_cache.hits,
         pattern_misses: pattern_cache.misses,
@@ -1252,7 +1308,7 @@ fn shade_ray(
     origin: V3,
     direction: V3,
     config: RenderConfig,
-) -> (V3, f32, u32, V3, RayStageDurations) {
+) -> (V3, f32, u32, V3, f32, RayStageDurations) {
     let mut timings = RayStageDurations::default();
     let geometry_start = Instant::now();
     if let Some(hit) = march_scene(scene, origin, direction, config) {
@@ -1317,6 +1373,7 @@ fn shade_ray(
             emission_out,
             hit.march_steps,
             hit.position,
+            hit.distance_traveled,
             timings,
         );
     }
@@ -1331,7 +1388,14 @@ fn shade_ray(
     }
     timings.lighting_atmosphere_ns += sky_start.elapsed().as_nanos();
     let miss_position = origin + direction * config.max_distance;
-    (sky.clamp01(), 0.0, 0, miss_position, timings)
+    (
+        sky.clamp01(),
+        0.0,
+        0,
+        miss_position,
+        config.max_distance,
+        timings,
+    )
 }
 
 fn apply_fog(scene: &Scene, surface_color: V3, position: V3, distance: f32) -> V3 {
@@ -1903,15 +1967,6 @@ fn rotate_axis_angle(p: V3, axis: V3, angle: f32) -> V3 {
     p * c + axis.cross(p) * s + axis * axis.dot(p) * (1.0 - c)
 }
 
-fn to_rgba8(color: V3) -> Rgba8 {
-    Rgba8 {
-        r: (color.x.clamp(0.0, 1.0) * 255.0) as u8,
-        g: (color.y.clamp(0.0, 1.0) * 255.0) as u8,
-        b: (color.z.clamp(0.0, 1.0) * 255.0) as u8,
-        a: 255,
-    }
-}
-
 fn from_vec3(v: Vec3) -> V3 {
     V3::new(v.x, v.y, v.z)
 }
@@ -1930,68 +1985,68 @@ struct V2 {
     y: f32,
 }
 impl V2 {
-    fn new(x: f32, y: f32) -> Self {
+    pub(crate) fn new(x: f32, y: f32) -> Self {
         Self { x, y }
     }
-    fn zero() -> Self {
+    pub(crate) fn zero() -> Self {
         Self { x: 0.0, y: 0.0 }
     }
-    fn max(self, rhs: Self) -> Self {
+    pub(crate) fn max(self, rhs: Self) -> Self {
         Self::new(self.x.max(rhs.x), self.y.max(rhs.y))
     }
-    fn length(self) -> f32 {
+    pub(crate) fn length(self) -> f32 {
         (self.x * self.x + self.y * self.y).sqrt()
     }
-    fn max_component(self) -> f32 {
+    pub(crate) fn max_component(self) -> f32 {
         self.x.max(self.y)
     }
 }
 
 #[derive(Clone, Copy, Debug)]
-struct V3 {
+pub(crate) struct V3 {
     x: f32,
     y: f32,
     z: f32,
 }
 impl V3 {
-    fn new(x: f32, y: f32, z: f32) -> Self {
+    pub(crate) fn new(x: f32, y: f32, z: f32) -> Self {
         Self { x, y, z }
     }
-    fn splat(v: f32) -> Self {
+    pub(crate) fn splat(v: f32) -> Self {
         Self::new(v, v, v)
     }
-    fn zero() -> Self {
+    pub(crate) fn zero() -> Self {
         Self::splat(0.0)
     }
-    fn length(self) -> f32 {
+    pub(crate) fn length(self) -> f32 {
         (self.x * self.x + self.y * self.y + self.z * self.z).sqrt()
     }
-    fn normalized(self) -> Self {
+    pub(crate) fn normalized(self) -> Self {
         self / self.length().max(1e-6)
     }
-    fn dot(self, rhs: Self) -> f32 {
+    pub(crate) fn dot(self, rhs: Self) -> f32 {
         self.x * rhs.x + self.y * rhs.y + self.z * rhs.z
     }
-    fn cross(self, rhs: Self) -> Self {
+    pub(crate) fn cross(self, rhs: Self) -> Self {
         Self::new(
             self.y * rhs.z - self.z * rhs.y,
             self.z * rhs.x - self.x * rhs.z,
             self.x * rhs.y - self.y * rhs.x,
         )
     }
-    fn abs(self) -> Self {
+    pub(crate) fn abs(self) -> Self {
         Self::new(self.x.abs(), self.y.abs(), self.z.abs())
     }
-    fn max(self, rhs: Self) -> Self {
+    pub(crate) fn max(self, rhs: Self) -> Self {
         Self::new(self.x.max(rhs.x), self.y.max(rhs.y), self.z.max(rhs.z))
     }
-    fn max_component(self) -> f32 {
+    pub(crate) fn max_component(self) -> f32 {
         self.x.max(self.y).max(self.z)
     }
-    fn hadamard(self, rhs: Self) -> Self {
+    pub(crate) fn hadamard(self, rhs: Self) -> Self {
         Self::new(self.x * rhs.x, self.y * rhs.y, self.z * rhs.z)
     }
-    fn clamp01(self) -> Self {
+    pub(crate) fn clamp01(self) -> Self {
         Self::new(
             self.x.clamp(0.0, 1.0),
             self.y.clamp(0.0, 1.0),
@@ -2123,6 +2178,7 @@ mod tests {
                 effect_graph: None,
                 automation_tracks: vec![],
                 demo_sequence: None,
+                temporal_effects: vec![],
             },
         }
     }

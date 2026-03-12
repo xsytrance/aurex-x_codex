@@ -279,6 +279,7 @@ mod tests {
                 effect_graph: None,
                 automation_tracks: vec![],
                 demo_sequence: None,
+                temporal_effects: vec![],
             },
         };
         let director = CameraDirector::default();

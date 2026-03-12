@@ -49,6 +49,10 @@ fn main() {
         "examples/infinite_fractal_temple.json",
         "examples/prime_pulse_cathedral.json",
         "examples/psytrance_infinite_tunnel.json",
+        "examples/neon_motion_trails.json",
+        "examples/rhythm_echo_city.json",
+        "examples/synesthesia_tunnel.json",
+        "examples/prime_pulse_temporal_wave.json",
         "examples/circuit_megacity_stress.json",
         "examples/pattern_storm_stress.json",
         "examples/prime_pulse_performance_test.json",
@@ -88,7 +92,7 @@ fn main() {
             .unwrap_or(0.0);
         if cfg.output_diagnostics {
             println!(
-                "rendered {} -> {} (avg bloom {:.3}) steps:{} rays:{} cache[p:{}/{} f:{}/{} eg:{}] total_ms:{:.3}",
+                "rendered {} -> {} (avg bloom {:.3}) steps:{} rays:{} cache[p:{}/{} f:{}/{} eg:{}] temporal[size:{} depth:{}] total_ms:{:.3}",
                 scene_path,
                 output_name,
                 bloom_avg,
@@ -99,10 +103,12 @@ fn main() {
                 diag.stats.cache.field_hits,
                 diag.stats.cache.field_misses,
                 diag.stats.cache.effect_graph_evals,
+                diag.stats.temporal_buffer_size,
+                diag.stats.temporal_history_depth,
                 diag.total_frame_time_ms
             );
             println!(
-                "stage_ms_pct: ScenePreprocess={:.3}ms/{:.1}% EffectGraphEvaluation={:.3}ms/{:.1}% GeometrySdf={:.3}ms/{:.1}% MaterialPattern={:.3}ms/{:.1}% LightingAtmosphere={:.3}ms/{:.1}% PostProcessing={:.3}ms/{:.1}%",
+                "stage_ms_pct: ScenePreprocess={:.3}ms/{:.1}% EffectGraphEvaluation={:.3}ms/{:.1}% GeometrySdf={:.3}ms/{:.1}% MaterialPattern={:.3}ms/{:.1}% LightingAtmosphere={:.3}ms/{:.1}% PostProcessing={:.3}ms/{:.1}% TemporalFeedback={:.3}ms/{:.1}%",
                 *diag
                     .stage_durations_ms
                     .get("ScenePreprocess")
@@ -141,7 +147,15 @@ fn main() {
                     .stage_durations_ms
                     .get("PostProcessing")
                     .unwrap_or(&0.0),
-                *diag.stage_percentages.get("PostProcessing").unwrap_or(&0.0)
+                *diag.stage_percentages.get("PostProcessing").unwrap_or(&0.0),
+                *diag
+                    .stage_durations_ms
+                    .get("TemporalFeedback")
+                    .unwrap_or(&0.0),
+                *diag
+                    .stage_percentages
+                    .get("TemporalFeedback")
+                    .unwrap_or(&0.0)
             );
         } else {
             println!(
