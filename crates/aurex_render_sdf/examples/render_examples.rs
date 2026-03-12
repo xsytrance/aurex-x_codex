@@ -84,7 +84,7 @@ fn main() {
             .unwrap_or(0.0);
         if cfg.output_diagnostics {
             println!(
-                "rendered {} -> {} (avg bloom {:.3}) steps:{} rays:{} cache[p:{}/{} f:{}/{}]",
+                "rendered {} -> {} (avg bloom {:.3}) steps:{} rays:{} cache[p:{}/{} f:{}/{} eg:{}] total_ms:{:.3}",
                 scene_path,
                 output_name,
                 bloom_avg,
@@ -93,7 +93,51 @@ fn main() {
                 diag.stats.cache.pattern_hits,
                 diag.stats.cache.pattern_misses,
                 diag.stats.cache.field_hits,
-                diag.stats.cache.field_misses
+                diag.stats.cache.field_misses,
+                diag.stats.cache.effect_graph_evals,
+                diag.total_frame_time_ms
+            );
+            println!(
+                "stage_ms_pct: ScenePreprocess={:.3}ms/{:.1}% EffectGraphEvaluation={:.3}ms/{:.1}% GeometrySdf={:.3}ms/{:.1}% MaterialPattern={:.3}ms/{:.1}% LightingAtmosphere={:.3}ms/{:.1}% PostProcessing={:.3}ms/{:.1}%",
+                *diag
+                    .stage_durations_ms
+                    .get("ScenePreprocess")
+                    .unwrap_or(&0.0),
+                *diag
+                    .stage_percentages
+                    .get("ScenePreprocess")
+                    .unwrap_or(&0.0),
+                *diag
+                    .stage_durations_ms
+                    .get("EffectGraphEvaluation")
+                    .unwrap_or(&0.0),
+                *diag
+                    .stage_percentages
+                    .get("EffectGraphEvaluation")
+                    .unwrap_or(&0.0),
+                *diag.stage_durations_ms.get("GeometrySdf").unwrap_or(&0.0),
+                *diag.stage_percentages.get("GeometrySdf").unwrap_or(&0.0),
+                *diag
+                    .stage_durations_ms
+                    .get("MaterialPattern")
+                    .unwrap_or(&0.0),
+                *diag
+                    .stage_percentages
+                    .get("MaterialPattern")
+                    .unwrap_or(&0.0),
+                *diag
+                    .stage_durations_ms
+                    .get("LightingAtmosphere")
+                    .unwrap_or(&0.0),
+                *diag
+                    .stage_percentages
+                    .get("LightingAtmosphere")
+                    .unwrap_or(&0.0),
+                *diag
+                    .stage_durations_ms
+                    .get("PostProcessing")
+                    .unwrap_or(&0.0),
+                *diag.stage_percentages.get("PostProcessing").unwrap_or(&0.0)
             );
         } else {
             println!(

@@ -25,6 +25,8 @@ use cache::{EffectGraphEvalCache, FieldSampleCache, PatternSampleCache};
 use diagnostics::{CacheStats, FrameDiagnostics};
 use noise::{NoiseVec3, fbm, value_noise};
 use post::{PostProcessConfig, process_pixel};
+use std::sync::{Mutex, OnceLock};
+use std::time::Instant;
 
 #[derive(Debug, Clone, Copy)]
 pub struct RenderTime {
@@ -154,6 +156,16 @@ pub struct MaterialEvaluation {
     pub roughness: f32,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct RendererState {
+    pub effect_graph_cache: EffectGraphEvalCache,
+}
+
+fn shared_renderer_state() -> &'static Mutex<RendererState> {
+    static RENDERER_STATE: OnceLock<Mutex<RendererState>> = OnceLock::new();
+    RENDERER_STATE.get_or_init(|| Mutex::new(RendererState::default()))
+}
+
 pub fn render_sdf_scene(scene: &Scene, time: RenderTime) -> RenderedFrame {
     render_sdf_scene_with_config(
         scene,
@@ -173,10 +185,34 @@ pub fn render_sdf_scene_with_diagnostics(
     scene: &Scene,
     config: RenderConfig,
 ) -> (RenderedFrame, FrameDiagnostics) {
-    let mut diagnostics = FrameDiagnostics::default();
-    diagnostics.stages.push("ScenePreprocess");
+    let mut state = shared_renderer_state()
+        .lock()
+        .expect("renderer state mutex should not be poisoned");
+    render_sdf_scene_with_state_and_diagnostics(scene, config, &mut state)
+}
 
-    let animated_scene = scene_at_time(scene, config.time);
+pub fn render_sdf_scene_with_state_and_diagnostics(
+    scene: &Scene,
+    config: RenderConfig,
+    state: &mut RendererState,
+) -> (RenderedFrame, FrameDiagnostics) {
+    let frame_start = Instant::now();
+    let mut diagnostics = FrameDiagnostics::default();
+    diagnostics.stages.extend([
+        "ScenePreprocess",
+        "EffectGraphEvaluation",
+        "GeometrySdf",
+        "MaterialPattern",
+        "LightingAtmosphere",
+        "PostProcessing",
+    ]);
+
+    let animated_scene = scene_at_time(
+        scene,
+        config.time,
+        Some(&mut diagnostics),
+        &mut state.effect_graph_cache,
+    );
     let mut pixels = Vec::with_capacity((config.width * config.height) as usize);
     let mut bloom_prepass = config
         .output_bloom_prepass
@@ -185,35 +221,41 @@ pub fn render_sdf_scene_with_diagnostics(
     let mut pattern_cache = PatternSampleCache::default();
     let mut field_cache = FieldSampleCache::default();
 
-    diagnostics.stages.push("Geometry/Material/Lighting");
+    let mut geometry_ns = 0_u128;
+    let mut material_pattern_ns = 0_u128;
+    let mut lighting_atmosphere_ns = 0_u128;
+    let mut post_ns = 0_u128;
 
     for y in 0..config.height {
         for x in 0..config.width {
             let ray = generate_camera_ray(&animated_scene, x, y, config.width, config.height);
-            let (color, emission, march_steps) =
+            let (color, emission, march_steps, sample_position, stage_times) =
                 shade_ray(&animated_scene, ray.origin, ray.direction, config);
 
-            let _cache_probe = {
-                let key = cache::SampleKey::from_world(
-                    ray.origin,
-                    config.time.seconds,
-                    animated_scene.sdf.seed,
+            geometry_ns += stage_times.geometry_ns;
+            material_pattern_ns += stage_times.material_pattern_ns;
+            lighting_atmosphere_ns += stage_times.lighting_atmosphere_ns;
+
+            let key = cache::SampleKey::from_world(
+                sample_position,
+                config.time.seconds,
+                animated_scene.sdf.seed,
+            );
+            if pattern_cache.get(key).is_none() {
+                pattern_cache.insert(key, emission);
+            }
+            if field_cache.get(key).is_none() {
+                field_cache.insert(
+                    key,
+                    [color.x, color.y, color.z, emission, march_steps as f32],
                 );
-                if pattern_cache.get(key).is_none() {
-                    pattern_cache.insert(key, emission);
-                }
-                if field_cache.get(key).is_none() {
-                    field_cache.insert(
-                        key,
-                        [color.x, color.y, color.z, emission, march_steps as f32],
-                    );
-                }
-            };
+            }
 
             let uv = (
                 (x as f32 + 0.5) / config.width as f32,
                 (y as f32 + 0.5) / config.height as f32,
             );
+            let post_start = Instant::now();
             let post_color = process_pixel(
                 color,
                 emission,
@@ -225,6 +267,7 @@ pub fn render_sdf_scene_with_diagnostics(
                     ..config.post
                 },
             );
+            post_ns += post_start.elapsed().as_nanos();
             pixels.push(to_rgba8(post_color));
             if let Some(bloom) = &mut bloom_prepass {
                 bloom.push(emission.max(0.0));
@@ -234,15 +277,26 @@ pub fn render_sdf_scene_with_diagnostics(
         }
     }
 
+    diagnostics.add_stage_duration("GeometrySdf", geometry_ns as f64 / 1_000_000.0);
+    diagnostics.add_stage_duration("MaterialPattern", material_pattern_ns as f64 / 1_000_000.0);
+    diagnostics.add_stage_duration(
+        "LightingAtmosphere",
+        lighting_atmosphere_ns as f64 / 1_000_000.0,
+    );
+    diagnostics.add_stage_duration("PostProcessing", post_ns as f64 / 1_000_000.0);
+
+    let effect_graph_evals = diagnostics.stats.cache.effect_graph_evals;
     diagnostics.stats.cache = CacheStats {
         pattern_hits: pattern_cache.hits,
         pattern_misses: pattern_cache.misses,
         field_hits: field_cache.hits,
         field_misses: field_cache.misses,
-        effect_graph_evals: 0,
+        effect_graph_evals,
     };
 
-    diagnostics.stages.push("PostProcessing");
+    diagnostics.total_frame_time_ms = frame_start.elapsed().as_secs_f64() * 1000.0;
+    diagnostics.stats.stage_time_ms_total = diagnostics.total_frame_time_ms;
+    diagnostics.finalize_stage_percentages();
 
     (
         RenderedFrame {
@@ -254,7 +308,6 @@ pub fn render_sdf_scene_with_diagnostics(
         diagnostics,
     )
 }
-
 pub fn wgpu_backend_marker() -> wgpu::Features {
     wgpu::Features::empty()
 }
@@ -459,13 +512,26 @@ struct Hit {
     march_steps: u32,
 }
 
+#[derive(Clone, Copy, Default)]
+struct RayStageDurations {
+    geometry_ns: u128,
+    material_pattern_ns: u128,
+    lighting_atmosphere_ns: u128,
+}
+
 #[derive(Clone)]
 struct NodeEval {
     distance: f32,
     material: SdfMaterial,
 }
 
-fn scene_at_time(scene: &Scene, time: RenderTime) -> Scene {
+fn scene_at_time(
+    scene: &Scene,
+    time: RenderTime,
+    mut diagnostics: Option<&mut FrameDiagnostics>,
+    effect_graph_cache: &mut EffectGraphEvalCache,
+) -> Scene {
+    let preprocess_start = Instant::now();
     let mut animated = scene.clone();
     let mut t = time.seconds;
 
@@ -517,9 +583,9 @@ fn scene_at_time(scene: &Scene, time: RenderTime) -> Scene {
     }
 
     if let Some(graph) = animated.sdf.effect_graph.clone() {
-        let mut eg_cache = EffectGraphEvalCache::default();
+        let eg_start = Instant::now();
         let seed = animated.sdf.seed;
-        if !eg_cache.should_reuse(seed, t) {
+        if !effect_graph_cache.should_reuse(seed, t) {
             graph.evaluate_scene(
                 &mut animated,
                 effect_graph::EffectContext {
@@ -532,7 +598,16 @@ fn scene_at_time(scene: &Scene, time: RenderTime) -> Scene {
                     beat_phase: af_preview.beat_phase,
                 },
             );
-            eg_cache.mark_evaluated(seed, t);
+            effect_graph_cache.mark_evaluated(seed, t);
+            if let Some(d) = diagnostics.as_deref_mut() {
+                d.stats.cache.effect_graph_evals += 1;
+            }
+        }
+        if let Some(d) = diagnostics.as_deref_mut() {
+            d.add_stage_duration(
+                "EffectGraphEvaluation",
+                eg_start.elapsed().as_secs_f64() * 1000.0,
+            );
         }
     }
 
@@ -695,6 +770,13 @@ fn scene_at_time(scene: &Scene, time: RenderTime) -> Scene {
             animated.sdf.seed,
             rhythm_t,
             &animated.sdf.fields,
+        );
+    }
+
+    if let Some(d) = diagnostics.as_deref_mut() {
+        d.add_stage_duration(
+            "ScenePreprocess",
+            preprocess_start.elapsed().as_secs_f64() * 1000.0,
         );
     }
 
@@ -1160,8 +1242,17 @@ fn apply_to_node_primitives(node: &mut SdfNode, f: &mut dyn FnMut(&mut SdfPrimit
     }
 }
 
-fn shade_ray(scene: &Scene, origin: V3, direction: V3, config: RenderConfig) -> (V3, f32, u32) {
+fn shade_ray(
+    scene: &Scene,
+    origin: V3,
+    direction: V3,
+    config: RenderConfig,
+) -> (V3, f32, u32, V3, RayStageDurations) {
+    let mut timings = RayStageDurations::default();
+    let geometry_start = Instant::now();
     if let Some(hit) = march_scene(scene, origin, direction, config) {
+        timings.geometry_ns += geometry_start.elapsed().as_nanos();
+        let material_start = Instant::now();
         let m = evaluate_material(
             &hit.material,
             [hit.position.x, hit.position.y, hit.position.z],
@@ -1170,6 +1261,8 @@ fn shade_ray(scene: &Scene, origin: V3, direction: V3, config: RenderConfig) -> 
             scene.sdf.seed,
         );
         let field = sample_scene_fields(scene, hit.position, config.time.seconds);
+        timings.material_pattern_ns += material_start.elapsed().as_nanos();
+        let light_start = Instant::now();
         let base = V3::new(m.color[0], m.color[1], m.color[2]) * (1.0 + field.scalar * 0.08);
         let mut color = base * (scene.sdf.lighting.ambient_light + field.energy * 0.03);
 
@@ -1211,17 +1304,29 @@ fn shade_ray(scene: &Scene, origin: V3, direction: V3, config: RenderConfig) -> 
             color = apply_fog(scene, color, hit.position, hit.distance_traveled);
         }
 
+        timings.lighting_atmosphere_ns += light_start.elapsed().as_nanos();
+
         let emission_out = (m.emission + hit.distance_glow).max(0.0);
-        return (color.clamp01(), emission_out, hit.march_steps);
+        return (
+            color.clamp01(),
+            emission_out,
+            hit.march_steps,
+            hit.position,
+            timings,
+        );
     }
 
+    timings.geometry_ns += geometry_start.elapsed().as_nanos();
+    let sky_start = Instant::now();
     let t = 0.5 * (direction.y + 1.0);
     let mut sky = V3::new(0.05, 0.08, 0.12) * (1.0 - t) + V3::new(0.25, 0.3, 0.4) * t;
     if config.enable_scattering {
         sky = sky
             + light_scattering(scene, origin, direction, config.max_distance * 0.3, config) * 0.5;
     }
-    (sky.clamp01(), 0.0, 0)
+    timings.lighting_atmosphere_ns += sky_start.elapsed().as_nanos();
+    let miss_position = origin + direction * config.max_distance;
+    (sky.clamp01(), 0.0, 0, miss_position, timings)
 }
 
 fn apply_fog(scene: &Scene, surface_color: V3, position: V3, distance: f32) -> V3 {
