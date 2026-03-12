@@ -108,3 +108,18 @@ Sampling API:
 - Always set `audio.seed` and `scene.seed`.
 - Use explicit BPM and finite pattern loops.
 - Keep oscillator/filter params fixed or timeline-keyframed.
+
+## Current Limitations / Behavior Notes
+
+- Sequencer tracks currently feed **procedural energy/intensity** analysis and modulation; they are not yet a full per-instrument synthesis pipeline.
+- DSP nodes are lightweight deterministic approximations for real-time portability:
+  - `Filter` uses simplified saturation-style shaping, not a full biquad model.
+  - `Delay` and `Reverb` are compact tap/feedback approximations, not convolution/FDN-quality spaces.
+- Voice synthesis is a phoneme/formant approximation designed for stylized robotic/choir/alien textures rather than realistic speech.
+
+### Authoring Guidance
+
+- For tight tonal control, prefer `synth_graph` (`Oscillator`/`FMOperator` + `Envelope` + `Filter`) and treat tracks as rhythmic energy drivers.
+- Keep `tempo`, loop counts, and seeds explicit for reproducibility across machines.
+- Use moderate effect values (`distortion.drive <= 2`, `reverb.room_size <= 1.2`) to avoid overpowering audio-reactive visuals.
+

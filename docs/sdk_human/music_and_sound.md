@@ -34,3 +34,16 @@ Aurex-X makes music and voices from math, not samples.
 
 You can generate complete audiovisual demos from JSON only.
 No external audio files required.
+
+## Current limitations (so expectations are clear)
+
+- The note sequencer mostly drives **energy and groove** right now, not fully realistic instrument playback.
+- Effects like filter/reverb/delay are intentionally simplified and deterministic.
+- Voice is intentionally synthetic (vowel-like tones), not natural text-to-speech.
+
+## Practical tips
+
+- Use the synth graph for the actual tone/character.
+- Use tracks to create beat energy that pushes lights, fog, and motion.
+- Use voice presets for texture and identity, not intelligible lyrics.
+

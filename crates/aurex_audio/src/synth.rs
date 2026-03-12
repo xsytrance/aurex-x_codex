@@ -75,7 +75,7 @@ pub fn sample_synth(node: &SynthNode, t: f32, sample_rate: f32, seed: u32) -> f3
             frequency,
             amplitude,
             phase,
-        } => amplitude * sample_osc(*osc_type, t, *frequency, *phase, seed),
+        } => amplitude * sample_osc(*osc_type, t, *frequency, *phase, sample_rate, seed),
         SynthNode::Noise { amplitude, seed: s } => {
             amplitude * hash_noise((t * sample_rate) as i32, seed ^ *s)
         }
@@ -153,7 +153,14 @@ pub fn sample_synth(node: &SynthNode, t: f32, sample_rate: f32, seed: u32) -> f3
     }
 }
 
-fn sample_osc(osc: OscillatorType, t: f32, freq: f32, phase: f32, seed: u32) -> f32 {
+fn sample_osc(
+    osc: OscillatorType,
+    t: f32,
+    freq: f32,
+    phase: f32,
+    sample_rate: f32,
+    seed: u32,
+) -> f32 {
     let p = std::f32::consts::TAU * freq * t + phase;
     match osc {
         OscillatorType::Sine => p.sin(),
@@ -166,7 +173,7 @@ fn sample_osc(osc: OscillatorType, t: f32, freq: f32, phase: f32, seed: u32) -> 
         }
         OscillatorType::Saw => 2.0 * (freq * t - (0.5 + freq * t).floor()),
         OscillatorType::Triangle => (2.0 / std::f32::consts::PI) * p.sin().asin(),
-        OscillatorType::Noise => hash_noise((t * 44100.0) as i32, seed),
+        OscillatorType::Noise => hash_noise((t * sample_rate.max(1.0)) as i32, seed),
         OscillatorType::Fm => (p + 2.0 * p.sin()).sin(),
     }
 }
@@ -189,7 +196,45 @@ fn adsr(t: f32, a: f32, d: f32, s: f32, r: f32, gate: f32) -> f32 {
 fn hash_noise(x: i32, seed: u32) -> f32 {
     let mut n = x ^ seed as i32;
     n = (n << 13) ^ n;
-    let v = 1.0
-        - (((n * (n * n * 15731 + 789221) + 1_376_312_589) & 0x7fff_ffff) as f32 / 1_073_741_824.0);
+    let mixed = n
+        .wrapping_mul(n.wrapping_mul(n).wrapping_mul(15_731).wrapping_add(789_221))
+        .wrapping_add(1_376_312_589);
+    let v = 1.0 - (((mixed & 0x7fff_ffff) as f32) / 1_073_741_824.0);
     v.clamp(-1.0, 1.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{OscillatorType, SynthNode, sample_synth};
+
+    #[test]
+    fn noise_oscillator_depends_on_runtime_sample_rate() {
+        let node = SynthNode::Oscillator {
+            osc_type: OscillatorType::Noise,
+            frequency: 220.0,
+            amplitude: 1.0,
+            phase: 0.0,
+        };
+
+        let t = 0.123;
+        let at_44k = sample_synth(&node, t, 44_100.0, 99);
+        let at_48k = sample_synth(&node, t, 48_000.0, 99);
+
+        assert_ne!(at_44k, at_48k);
+    }
+
+    #[test]
+    fn noise_oscillator_is_deterministic_for_same_inputs() {
+        let node = SynthNode::Oscillator {
+            osc_type: OscillatorType::Noise,
+            frequency: 220.0,
+            amplitude: 0.6,
+            phase: 0.0,
+        };
+
+        let a = sample_synth(&node, 0.5, 48_000.0, 1234);
+        let b = sample_synth(&node, 0.5, 48_000.0, 1234);
+
+        assert_eq!(a, b);
+    }
 }

@@ -99,8 +99,46 @@ fn formant_for(p: Phoneme, preset: VoicePreset) -> FormantFilter {
 }
 
 fn apply_formant(source: f32, f: FormantFilter, t: f32) -> f32 {
-    let o1 = (std::f32::consts::TAU * f.f1 * t * 0.001).sin();
-    let o2 = (std::f32::consts::TAU * f.f2 * t * 0.001).sin();
-    let o3 = (std::f32::consts::TAU * f.f3 * t * 0.001).sin();
+    let o1 = (std::f32::consts::TAU * f.f1 * t).sin();
+    let o2 = (std::f32::consts::TAU * f.f2 * t).sin();
+    let o3 = (std::f32::consts::TAU * f.f3 * t).sin();
     source * 0.4 + o1 * 0.3 + o2 * 0.2 + o3 * 0.1
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Phoneme, VoicePreset, VoiceSynth};
+
+    #[test]
+    fn voice_synth_is_deterministic_for_same_inputs() {
+        let voice = VoiceSynth {
+            preset: VoicePreset::Alien,
+            sequence: vec![Phoneme::AH, Phoneme::EE, Phoneme::OH],
+            base_pitch_hz: 180.0,
+            phoneme_duration: 0.2,
+        };
+
+        let a = voice.sample(0.27);
+        let b = voice.sample(0.27);
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn different_presets_produce_different_timbre_samples() {
+        let female = VoiceSynth {
+            preset: VoicePreset::Female,
+            sequence: vec![Phoneme::EE],
+            base_pitch_hz: 220.0,
+            phoneme_duration: 0.25,
+        };
+        let alien = VoiceSynth {
+            preset: VoicePreset::Alien,
+            sequence: vec![Phoneme::EE],
+            base_pitch_hz: 220.0,
+            phoneme_duration: 0.25,
+        };
+
+        let t = 0.0137;
+        assert_ne!(female.sample(t), alien.sample(t));
+    }
 }

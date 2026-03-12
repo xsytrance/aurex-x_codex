@@ -97,3 +97,20 @@ Use this guide to generate valid Aurex-X audio JSON.
   }
 }
 ```
+
+## Current Limitations / Behavior Notes
+
+- `tracks` currently contribute strong timing/energy signals and macro musical motion; they are not a full sample-accurate instrument renderer.
+- `Filter`, `Delay`, and `Reverb` nodes are deterministic simplified DSP models.
+- `voice` is stylized phoneme/formant synthesis and should be authored as texture-first audio.
+
+## Authoring Strategy for Reliable Results
+
+- Prefer `synth_graph` for stable pitched tone design.
+- Use `tracks` to drive `kick/bass/mid/high` energies for visual reactivity.
+- Use conservative ranges first, then iterate:
+  - `distortion.drive`: `0.2-1.8`
+  - `reverb.room_size`: `0.4-1.2`
+  - `envelope.release`: `0.05-0.8`
+- Keep `seed` fixed while iterating prompts/configs to compare changes deterministically.
+
