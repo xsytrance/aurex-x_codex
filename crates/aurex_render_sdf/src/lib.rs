@@ -5,8 +5,10 @@ use aurex_audio::{analysis::AudioFeatures, analyze_procedural_audio};
 use aurex_scene::{
     AudioSyncHook, RhythmParticleMode, Scene, SdfMaterial, SdfMaterialType, SdfModifier, SdfNode,
     SdfObject, SdfPattern, SdfPrimitive, TimelineValue, Vec3,
+    automation::{self, AutomationInput},
     camera::CameraSyncInput,
     director::CameraDirector,
+    effect_graph,
     fields::{self, FieldSample},
     generators::{self, SceneGenerator},
     harmonics::HarmonicBand,
@@ -364,6 +366,22 @@ fn scene_at_time(scene: &Scene, time: RenderTime) -> Scene {
     let mut animated = scene.clone();
     let mut t = time.seconds;
 
+    if let Some(demo_sequence) = animated.sdf.demo_sequence.clone() {
+        demo_sequence.apply_at_time(&mut animated, t);
+    }
+
+    if let Some(graph) = animated.sdf.effect_graph.clone() {
+        let seed = animated.sdf.seed;
+        graph.evaluate_scene(
+            &mut animated,
+            effect_graph::EffectContext {
+                time_seconds: t,
+                seed,
+                ..effect_graph::EffectContext::default()
+            },
+        );
+    }
+
     if let Some(timeline) = animated.sdf.timeline.clone() {
         t = timeline.normalized_time(time.seconds);
 
@@ -479,6 +497,28 @@ fn scene_at_time(scene: &Scene, time: RenderTime) -> Scene {
 
     let af = apply_audio_to_scene(&mut animated, t);
     apply_harmonics_to_scene(&mut animated, af, t);
+
+    if !animated.sdf.automation_tracks.is_empty() {
+        let bindings = animated.sdf.automation_tracks.clone();
+        let seed = animated.sdf.seed;
+        automation::apply_bindings(
+            &mut animated,
+            &bindings,
+            AutomationInput {
+                time_seconds: t,
+                beat: af.current_beat as f32 + af.beat_phase,
+                measure: af.current_measure as f32,
+                phrase: af.current_phrase as f32,
+                tempo: af.tempo,
+                bass: af.bass_energy,
+                mid: af.mid_energy,
+                high: af.high_energy,
+                dominant_frequency: af.dominant_frequency,
+            },
+            seed,
+        );
+    }
+
     let rhythm_t = apply_rhythm_space_to_scene(&mut animated, af, t);
     apply_scene_pattern_networks(&mut animated, af, rhythm_t);
 
@@ -1771,6 +1811,9 @@ mod tests {
                 harmonics: None,
                 rhythm: None,
                 audio: Some(aurex_audio::default_demo_audio_config(2027)),
+                effect_graph: None,
+                automation_tracks: vec![],
+                demo_sequence: None,
             },
         }
     }

@@ -32,3 +32,6 @@ Variants: `Orbit`, `Flythrough`, `TargetTracking`, `BezierPath`, `Rhythm`.
 - Keep camera inputs explicit and seed/time driven.
 - Avoid non-deterministic ordering when generating shot lists.
 - Use fixed-step volumetric sampling settings.
+
+## Related schema
+- Effect graph + automation + demo schema: `docs/sdk_ai/effect_graph_automation_demo_schema.md`

@@ -17,3 +17,6 @@ Procedural scenes can be visually dense. Camera direction helps the viewer under
 - Use orbits for architecture/fractal forms.
 - Use slower movement for high pattern density.
 - Keep volumetric effects subtle enough to preserve emissive highlights.
+
+## Related creative workflow
+- Effect graph + demo flow: `docs/sdk_human/effect_graph_and_demo_flow.md`

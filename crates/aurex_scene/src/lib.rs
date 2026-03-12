@@ -1,5 +1,8 @@
+pub mod automation;
 pub mod camera;
+pub mod demo;
 pub mod director;
+pub mod effect_graph;
 pub mod fields;
 pub mod generators;
 pub mod harmonics;
@@ -65,6 +68,12 @@ pub struct SdfScene {
     pub rhythm: Option<RhythmSpaceConfig>,
     #[serde(default)]
     pub audio: Option<ProceduralAudioConfig>,
+    #[serde(default)]
+    pub effect_graph: Option<effect_graph::EffectGraph>,
+    #[serde(default)]
+    pub automation_tracks: Vec<automation::AutomationBinding>,
+    #[serde(default)]
+    pub demo_sequence: Option<demo::Demo>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

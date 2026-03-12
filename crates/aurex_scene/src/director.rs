@@ -276,6 +276,9 @@ mod tests {
                 harmonics: None,
                 rhythm: None,
                 audio: None,
+                effect_graph: None,
+                automation_tracks: vec![],
+                demo_sequence: None,
             },
         };
         let director = CameraDirector::default();

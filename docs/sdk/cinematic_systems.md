@@ -36,3 +36,6 @@ Renderer is now represented with explicit stage constants:
 - PostProcessing
 
 This keeps boundaries clear for future rayon task batching / GPU mapping.
+
+## Related milestone systems
+- Effect graph / automation / demo sequencer: `docs/sdk/effect_graph_automation_demo.md`
