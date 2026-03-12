@@ -1,5 +1,6 @@
 pub mod noise;
 
+use aurex_audio::{analysis::AudioFeatures, analyze_procedural_audio};
 use aurex_scene::{
     AudioSyncHook, Scene, SdfMaterial, SdfMaterialType, SdfModifier, SdfNode, SdfObject,
     SdfPattern, SdfPrimitive, TimelineValue, Vec3,
@@ -352,6 +353,21 @@ fn scene_at_time(scene: &Scene, time: RenderTime) -> Scene {
         }
     }
 
+    let af = apply_audio_to_scene(&mut animated, t);
+
+    if af.kick_energy > 0.0 || af.bass_energy > 0.0 || af.high_energy > 0.0 {
+        animated
+            .sdf
+            .fields
+            .push(aurex_scene::fields::SceneField::Audio(
+                aurex_scene::fields::AudioField {
+                    band: aurex_scene::fields::AudioBand::Kick,
+                    strength: af.kick_energy.max(af.bass_energy),
+                    radius: 30.0,
+                },
+            ));
+    }
+
     if let Some(generator) = &animated.sdf.generator {
         animated.sdf.root =
             generators::expand_generator(generator, animated.sdf.seed, t, &animated.sdf.fields);
@@ -437,6 +453,34 @@ fn apply_field_keyframes(scene: &mut Scene, timeline: &aurex_scene::SceneTimelin
             }
         }
     }
+}
+
+fn apply_audio_to_scene(scene: &mut Scene, t: f32) -> AudioFeatures {
+    let features = if let Some(cfg) = &scene.sdf.audio {
+        analyze_procedural_audio(cfg, t)
+    } else {
+        AudioFeatures {
+            kick_energy: 0.0,
+            bass_energy: 0.0,
+            mid_energy: 0.0,
+            high_energy: 0.0,
+            spectral_centroid: 0.0,
+            tempo: 120.0,
+        }
+    };
+
+    if !scene.sdf.lighting.key_lights.is_empty() {
+        let boost = 1.0 + features.kick_energy * 0.15 + features.high_energy * 0.06;
+        for l in &mut scene.sdf.lighting.key_lights {
+            l.intensity *= boost;
+        }
+    }
+
+    scene.sdf.lighting.fog_density += features.bass_energy * 0.01;
+    scene.sdf.camera.position.y += features.kick_energy * 0.03;
+    scene.sdf.camera.target.y += features.mid_energy * 0.02;
+
+    features
 }
 
 fn sample_scene_fields(scene: &Scene, p: V3, time: f32) -> FieldSample {
@@ -1305,6 +1349,7 @@ mod tests {
                         falloff: 0.2,
                     },
                 )],
+                audio: Some(aurex_audio::default_demo_audio_config(2027)),
             },
         }
     }
@@ -1360,6 +1405,31 @@ mod tests {
             1,
         );
         assert_ne!(a.color, b.color);
+    }
+
+    #[test]
+    fn audio_features_influence_render() {
+        let mut scene = sample_scene();
+        scene.sdf.audio = Some(aurex_audio::default_demo_audio_config(99));
+        let a = render_sdf_scene_with_config(
+            &scene,
+            RenderConfig {
+                width: 24,
+                height: 14,
+                time: RenderTime { seconds: 0.1 },
+                ..RenderConfig::default()
+            },
+        );
+        let b = render_sdf_scene_with_config(
+            &scene,
+            RenderConfig {
+                width: 24,
+                height: 14,
+                time: RenderTime { seconds: 1.1 },
+                ..RenderConfig::default()
+            },
+        );
+        assert_ne!(a.pixels, b.pixels);
     }
 
     #[test]

@@ -1,6 +1,7 @@
 pub mod fields;
 pub mod generators;
 
+use aurex_audio::ProceduralAudioConfig;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::Path};
 
@@ -46,6 +47,8 @@ pub struct SdfScene {
     pub generator: Option<generators::SceneGenerator>,
     #[serde(default)]
     pub fields: Vec<fields::SceneField>,
+    #[serde(default)]
+    pub audio: Option<ProceduralAudioConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

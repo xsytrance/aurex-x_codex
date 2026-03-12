@@ -1,0 +1,70 @@
+{
+  "sdf": {
+    "seed": 13370,
+    "camera": {
+      "position": {"x": 0.0, "y": 1.0, "z": -8.0},
+      "target": {"x": 0.0, "y": 0.0, "z": 0.0},
+      "fov_degrees": 60.0,
+      "aspect_ratio": 1.7777778
+    },
+    "lighting": {
+      "ambient_light": 0.14,
+      "fog_color": {"x": 0.05, "y": 0.1, "z": 0.2},
+      "fog_density": 0.08,
+      "fog_height_falloff": 0.12,
+      "key_lights": [
+        {"direction": {"x": -0.2, "y": -1.0, "z": -0.3}, "intensity": 1.1, "color": {"x": 0.4, "y": 0.95, "z": 1.0}}
+      ]
+    },
+    "fields": [
+      {"Pulse": {"origin": {"x": 0.0, "y": 0.0, "z": 0.0}, "frequency": 2.2, "amplitude": 0.9, "falloff": 0.09}},
+      {"Audio": {"band": "Kick", "strength": 1.0, "radius": 25.0}}
+    ],
+    "timeline": {
+      "duration": 12.0,
+      "loops": true,
+      "keyframes": [
+        {"time": 0.0, "target": "field.pulse.frequency", "value": {"Float": {"value": 1.8}}, "interpolation": "EaseIn"},
+        {"time": 6.0, "target": "field.pulse.frequency", "value": {"Float": {"value": 3.2}}, "interpolation": "EaseOut"},
+        {"time": 12.0, "target": "field.pulse.frequency", "value": {"Float": {"value": 1.8}}, "interpolation": "Smoothstep"}
+      ]
+    },
+    "generator": {
+      "Tunnel": {"radius": 1.8, "segment_count": 16, "twist": 0.14, "repeat_distance": 2.1}
+    },
+    "audio": {
+      "tempo": 140.0,
+      "seed": 13370,
+      "tracks": [
+        {
+          "name": "kick",
+          "volume": 1.0,
+          "patterns": [
+            {
+              "loops": 8,
+              "notes": [
+                {"pitch": 36, "duration_beats": 0.5, "velocity": 1.0, "instrument": "kick"},
+                {"pitch": 36, "duration_beats": 0.5, "velocity": 0.8, "instrument": "kick"}
+              ]
+            }
+          ]
+        }
+      ],
+      "synth_graph": {
+        "Mixer": {
+          "inputs": [
+            {"Oscillator": {"osc_type": "Saw", "frequency": 110.0, "amplitude": 0.5, "phase": 0.0}},
+            {"FMOperator": {"carrier_freq": 220.0, "mod_freq": 55.0, "mod_index": 2.4, "amplitude": 0.3}}
+          ],
+          "gain": 0.7
+        }
+      },
+      "voice": {
+        "preset": "Robot",
+        "phonemes": ["EH", "OH"],
+        "base_pitch_hz": 165.0,
+        "phoneme_duration": 0.22
+      }
+    }
+  }
+}

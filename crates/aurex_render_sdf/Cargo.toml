@@ -7,5 +7,6 @@ authors.workspace = true
 
 [dependencies]
 aurex_scene = { path = "../aurex_scene" }
+aurex_audio = { path = "../aurex_audio" }
 bytemuck = { version = "1", features = ["derive"] }
 wgpu = "25"

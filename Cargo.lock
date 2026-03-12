@@ -45,6 +45,7 @@ name = "aurex_audio"
 version = "0.1.0"
 dependencies = [
  "aurex_core",
+ "serde",
 ]
 
 [[package]]
@@ -84,6 +85,7 @@ dependencies = [
 name = "aurex_render_sdf"
 version = "0.1.0"
 dependencies = [
+ "aurex_audio",
  "aurex_scene",
  "bytemuck",
  "wgpu",
@@ -93,6 +95,7 @@ dependencies = [
 name = "aurex_scene"
 version = "0.1.0"
 dependencies = [
+ "aurex_audio",
  "serde",
  "serde_json",
 ]
