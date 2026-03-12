@@ -11,6 +11,11 @@ pub enum SceneGenerator {
     CircuitBoard(CircuitBoardGenerator),
     ParticleGalaxy(ParticleGalaxyGenerator),
     HarmonicParticleField(HarmonicParticleFieldGenerator),
+    ElectronicCity(ElectronicCityGenerator),
+    JazzImprovisation(JazzImprovisationGenerator),
+    RockAmpMountain(RockAmpMountainGenerator),
+    PopStageWorld(PopStageWorldGenerator),
+    ReggaeIsland(ReggaeIslandGenerator),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -53,6 +58,36 @@ pub enum HarmonicParticleMode {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ElectronicCityGenerator {
+    pub block_count: u32,
+    pub tower_height: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct JazzImprovisationGenerator {
+    pub ribbon_count: u32,
+    pub swing: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RockAmpMountainGenerator {
+    pub peak_count: u32,
+    pub amp_height: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PopStageWorldGenerator {
+    pub stage_count: u32,
+    pub spotlight_radius: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ReggaeIslandGenerator {
+    pub island_count: u32,
+    pub wave_scale: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct HarmonicParticleFieldGenerator {
     pub particle_count: u32,
     pub radius: f32,
@@ -74,6 +109,11 @@ pub fn expand_generator(
         SceneGenerator::HarmonicParticleField(g) => {
             expand_harmonic_particle_field(g, scene_seed, time, scene_fields)
         }
+        SceneGenerator::ElectronicCity(g) => expand_electronic_city(g, scene_seed, time),
+        SceneGenerator::JazzImprovisation(g) => expand_jazz_improv(g, scene_seed, time),
+        SceneGenerator::RockAmpMountain(g) => expand_rock_amp_mountain(g, scene_seed, time),
+        SceneGenerator::PopStageWorld(g) => expand_pop_stage_world(g, scene_seed, time),
+        SceneGenerator::ReggaeIsland(g) => expand_reggae_island(g, scene_seed, time),
     }
 }
 
@@ -401,6 +441,114 @@ fn hash01(seed: u32, x: i32, y: i32) -> f32 {
     n ^= y.wrapping_mul(668_265_263);
     n = (n ^ (n >> 13)).wrapping_mul(1_274_126_177);
     ((n & 0x7fff_ffff) as f32) / 2_147_483_647.0
+}
+
+fn expand_electronic_city(g: &ElectronicCityGenerator, seed: u32, time: f32) -> SdfNode {
+    let mut children = Vec::new();
+    for i in 0..g.block_count.max(1) {
+        let x = (i as f32 - g.block_count as f32 * 0.5) * 1.6;
+        let h = g.tower_height * (0.5 + ((seed as f32 * 0.01 + i as f32 + time).sin().abs()));
+        children.push(SdfNode::Primitive {
+            object: SdfObject {
+                primitive: SdfPrimitive::Box {
+                    size: Vec3::new(0.35, h, 0.35),
+                },
+                modifiers: vec![SdfModifier::Translate {
+                    offset: Vec3::new(x, h, 0.0),
+                }],
+                material: SdfMaterial::default(),
+                bounds_radius: Some(h + 1.0),
+            },
+        });
+    }
+    SdfNode::Group { children }
+}
+
+fn expand_jazz_improv(g: &JazzImprovisationGenerator, seed: u32, time: f32) -> SdfNode {
+    let mut children = Vec::new();
+    for i in 0..g.ribbon_count.max(1) {
+        let z = i as f32 * 1.2;
+        children.push(SdfNode::Primitive {
+            object: SdfObject {
+                primitive: SdfPrimitive::Torus {
+                    major_radius: 1.0 + (i as f32 * 0.05),
+                    minor_radius: 0.08 + g.swing.abs() * 0.04,
+                },
+                modifiers: vec![SdfModifier::Translate {
+                    offset: Vec3::new(
+                        (time * g.swing + i as f32 + seed as f32 * 0.001).sin(),
+                        0.0,
+                        z,
+                    ),
+                }],
+                material: SdfMaterial::default(),
+                bounds_radius: Some(2.0),
+            },
+        });
+    }
+    SdfNode::Group { children }
+}
+
+fn expand_rock_amp_mountain(g: &RockAmpMountainGenerator, _seed: u32, _time: f32) -> SdfNode {
+    let mut children = Vec::new();
+    for i in 0..g.peak_count.max(1) {
+        let x = (i as f32 - g.peak_count as f32 * 0.5) * 2.5;
+        children.push(SdfNode::Primitive {
+            object: SdfObject {
+                primitive: SdfPrimitive::Capsule {
+                    a: Vec3::new(x, 0.0, 0.0),
+                    b: Vec3::new(x, g.amp_height, 0.0),
+                    radius: 0.9,
+                },
+                modifiers: vec![],
+                material: SdfMaterial::default(),
+                bounds_radius: Some(g.amp_height + 1.5),
+            },
+        });
+    }
+    SdfNode::Group { children }
+}
+
+fn expand_pop_stage_world(g: &PopStageWorldGenerator, _seed: u32, _time: f32) -> SdfNode {
+    let mut children = Vec::new();
+    for i in 0..g.stage_count.max(1) {
+        let z = i as f32 * 2.2;
+        children.push(SdfNode::Primitive {
+            object: SdfObject {
+                primitive: SdfPrimitive::Cylinder {
+                    radius: g.spotlight_radius.max(0.2),
+                    half_height: 0.12,
+                },
+                modifiers: vec![SdfModifier::Translate {
+                    offset: Vec3::new(0.0, 0.0, z),
+                }],
+                material: SdfMaterial::default(),
+                bounds_radius: Some(2.0),
+            },
+        });
+    }
+    SdfNode::Group { children }
+}
+
+fn expand_reggae_island(g: &ReggaeIslandGenerator, seed: u32, time: f32) -> SdfNode {
+    let mut children = Vec::new();
+    for i in 0..g.island_count.max(1) {
+        let x = (i as f32 - g.island_count as f32 * 0.5) * 3.0;
+        let y = (time * 0.5 + i as f32 + seed as f32 * 0.002).sin() * g.wave_scale;
+        children.push(SdfNode::Primitive {
+            object: SdfObject {
+                primitive: SdfPrimitive::Sphere {
+                    radius: 1.0 + g.wave_scale * 0.4,
+                },
+                modifiers: vec![SdfModifier::Translate {
+                    offset: Vec3::new(x, y, 0.0),
+                }],
+                material: SdfMaterial::default(),
+                bounds_radius: Some(2.0),
+            },
+        });
+    }
+    SdfNode::Group { children }
 }
 
 #[cfg(test)]

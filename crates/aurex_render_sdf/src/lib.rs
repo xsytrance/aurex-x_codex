@@ -1,11 +1,16 @@
 pub mod cache;
+pub mod cone_march;
 pub mod diagnostics;
 pub mod domain;
+pub mod fractals;
 pub mod gpu;
+pub mod lod;
 pub mod noise;
+pub mod particles;
 pub mod post;
 pub mod stages;
 pub mod temporal;
+pub mod volumetric;
 
 use aurex_audio::{analysis::AudioFeatures, analyze_procedural_audio};
 use aurex_scene::{
@@ -24,18 +29,23 @@ use aurex_scene::{
 };
 use bytemuck::{Pod, Zeroable};
 use cache::{EffectGraphEvalCache, FieldSampleCache, PatternSampleCache};
+use cone_march::{ConeMarchConfig, cone_step, shadow_cone_factor};
 use diagnostics::{CacheStats, FrameDiagnostics};
 use domain::{
     Axis, fold_space, kaleidoscope_fold, mirror_fold, repeat_axis as domain_repeat_axis,
     repeat_grid as domain_repeat_grid, repeat_polar as domain_repeat_polar, repeat_sphere,
 };
+use fractals::kifs_fractal;
+use lod::{LodConfig, lod_activation_count, lod_iterations, reset_lod_counters};
 use noise::{NoiseVec3, fbm, value_noise};
+use particles::{ParticleConfig, particle_overlay};
 use post::{PostProcessConfig, process_pixel};
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 use temporal::{
     TemporalBuffer, TemporalConfig, TemporalEffect, apply_temporal_feedback, to_rgba8_pixels,
 };
+use volumetric::{VolumetricConfig, apply_volumetric};
 
 #[derive(Debug, Clone, Copy)]
 pub struct RenderTime {
@@ -92,6 +102,17 @@ pub struct RenderConfig {
     pub min_step_scale: f32,
     pub max_step_scale: f32,
     pub far_field_boost: f32,
+    pub cone_step_multiplier: f32,
+    pub cone_shadow_factor: f32,
+    pub surface_thickness_estimation: f32,
+    pub adaptive_step_scale: f32,
+    pub distance_bias: f32,
+    pub fractal_iteration_limit: u32,
+    pub fractal_lod_scale: f32,
+    pub detail_falloff: f32,
+    pub volumetric_density: f32,
+    pub scatter_strength: f32,
+    pub light_beam_strength: f32,
     pub quality: QualitySettings,
     pub output_diagnostics: bool,
     pub post: PostProcessConfig,
@@ -119,6 +140,17 @@ impl Default for RenderConfig {
             min_step_scale: 0.4,
             max_step_scale: 1.8,
             far_field_boost: 1.5,
+            cone_step_multiplier: 1.25,
+            cone_shadow_factor: 0.8,
+            surface_thickness_estimation: 0.02,
+            adaptive_step_scale: 1.0,
+            distance_bias: 1.0,
+            fractal_iteration_limit: 14,
+            fractal_lod_scale: 0.9,
+            detail_falloff: 0.7,
+            volumetric_density: 0.08,
+            scatter_strength: 0.45,
+            light_beam_strength: 0.5,
             quality: QualitySettings::default(),
             output_diagnostics: false,
             post: PostProcessConfig::default(),
@@ -148,14 +180,16 @@ pub enum RenderPipelineStage {
     Geometry,
     MaterialShading,
     PatternSampling,
+    Particles,
     PostProcessing,
     TemporalFeedback,
 }
 
-pub const RENDER_PIPELINE_STAGES: [RenderPipelineStage; 5] = [
+pub const RENDER_PIPELINE_STAGES: [RenderPipelineStage; 6] = [
     RenderPipelineStage::Geometry,
     RenderPipelineStage::MaterialShading,
     RenderPipelineStage::PatternSampling,
+    RenderPipelineStage::Particles,
     RenderPipelineStage::PostProcessing,
     RenderPipelineStage::TemporalFeedback,
 ];
@@ -210,12 +244,14 @@ pub fn render_sdf_scene_with_state_and_diagnostics(
 ) -> (RenderedFrame, FrameDiagnostics) {
     let frame_start = Instant::now();
     let mut diagnostics = FrameDiagnostics::default();
+    reset_lod_counters();
     diagnostics.stages.extend([
         "ScenePreprocess",
         "EffectGraphEvaluation",
         "GeometrySdf",
         "MaterialPattern",
         "LightingAtmosphere",
+        "Particles",
         "PostProcessing",
         "TemporalFeedback",
     ]);
@@ -236,19 +272,29 @@ pub fn render_sdf_scene_with_state_and_diagnostics(
     let mut field_cache = FieldSampleCache::default();
 
     let mut geometry_ns = 0_u128;
+    let mut cone_step_reduction_acc = 0.0_f64;
     let mut material_pattern_ns = 0_u128;
     let mut lighting_atmosphere_ns = 0_u128;
+    let mut particles_ns = 0_u128;
     let mut post_ns = 0_u128;
 
     for y in 0..config.height {
         for x in 0..config.width {
             let ray = generate_camera_ray(&animated_scene, x, y, config.width, config.height);
-            let (color, emission, march_steps, sample_position, sample_depth, stage_times) =
-                shade_ray(&animated_scene, ray.origin, ray.direction, config);
+            let (
+                color,
+                emission,
+                march_steps,
+                sample_position,
+                sample_depth,
+                step_reduction,
+                stage_times,
+            ) = shade_ray(&animated_scene, ray.origin, ray.direction, config);
 
             geometry_ns += stage_times.geometry_ns;
             material_pattern_ns += stage_times.material_pattern_ns;
             lighting_atmosphere_ns += stage_times.lighting_atmosphere_ns;
+            cone_step_reduction_acc += step_reduction as f64;
 
             let key = cache::SampleKey::from_world(
                 sample_position,
@@ -269,9 +315,25 @@ pub fn render_sdf_scene_with_state_and_diagnostics(
                 (x as f32 + 0.5) / config.width as f32,
                 (y as f32 + 0.5) / config.height as f32,
             );
+            let particles_start = Instant::now();
+            let audio = analyze_procedural_audio_opt(&animated_scene, config.time.seconds);
+            let particle = particle_overlay(
+                uv,
+                config.time.seconds,
+                animated_scene.sdf.seed,
+                audio.0,
+                audio.1,
+                audio.2,
+                ParticleConfig {
+                    density: (0.02 + audio.0 * 0.25).clamp(0.0, 1.0),
+                    intensity: 0.6,
+                },
+            );
+            particles_ns += particles_start.elapsed().as_nanos();
+
             let post_start = Instant::now();
             let post_color = process_pixel(
-                color,
+                (color + particle).clamp01(),
                 emission,
                 uv,
                 animated_scene.sdf.seed,
@@ -298,6 +360,7 @@ pub fn render_sdf_scene_with_state_and_diagnostics(
         "LightingAtmosphere",
         lighting_atmosphere_ns as f64 / 1_000_000.0,
     );
+    diagnostics.add_stage_duration("Particles", particles_ns as f64 / 1_000_000.0);
     diagnostics.add_stage_duration("PostProcessing", post_ns as f64 / 1_000_000.0);
 
     let temporal_start = Instant::now();
@@ -347,6 +410,12 @@ pub fn render_sdf_scene_with_state_and_diagnostics(
         * (config.height as u64);
     diagnostics.stats.temporal_history_depth = state.temporal_buffer.history.len() as u32;
 
+    diagnostics.stats.average_step_reduction = if diagnostics.stats.rays_traced > 0 {
+        cone_step_reduction_acc / diagnostics.stats.rays_traced as f64
+    } else {
+        0.0
+    };
+
     diagnostics.stats.cache = CacheStats {
         pattern_hits: pattern_cache.hits,
         pattern_misses: pattern_cache.misses,
@@ -357,6 +426,7 @@ pub fn render_sdf_scene_with_state_and_diagnostics(
 
     diagnostics.total_frame_time_ms = frame_start.elapsed().as_secs_f64() * 1000.0;
     diagnostics.stats.stage_time_ms_total = diagnostics.total_frame_time_ms;
+    diagnostics.stats.lod_activation_count = lod_activation_count();
     diagnostics.finalize_stage_percentages();
 
     (
@@ -571,6 +641,7 @@ struct Hit {
     distance_traveled: f32,
     distance_glow: f32,
     march_steps: u32,
+    step_reduction_estimate: f32,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -1008,6 +1079,7 @@ fn apply_harmonics_to_scene(scene: &mut Scene, features: AudioFeatures, t: f32) 
                     g.radius *= 1.0 + e * 0.16;
                     g.thickness *= 1.0 + e * 0.1;
                 }
+                _ => {}
             }
         }
 
@@ -1098,6 +1170,7 @@ fn apply_rhythm_space_to_scene(scene: &mut Scene, features: AudioFeatures, t: f3
                 SceneGenerator::HarmonicParticleField(g) => {
                     g.thickness *= 1.0 + beat_pulse * 0.1;
                 }
+                _ => {}
             }
         }
     }
@@ -1308,7 +1381,7 @@ fn shade_ray(
     origin: V3,
     direction: V3,
     config: RenderConfig,
-) -> (V3, f32, u32, V3, f32, RayStageDurations) {
+) -> (V3, f32, u32, V3, f32, f32, RayStageDurations) {
     let mut timings = RayStageDurations::default();
     let geometry_start = Instant::now();
     if let Some(hit) = march_scene(scene, origin, direction, config) {
@@ -1365,6 +1438,38 @@ fn shade_ray(
             color = apply_fog(scene, color, hit.position, hit.distance_traveled);
         }
 
+        let audio = analyze_procedural_audio_opt(scene, config.time.seconds);
+        color = apply_volumetric(
+            color,
+            hit.distance_traveled,
+            audio.2,
+            VolumetricConfig {
+                volumetric_density: scene
+                    .sdf
+                    .lighting
+                    .volumetric
+                    .beam_density
+                    .max(config.volumetric_density),
+                scatter_strength: scene
+                    .sdf
+                    .lighting
+                    .volumetric
+                    .beam_falloff
+                    .max(config.scatter_strength),
+                fog_color: [
+                    scene.sdf.lighting.fog_color.x,
+                    scene.sdf.lighting.fog_color.y,
+                    scene.sdf.lighting.fog_color.z,
+                ],
+                light_beam_strength: scene
+                    .sdf
+                    .lighting
+                    .volumetric
+                    .shaft_intensity
+                    .max(config.light_beam_strength),
+            },
+        );
+
         timings.lighting_atmosphere_ns += light_start.elapsed().as_nanos();
 
         let emission_out = (m.emission + hit.distance_glow).max(0.0);
@@ -1374,6 +1479,7 @@ fn shade_ray(
             hit.march_steps,
             hit.position,
             hit.distance_traveled,
+            hit.step_reduction_estimate,
             timings,
         );
     }
@@ -1394,6 +1500,7 @@ fn shade_ray(
         0,
         miss_position,
         config.max_distance,
+        0.0,
         timings,
     )
 }
@@ -1414,7 +1521,7 @@ fn ambient_occlusion(scene: &Scene, position: V3, normal: V3, config: RenderConf
     for i in 1..=samples {
         let expected = i as f32 * 0.08;
         let p = position + normal * expected;
-        let d = scene_distance(scene, p, config.time.seconds).distance;
+        let d = scene_distance(scene, p, config.time.seconds, config).distance;
         occ += (expected - d).max(0.0) / expected;
     }
     (1.0 - (occ / samples as f32) * config.ao_strength).clamp(0.0, 1.0)
@@ -1482,15 +1589,21 @@ fn march_scene(scene: &Scene, origin: V3, direction: V3, config: RenderConfig) -
     let mut t = 0.0;
     let mut glow = 0.0;
     let mut march_steps = 0;
+    let mut reduction_acc = 0.0_f32;
     for _ in 0..config.max_steps {
         march_steps += 1;
         let p = origin + direction * t;
-        let eval = scene_distance(scene, p, config.time.seconds);
+        let eval = scene_distance(scene, p, config.time.seconds, config);
         let attenuation = (-t * 0.08).exp();
         glow += eval.material.emissive_strength.max(0.0) * attenuation * 0.01;
         if eval.distance < config.surface_epsilon {
-            let normal =
-                estimate_normal(scene, p, config.surface_epsilon * 2.0, config.time.seconds);
+            let normal = estimate_normal(
+                scene,
+                p,
+                config.surface_epsilon * 2.0,
+                config.time.seconds,
+                config,
+            );
             return Some(Hit {
                 position: p,
                 normal,
@@ -1498,6 +1611,11 @@ fn march_scene(scene: &Scene, origin: V3, direction: V3, config: RenderConfig) -
                 distance_traveled: t,
                 distance_glow: glow,
                 march_steps,
+                step_reduction_estimate: if march_steps > 0 {
+                    reduction_acc / march_steps as f32
+                } else {
+                    0.0
+                },
             });
         }
 
@@ -1514,7 +1632,17 @@ fn march_scene(scene: &Scene, origin: V3, direction: V3, config: RenderConfig) -
         };
         let adaptive_step = (base_step * far_factor * config.quality.raymarch_quality.max(0.25))
             .max(config.surface_epsilon * 0.25);
-        t += adaptive_step;
+        let cone_cfg = ConeMarchConfig {
+            cone_step_multiplier: config.cone_step_multiplier,
+            cone_shadow_factor: config.cone_shadow_factor,
+            surface_thickness_estimation: config.surface_thickness_estimation,
+            adaptive_step_scale: config.adaptive_step_scale,
+        };
+        let stepped = cone_step(eval.distance, t, cone_cfg).max(adaptive_step);
+        reduction_acc += ((stepped - adaptive_step) / adaptive_step.max(1e-4))
+            .abs()
+            .clamp(0.0, 1.0);
+        t += stepped;
         if t > config.max_distance {
             return None;
         }
@@ -1528,12 +1656,20 @@ fn soft_shadow(scene: &Scene, origin: V3, direction: V3, config: RenderConfig) -
     let mut shadow: f32 = 1.0;
     for _ in 0..config.shadow_steps {
         let p = origin + direction * t;
-        let eval = scene_distance(scene, p, config.time.seconds);
+        let eval = scene_distance(scene, p, config.time.seconds, config);
         if eval.distance < config.surface_epsilon {
             return 0.0;
         }
-        shadow = shadow.min(config.shadow_softness * eval.distance / t.max(0.001));
-        t += eval.distance.max(0.01);
+        let cone_cfg = ConeMarchConfig {
+            cone_step_multiplier: config.cone_step_multiplier,
+            cone_shadow_factor: config.cone_shadow_factor,
+            surface_thickness_estimation: config.surface_thickness_estimation,
+            adaptive_step_scale: config.adaptive_step_scale,
+        };
+        shadow = shadow.min(
+            config.shadow_softness * shadow_cone_factor(eval.distance, cone_cfg) / t.max(0.001),
+        );
+        t += cone_step(eval.distance, t, cone_cfg).max(0.01);
         if t > config.max_distance {
             break;
         }
@@ -1541,33 +1677,33 @@ fn soft_shadow(scene: &Scene, origin: V3, direction: V3, config: RenderConfig) -
     shadow.clamp(0.0, 1.0)
 }
 
-fn estimate_normal(scene: &Scene, p: V3, eps: f32, time: f32) -> V3 {
+fn estimate_normal(scene: &Scene, p: V3, eps: f32, time: f32, config: RenderConfig) -> V3 {
     let ex = V3::new(eps, 0.0, 0.0);
     let ey = V3::new(0.0, eps, 0.0);
     let ez = V3::new(0.0, 0.0, eps);
 
-    let dx =
-        scene_distance(scene, p + ex, time).distance - scene_distance(scene, p - ex, time).distance;
-    let dy =
-        scene_distance(scene, p + ey, time).distance - scene_distance(scene, p - ey, time).distance;
-    let dz =
-        scene_distance(scene, p + ez, time).distance - scene_distance(scene, p - ez, time).distance;
+    let dx = scene_distance(scene, p + ex, time, config).distance
+        - scene_distance(scene, p - ex, time, config).distance;
+    let dy = scene_distance(scene, p + ey, time, config).distance
+        - scene_distance(scene, p - ey, time, config).distance;
+    let dz = scene_distance(scene, p + ez, time, config).distance
+        - scene_distance(scene, p - ez, time, config).distance;
 
     V3::new(dx, dy, dz).normalized()
 }
 
-fn scene_distance(scene: &Scene, point: V3, time: f32) -> NodeEval {
+fn scene_distance(scene: &Scene, point: V3, time: f32, config: RenderConfig) -> NodeEval {
     let field = sample_scene_fields(scene, point, time);
     let warped = point + V3::new(field.vector.x, field.vector.y, field.vector.z) * 0.08;
     if !matches!(scene.sdf.root, SdfNode::Empty) {
-        evaluate_node(&scene.sdf.root, warped, scene.sdf.seed, time, None)
+        evaluate_node(&scene.sdf.root, warped, scene.sdf.seed, time, None, config)
     } else {
         let mut best = NodeEval {
             distance: f32::INFINITY,
             material: SdfMaterial::default(),
         };
         for object in &scene.sdf.objects {
-            let eval = evaluate_object(object, warped, scene.sdf.seed, time);
+            let eval = evaluate_object(object, warped, scene.sdf.seed, time, config);
             if eval.distance < best.distance {
                 best = eval;
             }
@@ -1582,20 +1718,22 @@ fn evaluate_node(
     scene_seed: u32,
     time: f32,
     hint: Option<f32>,
+    config: RenderConfig,
 ) -> NodeEval {
     match node {
         SdfNode::Empty => NodeEval {
             distance: f32::INFINITY,
             material: SdfMaterial::default(),
         },
-        SdfNode::Primitive { object } => evaluate_object(object, point, scene_seed, time),
+        SdfNode::Primitive { object } => evaluate_object(object, point, scene_seed, time, config),
         SdfNode::Group { children } | SdfNode::Union { children } => {
             let mut best = NodeEval {
                 distance: f32::INFINITY,
                 material: SdfMaterial::default(),
             };
             for child in children {
-                let child_eval = evaluate_node(child, point, scene_seed, time, Some(best.distance));
+                let child_eval =
+                    evaluate_node(child, point, scene_seed, time, Some(best.distance), config);
                 if child_eval.distance < best.distance {
                     best = child_eval;
                     if let Some(h) = hint
@@ -1613,7 +1751,7 @@ fn evaluate_node(
                 material: SdfMaterial::default(),
             };
             for child in children {
-                let next = evaluate_node(child, point, scene_seed, time, hint);
+                let next = evaluate_node(child, point, scene_seed, time, hint, config);
                 if !acc.distance.is_finite() {
                     acc = next;
                 } else {
@@ -1635,13 +1773,13 @@ fn evaluate_node(
             acc
         }
         SdfNode::Subtract { base, subtract } => {
-            let mut base_eval = evaluate_node(base, point, scene_seed, time, hint);
+            let mut base_eval = evaluate_node(base, point, scene_seed, time, hint, config);
             if subtract.is_empty() {
                 return base_eval;
             }
             let mut d_sub = f32::INFINITY;
             for n in subtract {
-                let e = evaluate_node(n, point, scene_seed, time, Some(d_sub));
+                let e = evaluate_node(n, point, scene_seed, time, Some(d_sub), config);
                 d_sub = d_sub.min(e.distance);
             }
             base_eval.distance = smooth_max(base_eval.distance, -d_sub, 0.0);
@@ -1654,9 +1792,9 @@ fn evaluate_node(
                     material: SdfMaterial::default(),
                 };
             }
-            let mut acc = evaluate_node(&children[0], point, scene_seed, time, hint);
+            let mut acc = evaluate_node(&children[0], point, scene_seed, time, hint, config);
             for child in &children[1..] {
-                let e = evaluate_node(child, point, scene_seed, time, hint);
+                let e = evaluate_node(child, point, scene_seed, time, hint, config);
                 if e.distance > acc.distance {
                     acc.material = e.material.clone();
                 }
@@ -1679,7 +1817,7 @@ fn evaluate_node(
             };
             for (i, child) in children.iter().enumerate() {
                 let w = weights.get(i).copied().unwrap_or(1.0).max(0.0001);
-                let e = evaluate_node(child, point, scene_seed, time, hint);
+                let e = evaluate_node(child, point, scene_seed, time, hint, config);
                 dist += e.distance * w;
                 sum_w += w;
                 if e.distance < nearest.distance {
@@ -1716,6 +1854,7 @@ fn evaluate_node(
                 scene_seed,
                 time,
                 hint.map(|h| h / scale.max(1e-6)),
+                config,
             );
             eval.distance *= scale;
             eval
@@ -1723,7 +1862,13 @@ fn evaluate_node(
     }
 }
 
-fn evaluate_object(object: &SdfObject, point: V3, scene_seed: u32, time: f32) -> NodeEval {
+fn evaluate_object(
+    object: &SdfObject,
+    point: V3,
+    scene_seed: u32,
+    time: f32,
+    config: RenderConfig,
+) -> NodeEval {
     let mut p = point;
     let mut distance_scale = 1.0;
     for modifier in &object.modifiers {
@@ -1738,7 +1883,7 @@ fn evaluate_object(object: &SdfObject, point: V3, scene_seed: u32, time: f32) ->
             };
         }
     }
-    let distance = eval_primitive(&object.primitive, p, scene_seed, time) * distance_scale;
+    let distance = eval_primitive(&object.primitive, p, scene_seed, time, config) * distance_scale;
     NodeEval {
         distance,
         material: object.material.clone(),
@@ -1841,7 +1986,13 @@ fn apply_modifier(
     }
 }
 
-fn eval_primitive(primitive: &SdfPrimitive, p: V3, scene_seed: u32, time: f32) -> f32 {
+fn eval_primitive(
+    primitive: &SdfPrimitive,
+    p: V3,
+    scene_seed: u32,
+    time: f32,
+    config: RenderConfig,
+) -> f32 {
     match primitive {
         SdfPrimitive::Sphere { radius } => p.length() - *radius,
         SdfPrimitive::Box { size } => {
@@ -1879,7 +2030,7 @@ fn eval_primitive(primitive: &SdfPrimitive, p: V3, scene_seed: u32, time: f32) -
             power,
             iterations,
             bailout,
-        } => sdf_mandelbulb(p, *power, *iterations, *bailout),
+        } => sdf_mandelbulb(p, *power, *iterations, *bailout, config),
         SdfPrimitive::NoiseField {
             radius,
             amplitude,
@@ -1902,11 +2053,21 @@ fn eval_primitive(primitive: &SdfPrimitive, p: V3, scene_seed: u32, time: f32) -
     }
 }
 
-fn sdf_mandelbulb(p: V3, power: f32, iterations: u32, bailout: f32) -> f32 {
+fn sdf_mandelbulb(p: V3, power: f32, iterations: u32, bailout: f32, config: RenderConfig) -> f32 {
     let mut z = p;
     let mut dr = 1.0;
     let mut r = 0.0;
-    for _ in 0..iterations {
+    let lod_iters = lod_iterations(
+        iterations,
+        p.length(),
+        LodConfig {
+            distance_bias: config.distance_bias,
+            fractal_iteration_limit: config.fractal_iteration_limit,
+            fractal_lod_scale: config.fractal_lod_scale,
+            detail_falloff: config.detail_falloff,
+        },
+    );
+    for _ in 0..lod_iters {
         r = z.length();
         if r > bailout {
             break;
@@ -1924,7 +2085,9 @@ fn sdf_mandelbulb(p: V3, power: f32, iterations: u32, bailout: f32) -> f32 {
         ) * zr
             + p;
     }
-    0.5 * r.max(1e-6).ln() * r / dr.max(1e-6)
+    let base = 0.5 * r.max(1e-6).ln() * r / dr.max(1e-6);
+    let kifs = kifs_fractal(p, lod_iters.min(6), 1.2, bailout.max(2.0));
+    base * 0.8 + kifs * 0.2
 }
 
 fn smooth_min(a: f32, b: f32, k: f32) -> f32 {
@@ -1965,6 +2128,18 @@ fn generate_camera_ray(scene: &Scene, x: u32, y: u32, width: u32, height: u32) -
 fn rotate_axis_angle(p: V3, axis: V3, angle: f32) -> V3 {
     let (s, c) = angle.sin_cos();
     p * c + axis.cross(p) * s + axis * axis.dot(p) * (1.0 - c)
+}
+
+fn analyze_procedural_audio_opt(scene: &Scene, time_seconds: f32) -> (f32, f32, f32) {
+    if let Some(cfg) = &scene.sdf.audio {
+        let af = analyze_procedural_audio(cfg, time_seconds);
+        let harmonic =
+            (af.harmonic_ratios[0] + af.harmonic_ratios[1] + af.harmonic_ratios[2]) / 3.0;
+        let energy = (af.bass_energy + af.mid_energy + af.high_energy) / 3.0;
+        (energy, af.beat_phase, harmonic)
+    } else {
+        (0.0, 0.0, 0.0)
+    }
 }
 
 fn from_vec3(v: Vec3) -> V3 {

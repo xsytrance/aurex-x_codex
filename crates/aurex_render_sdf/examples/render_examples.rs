@@ -53,6 +53,11 @@ fn main() {
         "examples/rhythm_echo_city.json",
         "examples/synesthesia_tunnel.json",
         "examples/prime_pulse_temporal_wave.json",
+        "examples/infinite_circuit_megacity.json",
+        "examples/jazz_improv_world.json",
+        "examples/rock_amp_mountains.json",
+        "examples/reggae_solar_islands.json",
+        "examples/pop_stage_city.json",
         "examples/circuit_megacity_stress.json",
         "examples/pattern_storm_stress.json",
         "examples/prime_pulse_performance_test.json",
@@ -92,7 +97,7 @@ fn main() {
             .unwrap_or(0.0);
         if cfg.output_diagnostics {
             println!(
-                "rendered {} -> {} (avg bloom {:.3}) steps:{} rays:{} cache[p:{}/{} f:{}/{} eg:{}] temporal[size:{} depth:{}] total_ms:{:.3}",
+                "rendered {} -> {} (avg bloom {:.3}) steps:{} rays:{} cache[p:{}/{} f:{}/{} eg:{}] temporal[size:{} depth:{}] lod:{} step_reduction:{:.3} total_ms:{:.3}",
                 scene_path,
                 output_name,
                 bloom_avg,
@@ -105,6 +110,8 @@ fn main() {
                 diag.stats.cache.effect_graph_evals,
                 diag.stats.temporal_buffer_size,
                 diag.stats.temporal_history_depth,
+                diag.stats.lod_activation_count,
+                diag.stats.average_step_reduction,
                 diag.total_frame_time_ms
             );
             println!(

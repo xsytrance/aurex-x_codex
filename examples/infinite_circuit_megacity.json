@@ -1,0 +1,9 @@
+{
+  "sdf": {
+    "seed": 9001,
+    "camera": {"position": {"x": 0.0, "y": 4.0, "z": -10.0}, "target": {"x": 0.0, "y": 1.0, "z": 0.0}, "fov_degrees": 62.0, "aspect_ratio": 1.7777778},
+    "lighting": {"ambient_light": 0.15, "key_lights": [{"direction": {"x": -0.3, "y": -1.0, "z": -0.2}, "intensity": 1.0, "color": {"x": 0.5, "y": 0.8, "z": 1.0}}], "fog_color": {"x": 0.03, "y": 0.06, "z": 0.12}, "fog_density": 0.06, "fog_height_falloff": 0.08},
+    "generator": {"ElectronicCity": {"block_count": 48, "tower_height": 2.8}},
+    "root": {"Empty": null}
+  }
+}

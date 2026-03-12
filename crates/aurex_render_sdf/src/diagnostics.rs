@@ -16,6 +16,8 @@ pub struct RenderStats {
     pub stage_time_ms_total: f64,
     pub temporal_buffer_size: u64,
     pub temporal_history_depth: u32,
+    pub average_step_reduction: f64,
+    pub lod_activation_count: u64,
     pub cache: CacheStats,
 }
 
