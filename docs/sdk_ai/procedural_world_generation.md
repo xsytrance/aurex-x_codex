@@ -17,7 +17,22 @@ Use the new generator families and rendering systems to create rich deterministi
 - Fractal recursion (KIFS-style complexity)
 
 ## Authoring approach
-1. Choose a prime generator.
-2. Add domain repetition/folding for macro scale.
-3. Layer temporal feedback for motion memory.
-4. Tune diagnostics-guided performance (LOD + step reduction).
+1. Prefer `generator_stack` for hybrid worlds.
+2. Start with `BaseGenerator`, then add `StructureLayer` and `DetailLayer`.
+3. Add `ParticleLayer` for animated accents.
+4. Add `RhythmModulationLayer` when music-reactive geometry is desired.
+5. Add domain repetition/folding for macro scale.
+6. Layer temporal feedback for motion memory.
+7. Tune diagnostics-guided performance (LOD + step reduction).
+
+## Generator stack schema
+`"generator_stack": { "layers": [ ... ] }`
+
+Layer variants:
+- `BaseGenerator`
+- `StructureLayer`
+- `DetailLayer`
+- `ParticleLayer`
+- `RhythmModulationLayer`
+
+Each layer wraps an existing `SceneGenerator`, so older generator definitions remain compatible.

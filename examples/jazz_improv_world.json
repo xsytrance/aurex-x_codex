@@ -1,9 +1,95 @@
 {
   "sdf": {
     "seed": 9002,
-    "camera": {"position": {"x": 0.0, "y": 1.2, "z": -8.0}, "target": {"x": 0.0, "y": 0.0, "z": 0.0}, "fov_degrees": 60.0, "aspect_ratio": 1.7777778},
-    "lighting": {"ambient_light": 0.12, "key_lights": [{"direction": {"x": -0.2, "y": -1.0, "z": -0.4}, "intensity": 1.2, "color": {"x": 1.0, "y": 0.9, "z": 0.7}}], "fog_color": {"x": 0.07, "y": 0.05, "z": 0.09}, "fog_density": 0.05, "fog_height_falloff": 0.11},
-    "generator": {"JazzImprovisation": {"ribbon_count": 32, "swing": 0.8}},
-    "root": {"Empty": null}
+    "camera": {
+      "position": {
+        "x": 0.0,
+        "y": 1.2,
+        "z": -8.0
+      },
+      "target": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      "fov_degrees": 60.0,
+      "aspect_ratio": 1.7777778
+    },
+    "lighting": {
+      "ambient_light": 0.12,
+      "key_lights": [
+        {
+          "direction": {
+            "x": -0.2,
+            "y": -1.0,
+            "z": -0.4
+          },
+          "intensity": 1.2,
+          "color": {
+            "x": 1.0,
+            "y": 0.9,
+            "z": 0.7
+          }
+        }
+      ],
+      "fog_color": {
+        "x": 0.07,
+        "y": 0.05,
+        "z": 0.09
+      },
+      "fog_density": 0.05,
+      "fog_height_falloff": 0.11
+    },
+    "generator": {
+      "JazzImprovisation": {
+        "ribbon_count": 32,
+        "swing": 0.8
+      }
+    },
+    "root": {
+      "Empty": null
+    },
+    "generator_stack": {
+      "layers": [
+        {
+          "BaseGenerator": {
+            "generator": {
+              "JazzImprovisation": {
+                "ribbon_count": 32,
+                "swing": 0.8
+              }
+            }
+          }
+        },
+        {
+          "DetailLayer": {
+            "generator": {
+              "FractalTemple": {
+                "grid_size": 5,
+                "pillar_height": 1.0,
+                "pillar_spacing": 2.1,
+                "fractal_scale": 0.8
+              }
+            },
+            "strength": 0.55
+          }
+        },
+        {
+          "RhythmModulationLayer": {
+            "generator": {
+              "HarmonicParticleField": {
+                "particle_count": 72,
+                "radius": 3.5,
+                "thickness": 0.2,
+                "mode": "MelodySpirals"
+              }
+            },
+            "beat_influence": 0.7,
+            "bass_influence": 0.5,
+            "harmonic_influence": 1.3
+          }
+        }
+      ]
+    }
   }
 }

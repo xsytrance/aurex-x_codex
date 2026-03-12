@@ -1,9 +1,95 @@
 {
   "sdf": {
     "seed": 9001,
-    "camera": {"position": {"x": 0.0, "y": 4.0, "z": -10.0}, "target": {"x": 0.0, "y": 1.0, "z": 0.0}, "fov_degrees": 62.0, "aspect_ratio": 1.7777778},
-    "lighting": {"ambient_light": 0.15, "key_lights": [{"direction": {"x": -0.3, "y": -1.0, "z": -0.2}, "intensity": 1.0, "color": {"x": 0.5, "y": 0.8, "z": 1.0}}], "fog_color": {"x": 0.03, "y": 0.06, "z": 0.12}, "fog_density": 0.06, "fog_height_falloff": 0.08},
-    "generator": {"ElectronicCity": {"block_count": 48, "tower_height": 2.8}},
-    "root": {"Empty": null}
+    "camera": {
+      "position": {
+        "x": 0.0,
+        "y": 4.0,
+        "z": -10.0
+      },
+      "target": {
+        "x": 0.0,
+        "y": 1.0,
+        "z": 0.0
+      },
+      "fov_degrees": 62.0,
+      "aspect_ratio": 1.7777778
+    },
+    "lighting": {
+      "ambient_light": 0.15,
+      "key_lights": [
+        {
+          "direction": {
+            "x": -0.3,
+            "y": -1.0,
+            "z": -0.2
+          },
+          "intensity": 1.0,
+          "color": {
+            "x": 0.5,
+            "y": 0.8,
+            "z": 1.0
+          }
+        }
+      ],
+      "fog_color": {
+        "x": 0.03,
+        "y": 0.06,
+        "z": 0.12
+      },
+      "fog_density": 0.06,
+      "fog_height_falloff": 0.08
+    },
+    "generator": {
+      "ElectronicCity": {
+        "block_count": 48,
+        "tower_height": 2.8
+      }
+    },
+    "root": {
+      "Empty": null
+    },
+    "generator_stack": {
+      "layers": [
+        {
+          "BaseGenerator": {
+            "generator": {
+              "ElectronicCity": {
+                "block_count": 48,
+                "tower_height": 2.8
+              }
+            }
+          }
+        },
+        {
+          "StructureLayer": {
+            "generator": {
+              "CircuitBoard": {
+                "grid_resolution": 24,
+                "component_density": 0.45,
+                "trace_width": 0.05,
+                "height_variation": 0.8
+              }
+            },
+            "strength": 0.85
+          }
+        },
+        {
+          "RhythmModulationLayer": {
+            "generator": {
+              "ParticleGalaxy": {
+                "particle_count": 96,
+                "radius": 6.5,
+                "noise_spread": 0.35,
+                "rotation_speed": 0.9
+              }
+            },
+            "beat_influence": 1.0,
+            "bass_influence": 1.2,
+            "harmonic_influence": 0.7
+          }
+        }
+      ]
+    }
   }
 }

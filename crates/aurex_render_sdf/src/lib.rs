@@ -896,7 +896,15 @@ fn scene_at_time(
             ));
     }
 
-    if let Some(generator) = &animated.sdf.generator {
+    if let Some(stack) = &animated.sdf.generator_stack {
+        animated.sdf.root = generators::expand_generator_stack(
+            stack,
+            animated.sdf.seed,
+            rhythm_t,
+            &animated.sdf.fields,
+            animated.sdf.runtime_modulation.unwrap_or_default(),
+        );
+    } else if let Some(generator) = &animated.sdf.generator {
         animated.sdf.root = generators::expand_generator(
             generator,
             animated.sdf.seed,
@@ -2334,6 +2342,7 @@ mod tests {
                 },
                 timeline: None,
                 generator: None,
+                generator_stack: None,
                 fields: vec![aurex_scene::fields::SceneField::Pulse(
                     aurex_scene::fields::PulseField {
                         origin: Vec3::new(0.0, 0.0, 0.0),
@@ -2354,6 +2363,7 @@ mod tests {
                 automation_tracks: vec![],
                 demo_sequence: None,
                 temporal_effects: vec![],
+                runtime_modulation: None,
             },
         }
     }

@@ -86,6 +86,17 @@ impl PulseRunner {
             seq.update(delta_seconds);
             self.rhythm_field = Some(seq.rhythm_field);
             self.runtime_context.rhythm_field = self.rhythm_field;
+            self.scene.sdf.runtime_modulation =
+                Some(aurex_scene::generators::RuntimeModulationContext {
+                    rhythm_field: self.rhythm_field.map(|rf| {
+                        aurex_scene::generators::RhythmFieldContext {
+                            beat_phase: rf.beat_phase,
+                            beat_strength: rf.beat_strength,
+                            bass_energy: rf.bass_energy,
+                            harmonic_energy: rf.harmonic_energy,
+                        }
+                    }),
+                });
             self.diagnostics.rhythm_field = self.rhythm_field;
             self.diagnostics.rhythm_summary = self.rhythm_field.map(|rf| RhythmSummary {
                 beat_phase: rf.beat_phase,

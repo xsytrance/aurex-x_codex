@@ -189,6 +189,7 @@ mod tests {
                 root: crate::SdfNode::Empty,
                 timeline: None,
                 generator: None,
+                generator_stack: None,
                 fields: vec![],
                 patterns: vec![],
                 harmonics: None,
@@ -198,6 +199,7 @@ mod tests {
                 automation_tracks: vec![],
                 demo_sequence: None,
                 temporal_effects: vec![],
+                runtime_modulation: None,
             },
         };
         let a = default_recommendation(&scene, &scene, 0.5);

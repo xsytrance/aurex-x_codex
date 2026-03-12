@@ -61,6 +61,8 @@ pub struct SdfScene {
     #[serde(default)]
     pub generator: Option<generators::SceneGenerator>,
     #[serde(default)]
+    pub generator_stack: Option<generators::GeneratorStack>,
+    #[serde(default)]
     pub fields: Vec<fields::SceneField>,
     #[serde(default)]
     pub patterns: Vec<patterns::PatternNetwork>,
@@ -78,6 +80,8 @@ pub struct SdfScene {
     pub demo_sequence: Option<demo::Demo>,
     #[serde(default)]
     pub temporal_effects: Vec<TemporalEffect>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_modulation: Option<generators::RuntimeModulationContext>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
