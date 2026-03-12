@@ -40,3 +40,6 @@ Strategies:
 - keep numeric values explicit
 - keep node IDs stable across morph targets
 - use fixed durations and seed inputs
+
+## Performance authoring
+- `docs/sdk_ai/performance_and_quality_authoring.md`

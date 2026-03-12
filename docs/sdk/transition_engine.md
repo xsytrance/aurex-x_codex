@@ -48,3 +48,8 @@ Renderer transition path:
 3. compute transition progress/context
 4. blend via `TransitionEngine`
 5. evaluate effect graph/automation/post
+
+## Performance-related docs
+- `docs/sdk/performance_architecture.md`
+- `docs/sdk/renderer_stages.md`
+- `docs/sdk/gpu_readiness.md`

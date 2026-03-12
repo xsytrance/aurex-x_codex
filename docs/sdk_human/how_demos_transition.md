@@ -15,3 +15,7 @@ Set a transition to `auto` to let director rules pick style/duration/intensity f
 
 ## Authoring tip
 Use explicit `spec` for iconic moments, `auto` for connective tissue between blocks.
+
+## Performance context
+- `docs/sdk_human/how_aurex_stays_fast.md`
+- `docs/sdk_human/why_quality_levels_exist.md`

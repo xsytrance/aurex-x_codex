@@ -130,6 +130,29 @@ impl From<TransitionStyle> for TransitionType {
     }
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct DirectorRecommendationCache {
+    entries: std::collections::BTreeMap<(u32, u32, i32), TransitionRecommendation>,
+}
+
+impl DirectorRecommendationCache {
+    pub fn get_or_compute<F: FnOnce() -> TransitionRecommendation>(
+        &mut self,
+        source_seed: u32,
+        target_seed: u32,
+        audio_intensity: f32,
+        compute: F,
+    ) -> TransitionRecommendation {
+        let key = (source_seed, target_seed, (audio_intensity * 1000.0) as i32);
+        if let Some(v) = self.entries.get(&key).cloned() {
+            v
+        } else {
+            let v = compute();
+            self.entries.insert(key, v.clone());
+            v
+        }
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;

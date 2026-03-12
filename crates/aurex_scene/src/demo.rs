@@ -3,7 +3,10 @@ use serde::{Deserialize, Serialize};
 use crate::{
     Scene,
     automation::AutomationBinding,
-    director_rules::{DirectorRuleSet, TransitionRecommendation, default_recommendation},
+    director_rules::{
+        DirectorRecommendationCache, DirectorRuleSet, TransitionRecommendation,
+        default_recommendation,
+    },
     effect_graph::{GraphMorph, GraphMorphSpec, GraphMorphState, GraphMorphStrategy},
     transition::{
         TransitionContext, TransitionEngine, TransitionSpec, TransitionState, TransitionStyle,
@@ -168,12 +171,16 @@ impl Demo {
                     .and_then(|b| crate::load_scene_from_json_path(&b.scene_reference).ok())
                     .unwrap_or_else(|| fallback.clone());
 
+                let mut rec_cache = DirectorRecommendationCache::default();
                 let recommendation = if tx.auto {
-                    rule_set.recommend(
-                        &source,
-                        &target,
+                    let audio_intensity =
                         (ctx.low_freq_energy + ctx.mid_freq_energy + ctx.high_freq_energy)
-                            .clamp(0.0, 1.0),
+                            .clamp(0.0, 1.0);
+                    rec_cache.get_or_compute(
+                        source.sdf.seed,
+                        target.sdf.seed,
+                        audio_intensity,
+                        || rule_set.recommend(&source, &target, audio_intensity),
                     )
                 } else {
                     default_recommendation(&source, &target, 0.3)
