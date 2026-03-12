@@ -201,13 +201,283 @@ pub struct RealRendererBootstrapStatus {
     pub detail: String,
 }
 
+pub fn launch_real_graphics(config: RenderBootstrapConfig) -> Result<(), String> {
+    #[cfg(feature = "real_graphics")]
+    {
+        return real_graphics::run(config);
+    }
+
+    #[cfg(not(feature = "real_graphics"))]
+    {
+        let _ = config;
+        Err("real_graphics feature is disabled".to_string())
+    }
+}
+
+#[cfg(feature = "real_graphics")]
+mod real_graphics {
+    use super::{
+        RealRendererBootstrapResult, RealRendererBootstrapStatus, RenderBackendMode,
+        RenderBootstrapConfig,
+    };
+    use pollster::block_on;
+    use std::sync::Arc;
+    use wgpu::{
+        Color, CommandEncoderDescriptor, DeviceDescriptor, Features, Instance, Limits, LoadOp,
+        Operations, PowerPreference, PresentMode, Queue, RenderPassColorAttachment,
+        RenderPassDescriptor, RequestAdapterOptions, Surface, SurfaceConfiguration, SurfaceError,
+        TextureUsages, TextureViewDescriptor,
+    };
+    use winit::{
+        dpi::LogicalSize,
+        event::Event,
+        event::WindowEvent,
+        event_loop::{ControlFlow, EventLoop},
+        window::WindowBuilder,
+    };
+
+    pub(super) fn bootstrap_status() -> RealRendererBootstrapStatus {
+        let event_loop = match EventLoop::new() {
+            Ok(event_loop) => event_loop,
+            Err(err) => {
+                return RealRendererBootstrapStatus {
+                    result: RealRendererBootstrapResult::AdapterUnavailable,
+                    detail: format!("failed to create event loop: {err}"),
+                };
+            }
+        };
+
+        let window = match WindowBuilder::new()
+            .with_title("Aurex-X bootstrap probe")
+            .build(&event_loop)
+        {
+            Ok(window) => Arc::new(window),
+            Err(err) => {
+                return RealRendererBootstrapStatus {
+                    result: RealRendererBootstrapResult::AdapterUnavailable,
+                    detail: format!("failed to create window: {err}"),
+                };
+            }
+        };
+
+        let instance = Instance::default();
+        let surface = match instance.create_surface(window.clone()) {
+            Ok(surface) => surface,
+            Err(err) => {
+                return RealRendererBootstrapStatus {
+                    result: RealRendererBootstrapResult::AdapterUnavailable,
+                    detail: format!("failed to create surface: {err}"),
+                };
+            }
+        };
+
+        let adapter = match block_on(instance.request_adapter(&RequestAdapterOptions {
+            power_preference: PowerPreference::HighPerformance,
+            force_fallback_adapter: false,
+            compatible_surface: Some(&surface),
+        })) {
+            Some(adapter) => adapter,
+            None => {
+                return RealRendererBootstrapStatus {
+                    result: RealRendererBootstrapResult::AdapterUnavailable,
+                    detail: "real_graphics feature enabled; no compatible adapter found"
+                        .to_string(),
+                };
+            }
+        };
+
+        let device_result = block_on(adapter.request_device(
+            &DeviceDescriptor {
+                label: Some("aurex-bootstrap-device"),
+                required_features: Features::empty(),
+                required_limits: Limits::default(),
+            },
+            None,
+        ));
+
+        match device_result {
+            Ok(_) => RealRendererBootstrapStatus {
+                result: RealRendererBootstrapResult::Ready,
+                detail: "real_graphics feature enabled; bootstrap probe completed".to_string(),
+            },
+            Err(err) => RealRendererBootstrapStatus {
+                result: RealRendererBootstrapResult::DeviceRequestFailed,
+                detail: format!("device request failed: {err}"),
+            },
+        }
+    }
+
+    pub(super) fn run(config: RenderBootstrapConfig) -> Result<(), String> {
+        if !matches!(config.backend_mode, RenderBackendMode::WgpuPlanned) {
+            return Err("real_graphics launch requires RenderBackendMode::WgpuPlanned".to_string());
+        }
+
+        let event_loop =
+            EventLoop::new().map_err(|err| format!("event loop creation failed: {err}"))?;
+        let window = WindowBuilder::new()
+            .with_title(config.app_name)
+            .with_inner_size(LogicalSize::new(
+                config.viewport_width as f64,
+                config.viewport_height as f64,
+            ))
+            .build(&event_loop)
+            .map(Arc::new)
+            .map_err(|err| format!("window creation failed: {err}"))?;
+
+        let instance = Instance::default();
+        let surface = instance
+            .create_surface(window.clone())
+            .map_err(|err| format!("surface creation failed: {err}"))?;
+
+        let adapter = block_on(instance.request_adapter(&RequestAdapterOptions {
+            power_preference: PowerPreference::HighPerformance,
+            force_fallback_adapter: false,
+            compatible_surface: Some(&surface),
+        }))
+        .ok_or_else(|| "no compatible GPU adapter found".to_string())?;
+
+        let (device, queue) = block_on(adapter.request_device(
+            &DeviceDescriptor {
+                label: Some("aurex-device"),
+                required_features: Features::empty(),
+                required_limits: Limits::default(),
+            },
+            None,
+        ))
+        .map_err(|err| format!("request_device failed: {err}"))?;
+
+        let mut surface_config = configure_surface(
+            &surface,
+            &adapter,
+            &window,
+            config.viewport_width,
+            config.viewport_height,
+        )
+        .ok_or_else(|| "surface reported no supported formats".to_string())?;
+        surface.configure(&device, &surface_config);
+
+        event_loop
+            .run(move |event, event_loop_window_target| {
+                event_loop_window_target.set_control_flow(ControlFlow::Poll);
+
+                match event {
+                    Event::WindowEvent { window_id, event } if window_id == window.id() => {
+                        match event {
+                            WindowEvent::CloseRequested => event_loop_window_target.exit(),
+                            WindowEvent::Resized(new_size) => {
+                                if new_size.width > 0 && new_size.height > 0 {
+                                    surface_config.width = new_size.width;
+                                    surface_config.height = new_size.height;
+                                    surface.configure(&device, &surface_config);
+                                }
+                            }
+                            WindowEvent::RedrawRequested => {
+                                if let Err(err) =
+                                    render_frame(&surface, &device, &queue, &surface_config)
+                                {
+                                    match err {
+                                        SurfaceError::Lost | SurfaceError::Outdated => {
+                                            surface.configure(&device, &surface_config);
+                                        }
+                                        SurfaceError::OutOfMemory => {
+                                            event_loop_window_target.exit();
+                                        }
+                                        SurfaceError::Timeout => {}
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    Event::AboutToWait => window.request_redraw(),
+                    _ => {}
+                }
+            })
+            .map_err(|err| format!("event loop failed: {err}"))
+    }
+
+    fn configure_surface(
+        surface: &Surface<'_>,
+        adapter: &wgpu::Adapter,
+        window: &winit::window::Window,
+        fallback_width: u32,
+        fallback_height: u32,
+    ) -> Option<SurfaceConfiguration> {
+        let caps = surface.get_capabilities(adapter);
+        let format = caps
+            .formats
+            .iter()
+            .copied()
+            .find(|f| f.is_srgb())
+            .or_else(|| caps.formats.first().copied())?;
+
+        let present_mode = if caps.present_modes.contains(&PresentMode::Fifo) {
+            PresentMode::Fifo
+        } else {
+            *caps.present_modes.first()?
+        };
+
+        let alpha_mode = *caps.alpha_modes.first()?;
+        let size = window.inner_size();
+
+        Some(SurfaceConfiguration {
+            usage: TextureUsages::RENDER_ATTACHMENT,
+            format,
+            width: size.width.max(fallback_width).max(1),
+            height: size.height.max(fallback_height).max(1),
+            present_mode,
+            alpha_mode,
+            view_formats: vec![],
+            desired_maximum_frame_latency: 2,
+        })
+    }
+
+    fn render_frame(
+        surface: &Surface<'_>,
+        device: &wgpu::Device,
+        queue: &Queue,
+        surface_config: &SurfaceConfiguration,
+    ) -> Result<(), SurfaceError> {
+        let frame = surface.get_current_texture()?;
+        let view = frame.texture.create_view(&TextureViewDescriptor::default());
+        let mut encoder = device.create_command_encoder(&CommandEncoderDescriptor {
+            label: Some("aurex-clear-encoder"),
+        });
+
+        {
+            let _pass = encoder.begin_render_pass(&RenderPassDescriptor {
+                label: Some("aurex-clear-pass"),
+                color_attachments: &[Some(RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: Operations {
+                        load: LoadOp::Clear(Color {
+                            r: 0.04,
+                            g: 0.02,
+                            b: 0.09,
+                            a: 1.0,
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
+        }
+
+        queue.submit(Some(encoder.finish()));
+        frame.present();
+
+        let _ = surface_config;
+        Ok(())
+    }
+}
+
 pub fn attempt_real_renderer_bootstrap() -> RealRendererBootstrapStatus {
     #[cfg(feature = "real_graphics")]
     {
-        return RealRendererBootstrapStatus {
-            result: RealRendererBootstrapResult::AdapterUnavailable,
-            detail: "real_graphics feature enabled; adapter probe not wired yet".to_string(),
-        };
+        return real_graphics::bootstrap_status();
     }
 
     #[cfg(not(feature = "real_graphics"))]

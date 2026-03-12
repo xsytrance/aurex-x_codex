@@ -7,7 +7,7 @@ use aurex_render::{
     BootAnimationConfig, BootAnimator, BootPostFxTrack, BootSequenceRecipe, BootStylePreset,
     BootStyleProfile, CameraRig, MockRenderer, RENDER_MAIN_STAGES, RenderBackendMode,
     RenderBackendReadiness, RenderBootstrapConfig, RenderBootstrapExecutor, RenderBootstrapPlan,
-    RenderStage, attempt_real_renderer_bootstrap, rasterize_boot_frame,
+    RenderStage, attempt_real_renderer_bootstrap, launch_real_graphics, rasterize_boot_frame,
 };
 use aurex_shape_synth::{PrimitiveType, ShapeDescriptor};
 
@@ -306,6 +306,16 @@ fn runtime_diagnostics_report() -> String {
     lines.join("\n")
 }
 
+#[cfg(feature = "real_graphics")]
+fn main() {
+    let config = RenderBootstrapConfig::default().with_backend_mode(RenderBackendMode::WgpuPlanned);
+    if let Err(err) = launch_real_graphics(config) {
+        eprintln!("failed to launch real graphics backend: {err}");
+        std::process::exit(1);
+    }
+}
+
+#[cfg(not(feature = "real_graphics"))]
 fn main() {
     println!("{}", runtime_diagnostics_report());
 }
