@@ -456,6 +456,24 @@ pub enum SdfModifier {
     Repeat {
         cell: Vec3,
     },
+    RepeatGrid {
+        cell_size: Vec3,
+    },
+    RepeatAxis {
+        spacing: f32,
+        axis: String,
+    },
+    RepeatPolar {
+        sectors: u32,
+    },
+    RepeatSphere {
+        radius: f32,
+    },
+    FoldSpace,
+    MirrorFold,
+    KaleidoscopeFold {
+        segments: u32,
+    },
     Twist {
         strength: f32,
     },

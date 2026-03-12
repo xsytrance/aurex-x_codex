@@ -1,5 +1,6 @@
 pub mod cache;
 pub mod diagnostics;
+pub mod domain;
 pub mod gpu;
 pub mod noise;
 pub mod post;
@@ -23,6 +24,10 @@ use aurex_scene::{
 use bytemuck::{Pod, Zeroable};
 use cache::{EffectGraphEvalCache, FieldSampleCache, PatternSampleCache};
 use diagnostics::{CacheStats, FrameDiagnostics};
+use domain::{
+    Axis, fold_space, kaleidoscope_fold, mirror_fold, repeat_axis as domain_repeat_axis,
+    repeat_grid as domain_repeat_grid, repeat_polar as domain_repeat_polar, repeat_sphere,
+};
 use noise::{NoiseVec3, fbm, value_noise};
 use post::{PostProcessConfig, process_pixel};
 use std::sync::{Mutex, OnceLock};
@@ -1685,10 +1690,38 @@ fn apply_modifier(
 ) {
     match modifier {
         SdfModifier::Repeat { cell } => {
-            let cell = from_vec3(*cell);
-            p.x = repeat_axis(p.x, cell.x);
-            p.y = repeat_axis(p.y, cell.y);
-            p.z = repeat_axis(p.z, cell.z);
+            let rp = domain_repeat_grid(to_vec3(*p), *cell);
+            *p = from_vec3(rp);
+        }
+        SdfModifier::RepeatGrid { cell_size } => {
+            let rp = domain_repeat_grid(to_vec3(*p), *cell_size);
+            *p = from_vec3(rp);
+        }
+        SdfModifier::RepeatAxis { spacing, axis } => {
+            let ax = match axis.as_str() {
+                "x" | "X" => Axis::X,
+                "y" | "Y" => Axis::Y,
+                _ => Axis::Z,
+            };
+            let rp = domain_repeat_axis(to_vec3(*p), *spacing, ax);
+            *p = from_vec3(rp);
+        }
+        SdfModifier::RepeatPolar { sectors } => {
+            let rp = domain_repeat_polar(to_vec3(*p), *sectors);
+            *p = from_vec3(rp);
+        }
+        SdfModifier::RepeatSphere { radius } => {
+            let rp = repeat_sphere(to_vec3(*p), *radius);
+            *p = from_vec3(rp);
+        }
+        SdfModifier::MirrorFold => {
+            *p = from_vec3(mirror_fold(to_vec3(*p)));
+        }
+        SdfModifier::KaleidoscopeFold { segments } => {
+            *p = from_vec3(kaleidoscope_fold(to_vec3(*p), *segments));
+        }
+        SdfModifier::FoldSpace => {
+            *p = from_vec3(fold_space(to_vec3(*p)));
         }
         SdfModifier::Twist { strength } => {
             let angle = *strength * p.y;
@@ -1865,13 +1898,6 @@ fn generate_camera_ray(scene: &Scene, x: u32, y: u32, width: u32, height: u32) -
     Ray { origin, direction }
 }
 
-fn repeat_axis(value: f32, cell: f32) -> f32 {
-    if cell.abs() < 1e-6 {
-        return value;
-    }
-    (value + 0.5 * cell).rem_euclid(cell) - 0.5 * cell
-}
-
 fn rotate_axis_angle(p: V3, axis: V3, angle: f32) -> V3 {
     let (s, c) = angle.sin_cos();
     p * c + axis.cross(p) * s + axis * axis.dot(p) * (1.0 - c)
@@ -1888,6 +1914,14 @@ fn to_rgba8(color: V3) -> Rgba8 {
 
 fn from_vec3(v: Vec3) -> V3 {
     V3::new(v.x, v.y, v.z)
+}
+
+fn to_vec3(v: V3) -> Vec3 {
+    Vec3 {
+        x: v.x,
+        y: v.y,
+        z: v.z,
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
