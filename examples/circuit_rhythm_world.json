@@ -1,0 +1,50 @@
+{
+  "sdf": {
+    "seed": 90210,
+    "camera": {
+      "position": {"x": 0.0, "y": 4.2, "z": -9.5},
+      "target": {"x": 0.0, "y": 0.0, "z": 2.0},
+      "fov_degrees": 56.0,
+      "aspect_ratio": 1.7777778
+    },
+    "lighting": {
+      "ambient_light": 0.14,
+      "fog_color": {"x": 0.03, "y": 0.07, "z": 0.1},
+      "fog_density": 0.05,
+      "fog_height_falloff": 0.05,
+      "key_lights": [
+        {"direction": {"x": -0.4, "y": -1.0, "z": -0.2}, "intensity": 1.15, "color": {"x": 0.2, "y": 1.0, "z": 0.4}}
+      ]
+    },
+    "fields": [
+      {"Pulse": {"origin": {"x": 0.0, "y": 0.0, "z": 0.0}, "frequency": 2.5, "amplitude": 0.7, "falloff": 0.08}},
+      {"Audio": {"band": "Kick", "strength": 0.95, "radius": 18.0}}
+    ],
+    "generator": {
+      "CircuitBoard": {"grid_resolution": 15, "component_density": 0.5, "trace_width": 0.06, "height_variation": 0.9}
+    },
+    "audio": {
+      "tempo": 132.0,
+      "seed": 90210,
+      "tracks": [
+        {"name": "kick", "volume": 1.0, "patterns": [{"loops": 8, "notes": [{"pitch": 36, "duration_beats": 0.5, "velocity": 1.0, "instrument": "kick"}]}]},
+        {"name": "snare", "volume": 0.8, "patterns": [{"loops": 8, "notes": [{"pitch": 38, "duration_beats": 1.0, "velocity": 0.9, "instrument": "snare"}]}]}
+      ],
+      "synth_graph": {
+        "Distortion": {
+          "drive": 0.9,
+          "mix": 0.6,
+          "input": {
+            "Mixer": {
+              "inputs": [
+                {"Oscillator": {"osc_type": "Square", "frequency": 96.0, "amplitude": 0.4, "phase": 0.0}},
+                {"Noise": {"amplitude": 0.2, "seed": 90210}}
+              ],
+              "gain": 0.8
+            }
+          }
+        }
+      }
+    }
+  }
+}
