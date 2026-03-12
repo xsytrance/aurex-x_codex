@@ -1,0 +1,38 @@
+{
+  "name": "ElectronicJourneyGraph",
+  "seed": 424242,
+  "entry_node": "AmbientIntroPulse",
+  "nodes": [
+    {"id": "AmbientIntroPulse", "pulse_path": "../pulses/ambient_intro.pulse.json"},
+    {"id": "PsytranceTunnelPulse", "pulse_path": "../pulses/psytrance_tunnel.pulse.json"},
+    {"id": "InfiniteCircuitCityPulse", "pulse_path": "../pulses/infinite_circuit_megacity.pulse.json"},
+    {"id": "FractalFinalePulse", "pulse_path": "../pulses/fractal_finale.pulse.json"}
+  ],
+  "transitions": [
+    {
+      "from": "AmbientIntroPulse",
+      "to": "PsytranceTunnelPulse",
+      "transition_type": "Timeline",
+      "after_seconds": 12.0
+    },
+    {
+      "from": "PsytranceTunnelPulse",
+      "to": "InfiniteCircuitCityPulse",
+      "transition_type": "MusicalCue",
+      "cue": "BeatStrengthAbove",
+      "threshold": 0.9
+    },
+    {
+      "from": "InfiniteCircuitCityPulse",
+      "to": "FractalFinalePulse",
+      "transition_type": "GeneratorTrigger",
+      "event": "city_gate_opened"
+    },
+    {
+      "from": "FractalFinalePulse",
+      "to": "AmbientIntroPulse",
+      "transition_type": "Manual",
+      "trigger": "restart"
+    }
+  ]
+}
