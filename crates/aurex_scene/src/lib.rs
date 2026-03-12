@@ -1,6 +1,7 @@
 pub mod fields;
 pub mod generators;
 pub mod harmonics;
+pub mod patterns;
 
 use aurex_audio::ProceduralAudioConfig;
 use serde::{Deserialize, Serialize};
@@ -48,6 +49,8 @@ pub struct SdfScene {
     pub generator: Option<generators::SceneGenerator>,
     #[serde(default)]
     pub fields: Vec<fields::SceneField>,
+    #[serde(default)]
+    pub patterns: Vec<patterns::PatternNetwork>,
     #[serde(default)]
     pub harmonics: Option<harmonics::SceneHarmonicsConfig>,
     #[serde(default)]
@@ -520,6 +523,8 @@ pub struct SdfMaterial {
     #[serde(default)]
     pub pattern: SdfPattern,
     #[serde(default)]
+    pub pattern_network: Option<patterns::PatternNetwork>,
+    #[serde(default)]
     pub parameters: BTreeMap<String, f32>,
 }
 
@@ -555,6 +560,7 @@ impl Default for SdfMaterial {
             emissive_strength: 0.0,
             roughness: default_roughness(),
             pattern: SdfPattern::None,
+            pattern_network: None,
             parameters: BTreeMap::new(),
         }
     }
@@ -657,6 +663,28 @@ mod tests {
             SdfMaterialType::Plasma
         );
         assert_eq!(scene.sdf.objects[0].material.base_color.x, 1.0);
+    }
+
+    #[test]
+    fn pattern_network_json_roundtrip_parses() {
+        let json = r#"{
+            "sdf": {
+                "camera": {"position": {"x": 0.0, "y": 0.0, "z": -5.0}, "target": {"x": 0.0, "y": 0.0, "z": 0.0}, "fov_degrees": 60.0, "aspect_ratio": 1.7777},
+                "lighting": {"ambient_light": 0.2},
+                "patterns": [{"name": "id", "preset": "PsySpiral", "layers": []}],
+                "objects": [{
+                    "primitive": {"Sphere": {"radius": 1.0}},
+                    "material": {
+                        "material_type": "SolidColor",
+                        "pattern_network": {"name": "mat", "preset": "ElectronicCircuit", "layers": []}
+                    }
+                }]
+            }
+        }"#;
+
+        let scene: Scene = load_scene_from_json_str(json).expect("pattern scene should parse");
+        assert_eq!(scene.sdf.patterns.len(), 1);
+        assert!(scene.sdf.objects[0].material.pattern_network.is_some());
     }
 
     #[test]

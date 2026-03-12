@@ -47,3 +47,9 @@ No external audio files required.
 - Use tracks to create beat energy that pushes lights, fog, and motion.
 - Use voice presets for texture and identity, not intelligible lyrics.
 
+## See also
+
+- `docs/sdk_human/how_patterns_shape_worlds.md`
+- `docs/sdk_human/music_shaping_worlds.md`
+- `docs/sdk_human/music_controls_time.md`
+

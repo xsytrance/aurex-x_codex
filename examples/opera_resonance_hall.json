@@ -1,0 +1,13 @@
+{
+  "sdf": {
+    "seed": 804,
+    "camera": {"position": {"x": 0.0, "y": 1.7, "z": -10.0}, "target": {"x": 0.0, "y": 0.6, "z": 0.0}, "fov_degrees": 57.0, "aspect_ratio": 1.7777778},
+    "lighting": {"ambient_light": 0.16, "fog_color": {"x": 0.08, "y": 0.07, "z": 0.13}, "fog_density": 0.06, "fog_height_falloff": 0.08,
+      "key_lights": [{"direction": {"x": -0.35, "y": -1.0, "z": -0.2}, "intensity": 1.15, "color": {"x": 1.0, "y": 0.9, "z": 0.8}}]},
+    "patterns": [{"name": "opera", "preset": "OperaCathedral", "layers": []}],
+    "harmonics": {"geometry": {"band": "Chords", "strength": 1.1}, "materials": {"band": "Melody", "strength": 1.1}, "particles": {"band": "High", "strength": 0.7}},
+    "generator": {"FractalTemple": {"grid_size": 7, "pillar_height": 1.4, "pillar_spacing": 2.1, "fractal_scale": 1.0}},
+    "audio": {"tempo": 128.0, "seed": 804, "tracks": [{"name": "choir", "volume": 0.85, "patterns": [{"loops": 6, "notes": [{"pitch": 52, "duration_beats": 1.0, "velocity": 0.7, "instrument": "pad"}]}]}],
+      "voice": {"preset": "Choir", "phonemes": ["AH", "EE", "OH"], "base_pitch_hz": 200.0, "phoneme_duration": 0.2}}
+  }
+}

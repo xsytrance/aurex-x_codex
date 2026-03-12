@@ -7,6 +7,7 @@ use aurex_scene::{
     fields::{self, FieldSample},
     generators::{self, SceneGenerator},
     harmonics::HarmonicBand,
+    patterns::{PatternContext, PatternNetwork, sample_network},
 };
 use bytemuck::{Pod, Zeroable};
 use noise::{NoiseVec3, fbm, value_noise};
@@ -265,15 +266,49 @@ pub fn evaluate_material(
         }
     };
 
-    let col = raw_color * (0.7 + 0.3 * pattern_mix);
+    let mut pattern_color = V3::new(1.0, 1.0, 1.0);
+    let mut pattern_emission = 0.0;
+    let mut pattern_rough_mul = 1.0;
+
+    if let Some(net) = &material.pattern_network {
+        let ctx = PatternContext {
+            low_freq_energy: param("pattern_low", 0.0),
+            mid_freq_energy: param("pattern_mid", 0.0),
+            high_freq_energy: param("pattern_high", 0.0),
+            dominant_frequency: param("pattern_dominant", 0.0),
+            current_beat: param("pattern_beat", 0.0).max(0.0) as u32,
+            current_measure: param("pattern_measure", 0.0).max(0.0) as u32,
+            current_phrase: param("pattern_phrase", 0.0).max(0.0) as u32,
+            beat_phase: param("pattern_beat_phase", 0.0).clamp(0.0, 1.0),
+            tempo: param("pattern_tempo", 120.0),
+        };
+        let ps = sample_network(
+            net,
+            Vec3::new(p.x, p.y, p.z),
+            Vec3::new(p.x, p.y, p.z),
+            Vec3::new(p.x.fract(), p.y.fract(), 0.0),
+            rhythm_t,
+            scene_seed,
+            ctx,
+        );
+        pattern_color = V3::new(
+            (0.6 + ps.value * 0.6).clamp(0.0, 1.2),
+            (0.7 + ps.value * 0.5).clamp(0.0, 1.2),
+            (0.8 + ps.value * 0.4).clamp(0.0, 1.2),
+        );
+        pattern_emission = ps.value * 0.35 + ps.distortion.abs() * 0.18;
+        pattern_rough_mul = (1.0 - ps.value * 0.3).clamp(0.2, 1.0);
+    }
+
+    let col = raw_color.hadamard(pattern_color) * (0.7 + 0.3 * pattern_mix);
     MaterialEvaluation {
         color: [
             col.x.clamp(0.0, 1.0),
             col.y.clamp(0.0, 1.0),
             col.z.clamp(0.0, 1.0),
         ],
-        emission: (material.emissive_strength + emission_boost).max(0.0),
-        roughness: (material.roughness * roughness_mul).clamp(0.02, 1.0),
+        emission: (material.emissive_strength + emission_boost + pattern_emission).max(0.0),
+        roughness: (material.roughness * roughness_mul * pattern_rough_mul).clamp(0.02, 1.0),
     }
 }
 
@@ -394,6 +429,7 @@ fn scene_at_time(scene: &Scene, time: RenderTime) -> Scene {
     let af = apply_audio_to_scene(&mut animated, t);
     apply_harmonics_to_scene(&mut animated, af, t);
     let rhythm_t = apply_rhythm_space_to_scene(&mut animated, af, t);
+    apply_scene_pattern_networks(&mut animated, af, rhythm_t);
 
     if af.kick_energy > 0.0 || af.bass_energy > 0.0 || af.high_energy > 0.0 {
         animated
@@ -755,6 +791,51 @@ fn apply_rhythm_space_to_scene(scene: &mut Scene, features: AudioFeatures, t: f3
 
     scene.sdf.camera.position.y += (1.0 - features.beat_phase) * 0.04;
     rhythm_time
+}
+
+fn audio_pattern_context(features: AudioFeatures) -> PatternContext {
+    PatternContext {
+        low_freq_energy: features.low_freq_energy,
+        mid_freq_energy: features.mid_freq_energy,
+        high_freq_energy: features.high_freq_energy,
+        dominant_frequency: features.dominant_frequency,
+        current_beat: features.current_beat,
+        current_measure: features.current_measure,
+        current_phrase: features.current_phrase,
+        beat_phase: features.beat_phase,
+        tempo: features.tempo,
+    }
+}
+
+fn apply_scene_pattern_networks(scene: &mut Scene, features: AudioFeatures, t: f32) {
+    if scene.sdf.patterns.is_empty() {
+        return;
+    }
+    let net: PatternNetwork = scene.sdf.patterns[0].clone();
+    let ctx = audio_pattern_context(features);
+    apply_to_all_materials(&mut scene.sdf.root, &mut scene.sdf.objects, &mut |m| {
+        if m.pattern_network.is_none() {
+            m.pattern_network = Some(net.clone());
+        }
+        m.parameters
+            .insert("pattern_low".into(), ctx.low_freq_energy);
+        m.parameters
+            .insert("pattern_mid".into(), ctx.mid_freq_energy);
+        m.parameters
+            .insert("pattern_high".into(), ctx.high_freq_energy);
+        m.parameters
+            .insert("pattern_dominant".into(), ctx.dominant_frequency);
+        m.parameters
+            .insert("pattern_beat".into(), ctx.current_beat as f32);
+        m.parameters
+            .insert("pattern_measure".into(), ctx.current_measure as f32);
+        m.parameters
+            .insert("pattern_phrase".into(), ctx.current_phrase as f32);
+        m.parameters
+            .insert("pattern_beat_phase".into(), ctx.beat_phase.clamp(0.0, 1.0));
+        m.parameters.insert("pattern_tempo".into(), ctx.tempo);
+        m.parameters.insert("rhythm_time".into(), t);
+    });
 }
 
 fn sample_scene_fields(scene: &Scene, p: V3, time: f32) -> FieldSample {
@@ -1549,6 +1630,10 @@ mod tests {
     use aurex_scene::{
         Scene, SdfCamera, SdfLighting, SdfMaterial, SdfMaterialType, SdfModifier, SdfNode,
         SdfObject, SdfPattern, SdfPrimitive, Vec3,
+        patterns::{
+            PatternBinding, PatternComposeOp, PatternLayer, PatternNetwork, PatternNode,
+            PatternParams, PatternPreset,
+        },
     };
 
     fn sample_scene() -> Scene {
@@ -1562,6 +1647,7 @@ mod tests {
                     emissive_strength: 0.7,
                     roughness: 0.2,
                     pattern: SdfPattern::Bands,
+                    pattern_network: None,
                     parameters: std::collections::BTreeMap::new(),
                 },
                 bounds_radius: Some(1.2),
@@ -1623,6 +1709,11 @@ mod tests {
                         falloff: 0.2,
                     },
                 )],
+                patterns: vec![PatternNetwork {
+                    name: Some("sample".into()),
+                    preset: Some(PatternPreset::ElectronicCircuit),
+                    layers: vec![],
+                }],
                 harmonics: None,
                 rhythm: None,
                 audio: Some(aurex_audio::default_demo_audio_config(2027)),
@@ -1679,6 +1770,46 @@ mod tests {
             [0.0, 1.0, 0.0],
             RenderTime { seconds: 2.0 },
             1,
+        );
+        assert_ne!(a.color, b.color);
+    }
+
+    #[test]
+    fn pattern_network_changes_material_evaluation() {
+        let mut m = SdfMaterial {
+            material_type: SdfMaterialType::SolidColor,
+            ..SdfMaterial::default()
+        };
+        m.pattern_network = Some(PatternNetwork {
+            name: Some("test".into()),
+            preset: None,
+            layers: vec![PatternLayer {
+                node: PatternNode::ConcentricPulsePattern(PatternParams {
+                    scale: 2.2,
+                    density: 1.1,
+                    ..PatternParams::default()
+                }),
+                op: PatternComposeOp::Blend,
+                weight: 1.0,
+                binding: PatternBinding::default(),
+            }],
+        });
+        m.parameters.insert("pattern_low".into(), 0.6);
+        m.parameters.insert("pattern_beat_phase".into(), 0.2);
+
+        let a = evaluate_material(
+            &m,
+            [0.1, 0.2, 0.3],
+            [0.0, 1.0, 0.0],
+            RenderTime { seconds: 0.1 },
+            7,
+        );
+        let b = evaluate_material(
+            &m,
+            [0.4, 0.2, 0.1],
+            [0.0, 1.0, 0.0],
+            RenderTime { seconds: 0.1 },
+            7,
         );
         assert_ne!(a.color, b.color);
     }

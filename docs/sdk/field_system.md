@@ -78,3 +78,10 @@ Renderer maps keyframe targets into mutable field params during `scene_at_time`:
 - `field.flow.direction`
 
 The updated field set is then used for generator expansion and final shading.
+
+## Related Systems
+
+- Pattern networks: `docs/sdk/pattern_network_system.md`
+- Harmonics: `docs/sdk/harmonic_system.md`
+- Rhythm-Space: `docs/sdk/rhythm_space_system.md`
+

@@ -114,3 +114,10 @@ Use this guide to generate valid Aurex-X audio JSON.
   - `envelope.release`: `0.05-0.8`
 - Keep `seed` fixed while iterating prompts/configs to compare changes deterministically.
 
+## Discoverability
+
+For pattern-rich visual authoring alongside audio:
+- `docs/sdk_ai/pattern_scene_generation.md`
+- `docs/sdk_ai/harmonic_scene_generation.md`
+- `docs/sdk_ai/rhythm_scene_generation.md`
+

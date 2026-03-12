@@ -1,5 +1,6 @@
 use crate::{
     SdfMaterial, SdfMaterialType, SdfModifier, SdfNode, SdfObject, SdfPrimitive, Vec3, fields,
+    patterns::{PatternPreset, preset_network},
 };
 use serde::{Deserialize, Serialize};
 
@@ -111,6 +112,7 @@ fn expand_tunnel(
                         emissive_strength: 0.8,
                         roughness: 0.14,
                         pattern: crate::SdfPattern::Bands,
+                        pattern_network: Some(preset_network(PatternPreset::PsySpiral)),
                         parameters: Default::default(),
                     },
                     bounds_radius: Some(r + 0.4),
@@ -159,6 +161,7 @@ fn expand_temple(
                             emissive_strength: 0.12,
                             roughness: 0.35,
                             pattern: crate::SdfPattern::Checker,
+                            pattern_network: Some(preset_network(PatternPreset::PrimePulseTemple)),
                             parameters: Default::default(),
                         },
                         bounds_radius: Some(g.pillar_height + 0.4),
@@ -184,6 +187,7 @@ fn expand_temple(
                 emissive_strength: 0.08,
                 roughness: 0.24,
                 pattern: crate::SdfPattern::Rings,
+                pattern_network: Some(preset_network(PatternPreset::OperaCathedral)),
                 parameters: Default::default(),
             },
             bounds_radius: Some(4.0),
@@ -236,6 +240,9 @@ fn expand_circuit(
                                 emissive_strength: 0.08,
                                 roughness: 0.5,
                                 pattern: crate::SdfPattern::Checker,
+                                pattern_network: Some(preset_network(
+                                    PatternPreset::ElectronicCircuit,
+                                )),
                                 parameters: Default::default(),
                             },
                             bounds_radius: Some(0.6),
@@ -262,6 +269,9 @@ fn expand_circuit(
                                 emissive_strength: 0.22,
                                 roughness: 0.2,
                                 pattern: crate::SdfPattern::Bands,
+                                pattern_network: Some(preset_network(
+                                    PatternPreset::ElectronicCircuit,
+                                )),
                                 parameters: Default::default(),
                             },
                             bounds_radius: Some(0.5),
@@ -310,6 +320,7 @@ fn expand_galaxy(
                         emissive_strength: 0.95,
                         roughness: 0.25,
                         pattern: crate::SdfPattern::Noise,
+                        pattern_network: Some(preset_network(PatternPreset::JazzLoungeGlow)),
                         parameters: Default::default(),
                     },
                     bounds_radius: Some(0.25),
@@ -372,6 +383,7 @@ fn expand_harmonic_particle_field(
                         emissive_strength: 0.55,
                         roughness: 0.2,
                         pattern: crate::SdfPattern::Noise,
+                        pattern_network: Some(preset_network(PatternPreset::HipHopSignal)),
                         parameters: Default::default(),
                     },
                     bounds_radius: Some(0.25),

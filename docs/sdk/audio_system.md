@@ -123,3 +123,9 @@ Sampling API:
 - Keep `tempo`, loop counts, and seeds explicit for reproducibility across machines.
 - Use moderate effect values (`distortion.drive <= 2`, `reverb.room_size <= 1.2`) to avoid overpowering audio-reactive visuals.
 
+## Related Authoring Systems
+
+- Pattern networks (surface/detail identity): `docs/sdk/pattern_network_system.md`
+- Harmonic geometry: `docs/sdk/harmonic_system.md`
+- Rhythm-space/time-warp: `docs/sdk/rhythm_space_system.md`
+
