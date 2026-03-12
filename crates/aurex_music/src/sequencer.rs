@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use aurex_audio::{ProceduralAudioConfig, sequencer as audio_seq};
+use aurex_audio::{ProceduralAudioConfig, analyze_procedural_audio, sequencer as audio_seq};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -37,6 +37,7 @@ pub struct MusicSequencer {
     pub config: MusicSequenceConfig,
     pub emitted_events: Vec<EmittedEvent>,
     pub rhythm_field: RhythmField,
+    prev_spectral_centroid: f32,
 }
 
 impl MusicSequencer {
@@ -46,6 +47,7 @@ impl MusicSequencer {
             config,
             emitted_events: Vec::new(),
             rhythm_field: RhythmField::default(),
+            prev_spectral_centroid: 0.0,
         }
     }
 
@@ -82,8 +84,14 @@ impl MusicSequencer {
     fn update_rhythm_field(&mut self) {
         let beat_phase = self.clock.beat_phase;
         let beat_strength = (1.0 - beat_phase).powf(2.0);
-        let mut bass_energy = 0.0;
-        let mut harmonic_energy = 0.0;
+        let beat_index = self.clock.beat_position.floor().max(0.0) as u64;
+        let bar_index = self.clock.bar_index;
+        let phrase_index = bar_index / 4;
+
+        let mut event_bass_energy = 0.0;
+        let mut event_harmonic_energy = 0.0;
+        let mut event_velocity_sum = 0.0_f32;
+        let mut event_count = 0.0_f32;
 
         for ev in &self.emitted_events {
             if let PatternEvent::Note {
@@ -91,17 +99,50 @@ impl MusicSequencer {
             } = ev.event
             {
                 if pitch <= 48 {
-                    bass_energy += velocity;
+                    event_bass_energy += velocity;
                 }
-                harmonic_energy += velocity;
+                event_harmonic_energy += velocity;
+                event_velocity_sum += velocity;
+                event_count += 1.0;
             }
         }
 
+        let audio_cfg = self.to_procedural_audio_config();
+        let audio_features = analyze_procedural_audio(&audio_cfg, self.clock.time_seconds);
+        let analyzed_bass = audio_features.bass_energy.clamp(0.0, 1.0);
+        let analyzed_harmonic =
+            ((audio_features.mid_energy + audio_features.high_energy) * 0.5).clamp(0.0, 1.0);
+        let spectral_flux =
+            ((audio_features.spectral_centroid - self.prev_spectral_centroid).abs() / 4000.0)
+                .clamp(0.0, 1.0);
+        self.prev_spectral_centroid = audio_features.spectral_centroid;
+
+        let bass_energy = (event_bass_energy * 0.55 + analyzed_bass * 0.45).clamp(0.0, 1.0);
+        let harmonic_energy =
+            (event_harmonic_energy * 0.45 + analyzed_harmonic * 0.55).clamp(0.0, 1.0);
+        let groove_density = if event_count > 0.0 {
+            (event_count / 4.0_f32).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let groove_accent = if event_count > 0.0 {
+            (event_velocity_sum / event_count).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let groove_syncopation = (1.0 - (beat_phase - 0.5).abs() * 2.0).clamp(0.0, 1.0);
+
         self.rhythm_field = RhythmField {
+            tempo: self.clock.bpm,
             beat_phase,
             beat_strength,
-            bass_energy: bass_energy.clamp(0.0, 1.0),
-            harmonic_energy: harmonic_energy.clamp(0.0, 1.0),
+            beat_index,
+            bar_index,
+            phrase_index,
+            bass_energy,
+            harmonic_energy,
+            spectral_flux,
+            groove_vector: [groove_density, groove_accent, groove_syncopation],
         };
     }
 }

@@ -89,7 +89,15 @@ mod tests {
         runner.initialize();
         assert!(runner.music_sequencer.is_some());
         assert!(runner.scene.sdf.audio.is_some());
+        let baseline_ambient = runner.scene.sdf.lighting.ambient_light;
         runner.update(1.0 / 60.0);
-        assert!(runner.rhythm_field().is_some());
+        let rhythm = runner
+            .rhythm_field()
+            .expect("rhythm field should be present");
+        assert!(rhythm.tempo > 0.0);
+        assert!(rhythm.bar_index <= rhythm.beat_index);
+        assert!(runner.runtime_context().rhythm_field.is_some());
+        assert!(runner.diagnostics.rhythm_summary.is_some());
+        assert!(runner.scene.sdf.lighting.ambient_light >= baseline_ambient);
     }
 }

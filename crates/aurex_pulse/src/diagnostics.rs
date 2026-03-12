@@ -15,5 +15,13 @@ pub struct PulseDiagnostics {
     pub lifecycle: LifecycleTiming,
     pub frames_rendered: u64,
     pub rhythm_field: Option<RhythmField>,
+    pub rhythm_summary: Option<RhythmSummary>,
     pub last_frame: Option<FrameDiagnostics>,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RhythmSummary {
+    pub beat_phase: f32,
+    pub bar_index: u64,
+    pub bass_energy: f32,
 }

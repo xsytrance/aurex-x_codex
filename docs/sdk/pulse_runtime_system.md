@@ -38,3 +38,8 @@ Pulse-level diagnostics track lifecycle timing and frame counts, while preservin
 ## Music sequencing integration
 Pulse definitions may include `music: MusicSequenceConfig`.
 The runtime initializes a sequencer and updates it every frame step, exposing RhythmField modulation signals while keeping the renderer pipeline unchanged.
+
+Rhythm integration points:
+- stores `RhythmField` in pulse runtime context each update
+- publishes a diagnostics rhythm summary (`beat_phase`, `bar_index`, `bass_energy`)
+- applies lightweight scene modulation by scaling `scene.sdf.lighting.ambient_light` from `beat_strength` and `harmonic_energy`

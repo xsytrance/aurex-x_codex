@@ -7,7 +7,7 @@ use aurex_render_sdf::{
 };
 use aurex_scene::{Scene, load_scene_from_json_path};
 
-use crate::diagnostics::PulseDiagnostics;
+use crate::diagnostics::{PulseDiagnostics, RhythmSummary};
 use crate::schema::{PulseDefinition, PulseSceneSource};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,6 +26,13 @@ pub struct PulseRunner {
     pub diagnostics: PulseDiagnostics,
     pub music_sequencer: Option<MusicSequencer>,
     pub rhythm_field: Option<RhythmField>,
+    pub runtime_context: PulseRuntimeContext,
+    base_ambient_light: f32,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PulseRuntimeContext {
+    pub rhythm_field: Option<RhythmField>,
 }
 
 impl PulseRunner {
@@ -35,6 +42,7 @@ impl PulseRunner {
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let load_start = Instant::now();
         let scene = resolve_scene(&definition, pulse_file_path)?;
+        let base_ambient_light = scene.sdf.lighting.ambient_light;
         let mut runner = Self {
             definition,
             scene,
@@ -43,6 +51,8 @@ impl PulseRunner {
             diagnostics: PulseDiagnostics::default(),
             music_sequencer: None,
             rhythm_field: None,
+            runtime_context: PulseRuntimeContext::default(),
+            base_ambient_light,
         };
         runner.diagnostics.lifecycle.load_ms = load_start.elapsed().as_secs_f64() * 1000.0;
         Ok(runner)
@@ -64,6 +74,7 @@ impl PulseRunner {
             self.music_sequencer = Some(seq);
         }
         self.scene.sdf.seed = self.definition.metadata.seed;
+        self.base_ambient_light = self.scene.sdf.lighting.ambient_light;
         self.state = PulseState::Initialized;
         self.diagnostics.lifecycle.initialize_ms = init_start.elapsed().as_secs_f64() * 1000.0;
     }
@@ -74,7 +85,19 @@ impl PulseRunner {
         if let Some(seq) = &mut self.music_sequencer {
             seq.update(delta_seconds);
             self.rhythm_field = Some(seq.rhythm_field);
+            self.runtime_context.rhythm_field = self.rhythm_field;
             self.diagnostics.rhythm_field = self.rhythm_field;
+            self.diagnostics.rhythm_summary = self.rhythm_field.map(|rf| RhythmSummary {
+                beat_phase: rf.beat_phase,
+                bar_index: rf.bar_index,
+                bass_energy: rf.bass_energy,
+            });
+
+            if let Some(rf) = self.rhythm_field {
+                let pulse = (rf.beat_strength * 0.25 + rf.harmonic_energy * 0.15).clamp(0.0, 0.4);
+                self.scene.sdf.lighting.ambient_light =
+                    (self.base_ambient_light * (1.0 + pulse)).clamp(0.01, 2.0);
+            }
         }
         self.state = PulseState::Running;
         self.diagnostics.lifecycle.update_ms += update_start.elapsed().as_secs_f64() * 1000.0;
@@ -94,6 +117,10 @@ impl PulseRunner {
 
     pub fn rhythm_field(&self) -> Option<RhythmField> {
         self.rhythm_field
+    }
+
+    pub fn runtime_context(&self) -> PulseRuntimeContext {
+        self.runtime_context
     }
 
     pub fn shutdown(&mut self) {
