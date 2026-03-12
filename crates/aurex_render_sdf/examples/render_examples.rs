@@ -31,6 +31,10 @@ fn main() {
         "examples/prime_pulse_sanctum.json",
         "examples/psyspiral_tunnel.json",
         "examples/opera_resonance_hall.json",
+        "examples/prime_pulse_flythrough.json",
+        "examples/psytrance_tunnel_run.json",
+        "examples/fractal_cathedral_orbit.json",
+        "examples/circuit_cathedral_cinematic.json",
     ];
 
     for scene_path in scenes {

@@ -1,9 +1,12 @@
 pub mod noise;
+pub mod post;
 
 use aurex_audio::{analysis::AudioFeatures, analyze_procedural_audio};
 use aurex_scene::{
     AudioSyncHook, RhythmParticleMode, Scene, SdfMaterial, SdfMaterialType, SdfModifier, SdfNode,
     SdfObject, SdfPattern, SdfPrimitive, TimelineValue, Vec3,
+    camera::CameraSyncInput,
+    director::CameraDirector,
     fields::{self, FieldSample},
     generators::{self, SceneGenerator},
     harmonics::HarmonicBand,
@@ -11,6 +14,7 @@ use aurex_scene::{
 };
 use bytemuck::{Pod, Zeroable};
 use noise::{NoiseVec3, fbm, value_noise};
+use post::{PostProcessConfig, process_pixel};
 
 #[derive(Debug, Clone, Copy)]
 pub struct RenderTime {
@@ -40,6 +44,7 @@ pub struct RenderConfig {
     pub enable_scattering: bool,
     pub time: RenderTime,
     pub output_bloom_prepass: bool,
+    pub post: PostProcessConfig,
 }
 
 impl Default for RenderConfig {
@@ -60,6 +65,7 @@ impl Default for RenderConfig {
             enable_scattering: true,
             time: RenderTime::default(),
             output_bloom_prepass: true,
+            post: PostProcessConfig::default(),
         }
     }
 }
@@ -80,6 +86,21 @@ pub struct RenderedFrame {
     pub pixels: Vec<Rgba8>,
     pub bloom_prepass: Option<Vec<f32>>,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenderPipelineStage {
+    Geometry,
+    MaterialShading,
+    PatternSampling,
+    PostProcessing,
+}
+
+pub const RENDER_PIPELINE_STAGES: [RenderPipelineStage; 4] = [
+    RenderPipelineStage::Geometry,
+    RenderPipelineStage::MaterialShading,
+    RenderPipelineStage::PatternSampling,
+    RenderPipelineStage::PostProcessing,
+];
 
 #[derive(Debug, Clone, Copy)]
 pub struct MaterialEvaluation {
@@ -109,7 +130,13 @@ pub fn render_sdf_scene_with_config(scene: &Scene, config: RenderConfig) -> Rend
         for x in 0..config.width {
             let ray = generate_camera_ray(&animated_scene, x, y, config.width, config.height);
             let (color, emission) = shade_ray(&animated_scene, ray.origin, ray.direction, config);
-            pixels.push(to_rgba8(color));
+            let uv = (
+                (x as f32 + 0.5) / config.width as f32,
+                (y as f32 + 0.5) / config.height as f32,
+            );
+            let post_color =
+                process_pixel(color, emission, uv, animated_scene.sdf.seed, config.post);
+            pixels.push(to_rgba8(post_color));
             if let Some(bloom) = &mut bloom_prepass {
                 bloom.push(emission.max(0.0));
             }
@@ -342,6 +369,30 @@ fn scene_at_time(scene: &Scene, time: RenderTime) -> Scene {
 
         if let Some(path) = &timeline.camera_path {
             animated.sdf.camera = path.sample(t, &animated.sdf.camera, timeline.duration);
+        }
+
+        if let Some(rig) = &timeline.cinematic_camera {
+            let sync = CameraSyncInput {
+                beat: timeline.event_strength(AudioSyncHook::Kick, t),
+                phrase: timeline.event_strength(AudioSyncHook::Snare, t),
+                tempo: 120.0,
+            };
+            animated.sdf.camera = rig.sample(&animated.sdf.camera, t, timeline.duration, sync);
+        } else if let Some(sequence) = &timeline.shot_sequence {
+            let director = CameraDirector::default();
+            if let Some(shot) = director.shot_for_time(sequence, t) {
+                let sync = CameraSyncInput {
+                    beat: timeline.event_strength(AudioSyncHook::Kick, t),
+                    phrase: timeline.event_strength(AudioSyncHook::Bass, t),
+                    tempo: 120.0,
+                };
+                animated.sdf.camera = shot.camera.sample(
+                    &animated.sdf.camera,
+                    t - shot.start,
+                    (shot.end - shot.start).max(1e-3),
+                    sync,
+                );
+            }
         }
 
         if let Some(TimelineValue::Vec3 { value }) =
@@ -1008,32 +1059,34 @@ fn light_scattering(
     max_t: f32,
     config: RenderConfig,
 ) -> V3 {
-    let steps = 8u32;
+    let v = &scene.sdf.lighting.volumetric;
+    let steps = v.scattering_steps.max(2);
     let mut accum = V3::zero();
     let mut t = 0.1;
-    let step = (max_t / steps as f32).max(0.1);
+    let step = (max_t / steps as f32).max(0.05);
     for _ in 0..steps {
         let p = origin + direction * t;
-        let transmittance = (-scene.sdf.lighting.fog_density.max(0.0) * t).exp();
+        let transmittance =
+            (-(scene.sdf.lighting.fog_density.max(0.0) + v.beam_density.max(0.0)) * t).exp();
         for key in &scene.sdf.lighting.key_lights {
             let ldir = from_vec3(key.direction).normalized() * -1.0;
             let phase = direction
                 .dot(ldir)
                 .max(0.0)
-                .powf(config.shadow_softness.max(1.0) * 0.25);
+                .powf(config.shadow_softness.max(1.0) * (0.2 + v.beam_falloff.max(0.0)));
             let f = sample_scene_fields(scene, p, config.time.seconds);
             let c = from_vec3(key.color)
                 * key.intensity
                 * phase
                 * transmittance
-                * (0.02 + f.energy * 0.01);
+                * (0.02 + f.energy * 0.01)
+                * (1.0 + v.shaft_intensity.max(0.0));
             accum = accum + c;
         }
         t += step;
         if t > max_t {
             break;
         }
-        let _ = p;
     }
     accum
 }
@@ -1693,6 +1746,7 @@ mod tests {
                     fog_color: Vec3::new(0.08, 0.12, 0.18),
                     fog_density: 0.03,
                     fog_height_falloff: 0.08,
+                    volumetric: Default::default(),
                 },
                 objects: vec![],
                 root: SdfNode::SmoothUnion {
