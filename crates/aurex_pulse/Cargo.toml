@@ -8,5 +8,6 @@ license = "MIT"
 aurex_scene = { path = "../aurex_scene" }
 aurex_render_sdf = { path = "../aurex_render_sdf" }
 aurex_audio = { path = "../aurex_audio" }
+aurex_music = { path = "../aurex_music" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

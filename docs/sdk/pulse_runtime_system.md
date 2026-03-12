@@ -34,3 +34,7 @@ Pulse runtime invokes the existing renderer pipeline unchanged:
 
 ## Diagnostics
 Pulse-level diagnostics track lifecycle timing and frame counts, while preserving nested renderer diagnostics payloads.
+
+## Music sequencing integration
+Pulse definitions may include `music: MusicSequenceConfig`.
+The runtime initializes a sequencer and updates it every frame step, exposing RhythmField modulation signals while keeping the renderer pipeline unchanged.

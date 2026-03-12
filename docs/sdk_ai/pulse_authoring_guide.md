@@ -6,6 +6,7 @@ A Pulse definition includes:
 - `pulse_kind`
 - `scene`
 - optional `audio`
+- optional `music`
 - optional `timeline`
 - optional `generators`
 - optional `parameters`

@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use aurex_audio::ProceduralAudioConfig;
+use aurex_music::sequencer::MusicSequenceConfig;
 use aurex_scene::{Scene, SceneTimeline};
 use serde::{Deserialize, Serialize};
 
@@ -65,6 +66,8 @@ pub struct PulseDefinition {
     pub timeline: Option<SceneTimeline>,
     #[serde(default)]
     pub generators: Vec<PulseGeneratorBinding>,
+    #[serde(default)]
+    pub music: Option<MusicSequenceConfig>,
     #[serde(default)]
     pub parameters: BTreeMap<String, serde_json::Value>,
 }

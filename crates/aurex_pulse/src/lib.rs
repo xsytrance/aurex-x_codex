@@ -49,4 +49,47 @@ mod tests {
         runner.shutdown();
         assert_eq!(runner.state, PulseState::Shutdown);
     }
+
+    #[test]
+    fn pulse_music_sequencer_updates_rhythm_field() {
+        let pulse_json = r#"{
+          "metadata": {
+            "title": "Music Pulse",
+            "author": "Aurex",
+            "pulse_kind": "VisualMusic",
+            "interactivity": "Passive"
+          },
+          "pulse_kind": "VisualMusic",
+          "scene": {
+            "sdf": {
+              "seed": 2,
+              "camera": {"position": {"x": 0.0, "y": 0.0, "z": -5.0}, "target": {"x": 0.0, "y": 0.0, "z": 0.0}, "fov_degrees": 60.0, "aspect_ratio": 1.7777},
+              "lighting": {"ambient_light": 0.2, "key_lights": []},
+              "root": {"Empty": null}
+            }
+          },
+          "music": {
+            "bpm": 128.0,
+            "tracks": [
+              {
+                "name": "bass",
+                "instrument": "PulseSynth",
+                "pattern": {
+                  "steps": 16,
+                  "events": [{"Note": {"step": 0, "pitch": 36, "duration_beats": 0.5, "velocity": 0.9}}]
+                },
+                "volume": 1.0
+              }
+            ]
+          }
+        }"#;
+
+        let pulse = load_pulse_from_str(pulse_json).expect("music pulse should parse");
+        let mut runner = PulseRunner::load(pulse, None).expect("music pulse should load");
+        runner.initialize();
+        assert!(runner.music_sequencer.is_some());
+        assert!(runner.scene.sdf.audio.is_some());
+        runner.update(1.0 / 60.0);
+        assert!(runner.rhythm_field().is_some());
+    }
 }

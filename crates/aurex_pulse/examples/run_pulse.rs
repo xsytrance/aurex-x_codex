@@ -27,6 +27,13 @@ fn main() {
         runner.diagnostics.lifecycle.shutdown_ms,
     );
 
+    if let Some(rf) = runner.rhythm_field() {
+        println!(
+            "rhythm_field phase={:.3} strength={:.3} bass={:.3} harmonic={:.3}",
+            rf.beat_phase, rf.beat_strength, rf.bass_energy, rf.harmonic_energy
+        );
+    }
+
     if let Some(diag) = &runner.diagnostics.last_frame {
         println!(
             "renderer stages={:?} total_ms={:.3}",

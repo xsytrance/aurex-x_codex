@@ -1,3 +1,4 @@
+use aurex_music::rhythm_field::RhythmField;
 use aurex_render_sdf::diagnostics::FrameDiagnostics;
 
 #[derive(Debug, Clone, Default)]
@@ -13,5 +14,6 @@ pub struct LifecycleTiming {
 pub struct PulseDiagnostics {
     pub lifecycle: LifecycleTiming,
     pub frames_rendered: u64,
+    pub rhythm_field: Option<RhythmField>,
     pub last_frame: Option<FrameDiagnostics>,
 }
