@@ -1,0 +1,9 @@
+[package]
+name = "aurex_music"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[dependencies]
+aurex_audio = { path = "../aurex_audio" }
+serde = { version = "1", features = ["derive"] }
