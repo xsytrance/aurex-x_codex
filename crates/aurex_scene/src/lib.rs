@@ -1,5 +1,6 @@
 pub mod fields;
 pub mod generators;
+pub mod harmonics;
 
 use aurex_audio::ProceduralAudioConfig;
 use serde::{Deserialize, Serialize};
@@ -47,6 +48,8 @@ pub struct SdfScene {
     pub generator: Option<generators::SceneGenerator>,
     #[serde(default)]
     pub fields: Vec<fields::SceneField>,
+    #[serde(default)]
+    pub harmonics: Option<harmonics::SceneHarmonicsConfig>,
     #[serde(default)]
     pub audio: Option<ProceduralAudioConfig>,
 }
@@ -444,6 +447,7 @@ pub enum SdfMaterialType {
     Holographic,
     Lava,
     Wireframe,
+    SpectralReactive,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

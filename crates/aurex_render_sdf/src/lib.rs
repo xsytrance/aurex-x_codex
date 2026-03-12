@@ -6,6 +6,7 @@ use aurex_scene::{
     SdfPattern, SdfPrimitive, TimelineValue, Vec3,
     fields::{self, FieldSample},
     generators::{self, SceneGenerator},
+    harmonics::HarmonicBand,
 };
 use bytemuck::{Pod, Zeroable};
 use noise::{NoiseVec3, fbm, value_noise};
@@ -216,6 +217,39 @@ pub fn evaluate_material(
             let lava = V3::new(1.0, 0.3 + 0.6 * hot, 0.05 + 0.15 * hot);
             (base.hadamard(lava) * (0.5 + hot), 0.9 * hot, 0.7)
         }
+        SdfMaterialType::SpectralReactive => {
+            let low = param("harmonic_low", 0.0);
+            let mid = param("harmonic_mid", 0.0);
+            let high = param("harmonic_high", 0.0);
+            let harmonic_energy = param("harmonic_energy", 0.0);
+            let dominant = param("dominant_frequency", 220.0).max(1.0);
+            let pitch_phase = (t * dominant * 0.005).sin().abs();
+            let neon_flicker =
+                (high * 1.7 + (t * (16.0 + dominant * 0.01)).sin().abs()).clamp(0.0, 1.8);
+            let bass_pulse = (low * 1.2 + (t * 2.0).sin().abs() * low * 0.6).clamp(0.0, 1.8);
+            let surface_distort = fbm(
+                NoiseVec3::new(
+                    p.x * (2.0 + high),
+                    p.y * (2.0 + mid),
+                    p.z * (2.0 + high) + t * 0.7,
+                ),
+                4,
+                2.0,
+                0.5,
+                seed,
+            )
+            .abs();
+            let hue = V3::new(
+                (0.2 + 0.8 * high + pitch_phase * 0.3).clamp(0.0, 1.0),
+                (0.2 + 0.8 * mid + surface_distort * 0.2).clamp(0.0, 1.0),
+                (0.3 + 0.7 * low + (1.0 - pitch_phase) * 0.2).clamp(0.0, 1.0),
+            );
+            (
+                base.hadamard(hue) * (0.7 + harmonic_energy * 0.4 + surface_distort * 0.2),
+                (0.2 + neon_flicker * 0.5 + bass_pulse * 0.35).clamp(0.0, 2.0),
+                (0.25 + 0.5 * (1.0 - surface_distort)).clamp(0.05, 0.95),
+            )
+        }
         SdfMaterialType::Wireframe => {
             let scale = param("wire_scale", 8.0);
             let width = param("wire_width", 0.06);
@@ -354,6 +388,7 @@ fn scene_at_time(scene: &Scene, time: RenderTime) -> Scene {
     }
 
     let af = apply_audio_to_scene(&mut animated, t);
+    apply_harmonics_to_scene(&mut animated, af, t);
 
     if af.kick_energy > 0.0 || af.bass_energy > 0.0 || af.high_energy > 0.0 {
         animated
@@ -464,6 +499,11 @@ fn apply_audio_to_scene(scene: &mut Scene, t: f32) -> AudioFeatures {
             bass_energy: 0.0,
             mid_energy: 0.0,
             high_energy: 0.0,
+            low_freq_energy: 0.0,
+            mid_freq_energy: 0.0,
+            high_freq_energy: 0.0,
+            dominant_frequency: 0.0,
+            harmonic_ratios: [0.0, 0.0, 0.0],
             spectral_centroid: 0.0,
             tempo: 120.0,
         }
@@ -481,6 +521,96 @@ fn apply_audio_to_scene(scene: &mut Scene, t: f32) -> AudioFeatures {
     scene.sdf.camera.target.y += features.mid_energy * 0.02;
 
     features
+}
+
+fn harmonic_energy_for_band(features: AudioFeatures, band: HarmonicBand) -> f32 {
+    match band {
+        HarmonicBand::Bass => features.low_freq_energy.max(features.bass_energy),
+        HarmonicBand::Mid => features.mid_freq_energy.max(features.mid_energy),
+        HarmonicBand::High => features.high_freq_energy.max(features.high_energy),
+        HarmonicBand::Melody => {
+            (features.mid_freq_energy * 0.8 + features.high_freq_energy * 0.2)
+                * (1.0 + features.harmonic_ratios[0] * 0.15)
+        }
+        HarmonicBand::Chords => {
+            (features.low_freq_energy + features.mid_freq_energy + features.high_freq_energy)
+                * (0.2 + features.harmonic_ratios[2] * 0.08)
+        }
+        HarmonicBand::Full => {
+            features.low_freq_energy + features.mid_freq_energy + features.high_freq_energy
+        }
+    }
+}
+
+fn apply_harmonics_to_scene(scene: &mut Scene, features: AudioFeatures, t: f32) {
+    let Some(cfg) = scene.sdf.harmonics.clone() else {
+        return;
+    };
+
+    if let Some(geom) = cfg.geometry {
+        let e = harmonic_energy_for_band(features, geom.band) * geom.strength;
+        if let Some(generator) = &mut scene.sdf.generator {
+            match generator {
+                SceneGenerator::Tunnel(g) => {
+                    g.radius *= 1.0 + e * 0.08;
+                    g.twist *= 1.0 + e * 0.12;
+                }
+                SceneGenerator::FractalTemple(g) => {
+                    g.fractal_scale *= 1.0 + e * 0.15;
+                    g.pillar_height *= 1.0 + e * 0.06;
+                }
+                SceneGenerator::CircuitBoard(g) => {
+                    g.height_variation *= 1.0 + e * 0.2;
+                    g.trace_width *= 1.0 + e * 0.08;
+                }
+                SceneGenerator::ParticleGalaxy(g) => {
+                    g.radius *= 1.0 + e * 0.1;
+                    g.noise_spread *= 1.0 + e * 0.15;
+                }
+                SceneGenerator::HarmonicParticleField(g) => {
+                    g.radius *= 1.0 + e * 0.16;
+                    g.thickness *= 1.0 + e * 0.1;
+                }
+            }
+        }
+
+        if !cfg.fields.is_empty() {
+            for hf in cfg.fields {
+                let h = harmonic_energy_for_band(features, hf.band) * hf.strength;
+                let sampled = hf.sample(scene.sdf.camera.position, h);
+                scene.sdf.camera.position.y += sampled * 0.02 * (1.0 + (t * 0.5).sin().abs());
+            }
+        }
+    }
+
+    if let Some(mat) = cfg.materials {
+        let low = features.low_freq_energy * mat.strength;
+        let mid = features.mid_freq_energy * mat.strength;
+        let high = features.high_freq_energy * mat.strength;
+        let band_energy = harmonic_energy_for_band(features, mat.band);
+        apply_to_all_materials(&mut scene.sdf.root, &mut scene.sdf.objects, &mut |m| {
+            m.parameters.insert("harmonic_low".into(), low);
+            m.parameters.insert("harmonic_mid".into(), mid);
+            m.parameters.insert("harmonic_high".into(), high);
+            m.parameters.insert("harmonic_energy".into(), band_energy);
+            m.parameters
+                .insert("dominant_frequency".into(), features.dominant_frequency);
+        });
+    }
+
+    if let Some(p) = cfg.particles {
+        let e = harmonic_energy_for_band(features, p.band) * p.strength;
+        scene
+            .sdf
+            .fields
+            .push(aurex_scene::fields::SceneField::Audio(
+                aurex_scene::fields::AudioField {
+                    band: aurex_scene::fields::AudioBand::High,
+                    strength: e.max(0.01),
+                    radius: 20.0 + e * 50.0,
+                },
+            ));
+    }
 }
 
 fn sample_scene_fields(scene: &Scene, p: V3, time: f32) -> FieldSample {
@@ -1349,6 +1479,7 @@ mod tests {
                         falloff: 0.2,
                     },
                 )],
+                harmonics: None,
                 audio: Some(aurex_audio::default_demo_audio_config(2027)),
             },
         }

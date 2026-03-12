@@ -9,6 +9,7 @@ pub enum SceneGenerator {
     FractalTemple(FractalTempleGenerator),
     CircuitBoard(CircuitBoardGenerator),
     ParticleGalaxy(ParticleGalaxyGenerator),
+    HarmonicParticleField(HarmonicParticleFieldGenerator),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -43,6 +44,21 @@ pub struct ParticleGalaxyGenerator {
     pub rotation_speed: f32,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum HarmonicParticleMode {
+    BassBursts,
+    MelodySpirals,
+    ChordLattice,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct HarmonicParticleFieldGenerator {
+    pub particle_count: u32,
+    pub radius: f32,
+    pub thickness: f32,
+    pub mode: HarmonicParticleMode,
+}
+
 pub fn expand_generator(
     generator: &SceneGenerator,
     scene_seed: u32,
@@ -54,6 +70,9 @@ pub fn expand_generator(
         SceneGenerator::FractalTemple(g) => expand_temple(g, scene_seed, scene_fields, time),
         SceneGenerator::CircuitBoard(g) => expand_circuit(g, scene_seed, scene_fields, time),
         SceneGenerator::ParticleGalaxy(g) => expand_galaxy(g, scene_seed, time, scene_fields),
+        SceneGenerator::HarmonicParticleField(g) => {
+            expand_harmonic_particle_field(g, scene_seed, time, scene_fields)
+        }
     }
 }
 
@@ -302,6 +321,68 @@ fn expand_galaxy(
     SdfNode::Group { children }
 }
 
+fn expand_harmonic_particle_field(
+    g: &HarmonicParticleFieldGenerator,
+    seed: u32,
+    time: f32,
+    scene_fields: &[crate::fields::SceneField],
+) -> SdfNode {
+    let count = g.particle_count.max(12);
+    let mut children = Vec::new();
+    for i in 0..count {
+        let k = i as f32 / count as f32;
+        let fs =
+            fields::sample_fields(scene_fields, Vec3::new(k * 3.0 - 1.5, 0.0, 0.0), time, seed);
+        let pos = match g.mode {
+            HarmonicParticleMode::BassBursts => {
+                let a = k * std::f32::consts::TAU;
+                let burst = 1.0 + fs.energy * 0.6 + (time * 3.0 + k * 17.0).sin().abs() * 0.3;
+                Vec3::new(
+                    a.cos() * g.radius * burst,
+                    (k * 31.0).sin() * 0.3,
+                    a.sin() * g.radius * burst,
+                )
+            }
+            HarmonicParticleMode::MelodySpirals => {
+                let turns = 4.0;
+                let a = k * turns * std::f32::consts::TAU + time * 1.5;
+                let r = g.radius * (0.2 + 0.8 * k) * (1.0 + fs.scalar.abs() * 0.2);
+                Vec3::new(a.cos() * r, (k - 0.5) * g.radius * 1.6, a.sin() * r)
+            }
+            HarmonicParticleMode::ChordLattice => {
+                let gx = ((i % 6) as f32 - 2.5) * g.thickness.max(0.05) * 2.0;
+                let gy = (((i / 6) % 6) as f32 - 2.5) * g.thickness.max(0.05) * 2.0;
+                let gz = ((i / 36) as f32 - 0.5) * g.thickness.max(0.05) * 3.0;
+                Vec3::new(gx, gy + fs.scalar * 0.3, gz)
+            }
+        };
+
+        children.push(SdfNode::Transform {
+            modifiers: vec![SdfModifier::Translate { offset: pos }],
+            bounds_radius: Some(0.5),
+            child: Box::new(SdfNode::Primitive {
+                object: SdfObject {
+                    primitive: SdfPrimitive::Sphere {
+                        radius: 0.05 + 0.08 * hash01(seed, i as i32, 91),
+                    },
+                    modifiers: vec![],
+                    material: SdfMaterial {
+                        material_type: SdfMaterialType::SpectralReactive,
+                        base_color: Vec3::new(0.75, 0.85, 1.0),
+                        emissive_strength: 0.55,
+                        roughness: 0.2,
+                        pattern: crate::SdfPattern::Noise,
+                        parameters: Default::default(),
+                    },
+                    bounds_radius: Some(0.25),
+                },
+            }),
+        });
+    }
+
+    SdfNode::Group { children }
+}
+
 fn hash01(seed: u32, x: i32, y: i32) -> f32 {
     let mut n = seed as i32;
     n ^= x.wrapping_mul(374_761_393);
@@ -313,8 +394,9 @@ fn hash01(seed: u32, x: i32, y: i32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        CircuitBoardGenerator, FractalTempleGenerator, ParticleGalaxyGenerator, SceneGenerator,
-        TunnelGenerator, expand_generator,
+        CircuitBoardGenerator, FractalTempleGenerator, HarmonicParticleFieldGenerator,
+        HarmonicParticleMode, ParticleGalaxyGenerator, SceneGenerator, TunnelGenerator,
+        expand_generator,
     };
 
     #[test]
@@ -356,6 +438,12 @@ mod tests {
                 radius: 5.0,
                 noise_spread: 0.4,
                 rotation_speed: 0.8,
+            }),
+            SceneGenerator::HarmonicParticleField(HarmonicParticleFieldGenerator {
+                particle_count: 48,
+                radius: 3.2,
+                thickness: 0.2,
+                mode: HarmonicParticleMode::MelodySpirals,
             }),
         ];
         for g in gs {

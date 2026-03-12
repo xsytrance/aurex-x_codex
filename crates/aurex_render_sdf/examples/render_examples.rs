@@ -21,6 +21,9 @@ fn main() {
         "examples/circuit_rhythm_world.json",
         "examples/psytrance_dimension.json",
         "examples/prime_pulse_music.json",
+        "examples/harmonic_tunnel.json",
+        "examples/singing_fractal_temple.json",
+        "examples/prime_pulse_concert.json",
     ];
 
     for scene_path in scenes {
