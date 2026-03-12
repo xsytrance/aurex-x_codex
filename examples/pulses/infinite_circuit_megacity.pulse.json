@@ -1,0 +1,20 @@
+{
+  "metadata": {
+    "title": "Infinite Circuit Megacity Pulse",
+    "author": "Aurex Team",
+    "description": "Explorable electronic city pulse.",
+    "tags": ["world", "electronic", "city"],
+    "seed": 9001,
+    "pulse_kind": "World",
+    "duration_hint": 300.0,
+    "interactivity": "Hybrid",
+    "prime_affinity": "Electronic"
+  },
+  "pulse_kind": "World",
+  "scene": {
+    "scene_path": "../infinite_circuit_megacity.json"
+  },
+  "parameters": {
+    "exploration_speed": 1.0
+  }
+}

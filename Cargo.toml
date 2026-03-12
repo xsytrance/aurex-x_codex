@@ -11,6 +11,7 @@ members = [
   "crates/aurex_audio",
   "crates/aurex_scene",
   "crates/aurex_render_sdf",
+  "crates/aurex_pulse",
 ]
 resolver = "2"
 

@@ -75,6 +75,17 @@ name = "aurex_postfx"
 version = "0.1.0"
 
 [[package]]
+name = "aurex_pulse"
+version = "0.1.0"
+dependencies = [
+ "aurex_audio",
+ "aurex_render_sdf",
+ "aurex_scene",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "aurex_render"
 version = "0.1.0"
 dependencies = [
