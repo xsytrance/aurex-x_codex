@@ -267,6 +267,104 @@ impl EffectNode {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum GraphMorphStrategy {
+    NodeParameterBlend,
+    DistanceFieldBlend,
+    PatternCrossfade,
+    HarmonicPhaseBlend,
+    GeneratorMorph,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct GraphMorphSpec {
+    pub strategy: GraphMorphStrategy,
+    pub duration: f32,
+    #[serde(default = "default_morph_intensity")]
+    pub intensity: f32,
+}
+
+fn default_morph_intensity() -> f32 {
+    1.0
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub struct GraphMorphState {
+    pub progress: f32,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct GraphMorph;
+
+impl GraphMorph {
+    pub fn morph(
+        graph_a: &EffectGraph,
+        graph_b: &EffectGraph,
+        spec: &GraphMorphSpec,
+        state: GraphMorphState,
+    ) -> EffectGraph {
+        let p = state.progress.clamp(0.0, 1.0) * spec.intensity.max(0.0);
+        let mut out_nodes: Vec<EffectNode> = Vec::new();
+
+        let mut a_nodes = graph_a.nodes.clone();
+        let mut b_nodes = graph_b.nodes.clone();
+        a_nodes.sort_by_key(|n| n.id);
+        b_nodes.sort_by_key(|n| n.id);
+
+        for node_a in &a_nodes {
+            let node_b = b_nodes.iter().find(|n| n.id == node_a.id);
+            let mut mixed = node_a.clone();
+            if let Some(node_b) = node_b {
+                for (k, v_a) in &node_a.parameters {
+                    let v_b = node_b.parameters.get(k).copied().unwrap_or(*v_a);
+                    mixed
+                        .parameters
+                        .insert(k.clone(), blend_param(*v_a, v_b, p, spec.strategy));
+                }
+                for (k, v_b) in &node_b.parameters {
+                    mixed.parameters.entry(k.clone()).or_insert(*v_b);
+                }
+            }
+            out_nodes.push(mixed);
+        }
+
+        for node_b in &b_nodes {
+            if !out_nodes.iter().any(|n| n.id == node_b.id) {
+                out_nodes.push(node_b.clone());
+            }
+        }
+
+        out_nodes.sort_by_key(|n| n.id);
+
+        let mut connections = graph_a.connections.clone();
+        for c in &graph_b.connections {
+            if !connections.iter().any(|e| e.from == c.from && e.to == c.to) {
+                connections.push(c.clone());
+            }
+        }
+
+        EffectGraph {
+            nodes: out_nodes,
+            connections,
+        }
+    }
+}
+
+fn blend_param(a: f32, b: f32, p: f32, strategy: GraphMorphStrategy) -> f32 {
+    match strategy {
+        GraphMorphStrategy::NodeParameterBlend => a + (b - a) * p,
+        GraphMorphStrategy::DistanceFieldBlend => (a * (1.0 - p) + b * p).tanh(),
+        GraphMorphStrategy::PatternCrossfade => a * (1.0 - p).powf(1.5) + b * p,
+        GraphMorphStrategy::HarmonicPhaseBlend => {
+            let phase = p * std::f32::consts::PI;
+            a * phase.cos().abs() + b * phase.sin().abs()
+        }
+        GraphMorphStrategy::GeneratorMorph => {
+            let curved = p * p * (3.0 - 2.0 * p);
+            a + (b - a) * curved
+        }
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -348,6 +446,40 @@ mod tests {
         };
         graph.evaluate_scene(&mut a, ctx);
         graph.evaluate_scene(&mut b, ctx);
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn graph_morph_is_stable() {
+        let g1 = EffectGraph {
+            nodes: vec![EffectNode {
+                id: EffectNodeId(1),
+                name: "a".into(),
+                inputs: vec![],
+                outputs: vec![],
+                parameters: BTreeMap::from([("x".into(), 0.2)]),
+                node: EffectNodeKind::BloomNode,
+            }],
+            connections: vec![],
+        };
+        let g2 = EffectGraph {
+            nodes: vec![EffectNode {
+                id: EffectNodeId(1),
+                name: "a".into(),
+                inputs: vec![],
+                outputs: vec![],
+                parameters: BTreeMap::from([("x".into(), 0.8)]),
+                node: EffectNodeKind::BloomNode,
+            }],
+            connections: vec![],
+        };
+        let spec = GraphMorphSpec {
+            strategy: GraphMorphStrategy::GeneratorMorph,
+            duration: 2.0,
+            intensity: 1.0,
+        };
+        let a = GraphMorph::morph(&g1, &g2, &spec, GraphMorphState { progress: 0.5 });
+        let b = GraphMorph::morph(&g1, &g2, &spec, GraphMorphState { progress: 0.5 });
         assert_eq!(a, b);
     }
 }

@@ -2,11 +2,13 @@ pub mod automation;
 pub mod camera;
 pub mod demo;
 pub mod director;
+pub mod director_rules;
 pub mod effect_graph;
 pub mod fields;
 pub mod generators;
 pub mod harmonics;
 pub mod patterns;
+pub mod transition;
 
 use aurex_audio::ProceduralAudioConfig;
 use serde::{Deserialize, Serialize};

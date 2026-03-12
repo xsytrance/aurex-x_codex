@@ -25,3 +25,6 @@
 - `demo_sequence`
 
 These are optional and backward-compatible with existing scene JSON.
+
+## Related
+- Transition engine and director rules: `docs/sdk/transition_engine.md`

@@ -47,3 +47,6 @@ At `sdf` level:
 - Keep IDs stable for graph nodes.
 - Keep automation source/curve parameters explicit.
 - Keep transition durations/intensities numeric and fixed.
+
+## Related
+- Transition schema: `docs/sdk_ai/transition_schema.md`

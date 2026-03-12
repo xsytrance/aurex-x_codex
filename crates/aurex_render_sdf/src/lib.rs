@@ -8,11 +8,13 @@ use aurex_scene::{
     automation::{self, AutomationInput},
     camera::CameraSyncInput,
     director::CameraDirector,
+    director_rules::DirectorRuleSet,
     effect_graph,
     fields::{self, FieldSample},
     generators::{self, SceneGenerator},
     harmonics::HarmonicBand,
     patterns::{PatternContext, PatternNetwork, sample_network},
+    transition::TransitionContext,
 };
 use bytemuck::{Pod, Zeroable};
 use noise::{NoiseVec3, fbm, value_noise};
@@ -366,8 +368,51 @@ fn scene_at_time(scene: &Scene, time: RenderTime) -> Scene {
     let mut animated = scene.clone();
     let mut t = time.seconds;
 
+    let af_preview = if let Some(cfg) = &animated.sdf.audio {
+        analyze_procedural_audio(cfg, t)
+    } else {
+        AudioFeatures {
+            kick_energy: 0.0,
+            bass_energy: 0.0,
+            mid_energy: 0.0,
+            high_energy: 0.0,
+            low_freq_energy: 0.0,
+            mid_freq_energy: 0.0,
+            high_freq_energy: 0.0,
+            dominant_frequency: 0.0,
+            harmonic_ratios: [0.0, 0.0, 0.0],
+            current_beat: 0,
+            current_measure: 0,
+            current_phrase: 0,
+            beat_phase: 0.0,
+            spectral_centroid: 0.0,
+            tempo: 120.0,
+        }
+    };
+
     if let Some(demo_sequence) = animated.sdf.demo_sequence.clone() {
-        demo_sequence.apply_at_time(&mut animated, t);
+        let rule_set = DirectorRuleSet::default();
+        if let Some(blended) = demo_sequence.blend_scene_at_time(
+            &animated,
+            t,
+            TransitionContext {
+                seed: animated.sdf.seed,
+                time_seconds: t,
+                beat: af_preview.current_beat as f32 + af_preview.beat_phase,
+                measure: af_preview.current_measure as f32,
+                phrase: af_preview.current_phrase as f32,
+                tempo: af_preview.tempo,
+                low_freq_energy: af_preview.low_freq_energy,
+                mid_freq_energy: af_preview.mid_freq_energy,
+                high_freq_energy: af_preview.high_freq_energy,
+                dominant_frequency: af_preview.dominant_frequency,
+            },
+            &rule_set,
+        ) {
+            animated = blended;
+        } else {
+            demo_sequence.apply_at_time(&mut animated, t);
+        }
     }
 
     if let Some(graph) = animated.sdf.effect_graph.clone() {
@@ -377,7 +422,11 @@ fn scene_at_time(scene: &Scene, time: RenderTime) -> Scene {
             effect_graph::EffectContext {
                 time_seconds: t,
                 seed,
-                ..effect_graph::EffectContext::default()
+                bass_energy: af_preview.bass_energy,
+                mid_energy: af_preview.mid_energy,
+                high_energy: af_preview.high_energy,
+                tempo: af_preview.tempo,
+                beat_phase: af_preview.beat_phase,
             },
         );
     }

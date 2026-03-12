@@ -39,6 +39,10 @@ fn main() {
         "examples/pattern_automation_demo.json",
         "examples/harmonic_temple_growth.json",
         "examples/prime_pulse_demo_sequence.json",
+        "examples/psytrance_transition_demo.json",
+        "examples/fractal_cathedral_morph.json",
+        "examples/prime_pulse_awaken_demo.json",
+        "examples/aurex_showcase_demo.json",
     ];
 
     for scene_path in scenes {

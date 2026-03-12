@@ -18,3 +18,6 @@ Automation tracks connect musical/time signals to parameters:
 The demo sequencer arranges multiple scene blocks and transitions so a full show can be authored from pure math.
 
 Use it for arc-based storytelling: intro, buildup, drop, finale.
+
+## Related
+- Demo transition guide: `docs/sdk_human/how_demos_transition.md`
