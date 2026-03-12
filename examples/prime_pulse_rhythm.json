@@ -1,0 +1,33 @@
+{
+  "sdf": {
+    "seed": 711,
+    "camera": {"position": {"x": 0.0, "y": 1.4, "z": -9.0}, "target": {"x": 0.0, "y": 0.1, "z": 0.0}, "fov_degrees": 61.0, "aspect_ratio": 1.7777778},
+    "lighting": {
+      "ambient_light": 0.11,
+      "fog_color": {"x": 0.03, "y": 0.04, "z": 0.1},
+      "fog_density": 0.08,
+      "fog_height_falloff": 0.12,
+      "key_lights": [{"direction": {"x": -0.25, "y": -1.0, "z": -0.35}, "intensity": 1.2, "color": {"x": 0.8, "y": 0.95, "z": 1.0}}]
+    },
+    "rhythm": {
+      "beat_geometry": true,
+      "echo_effect": true,
+      "particle_mode": "Snare",
+      "time_warp": {"time_scale": 1.1, "time_delay": 0.03, "time_echo": 0.22, "time_reverse": false}
+    },
+    "harmonics": {
+      "geometry": {"band": "Bass", "strength": 1.0},
+      "materials": {"band": "High", "strength": 1.1},
+      "particles": {"band": "Chords", "strength": 0.8}
+    },
+    "generator": {"HarmonicParticleField": {"particle_count": 64, "radius": 3.7, "thickness": 0.22, "mode": "BassBursts"}},
+    "audio": {
+      "tempo": 150.0,
+      "seed": 711,
+      "tracks": [
+        {"name": "kick", "volume": 1.0, "patterns": [{"loops": 8, "notes": [{"pitch": 36, "duration_beats": 0.5, "velocity": 1.0, "instrument": "kick"}]}]},
+        {"name": "snare", "volume": 0.8, "patterns": [{"loops": 8, "notes": [{"pitch": 38, "duration_beats": 1.0, "velocity": 0.7, "instrument": "snare"}]}]}
+      ]
+    }
+  }
+}

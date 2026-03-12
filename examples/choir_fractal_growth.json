@@ -1,0 +1,29 @@
+{
+  "sdf": {
+    "seed": 712,
+    "camera": {"position": {"x": 0.0, "y": 1.9, "z": -9.8}, "target": {"x": 0.0, "y": 0.4, "z": 0.0}, "fov_degrees": 58.0, "aspect_ratio": 1.7777778},
+    "lighting": {
+      "ambient_light": 0.15,
+      "fog_color": {"x": 0.07, "y": 0.07, "z": 0.15},
+      "fog_density": 0.07,
+      "fog_height_falloff": 0.09,
+      "key_lights": [{"direction": {"x": -0.4, "y": -1.0, "z": -0.2}, "intensity": 1.1, "color": {"x": 1.0, "y": 0.9, "z": 0.75}}]
+    },
+    "rhythm": {
+      "beat_geometry": true,
+      "echo_effect": false,
+      "particle_mode": "Melody",
+      "time_warp": {"time_scale": 0.95, "time_delay": 0.02, "time_echo": 0.12, "time_reverse": false}
+    },
+    "fields": [
+      {"Rhythm": {"beat_strength": 0.8, "measure_strength": 0.7, "phrase_strength": 0.5, "tempo": 132.0}}
+    ],
+    "generator": {"FractalTemple": {"grid_size": 6, "pillar_height": 1.3, "pillar_spacing": 2.0, "fractal_scale": 1.0}},
+    "audio": {
+      "tempo": 132.0,
+      "seed": 712,
+      "tracks": [{"name": "choir", "volume": 0.8, "patterns": [{"loops": 6, "notes": [{"pitch": 52, "duration_beats": 1.0, "velocity": 0.75, "instrument": "pad"}]}]}],
+      "voice": {"preset": "Choir", "phonemes": ["AH", "OH", "EE"], "base_pitch_hz": 196.0, "phoneme_duration": 0.25}
+    }
+  }
+}
