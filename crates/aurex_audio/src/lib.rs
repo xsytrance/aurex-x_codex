@@ -5,7 +5,7 @@ pub mod voice;
 
 use analysis::{AudioFeatures, analyze_sequence};
 use aurex_core::Tick;
-use sequencer::AudioSequence;
+use sequencer::{AudioSequence, GoldenTempoMode};
 use serde::{Deserialize, Serialize};
 use synth::{OscillatorType, SynthNode, sample_synth};
 use voice::{Phoneme, VoicePreset, VoiceSynth};
@@ -86,6 +86,8 @@ pub struct ProceduralAudioConfig {
     pub voice: Option<VoiceSynthConfig>,
     #[serde(default)]
     pub seed: u32,
+    #[serde(default)]
+    pub golden_tempo_mode: Option<GoldenTempoMode>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -121,6 +123,7 @@ pub fn synthesize_mono_sample(cfg: &ProceduralAudioConfig, t: f32, sample_rate: 
     if !cfg.tracks.is_empty() {
         let seq = AudioSequence {
             bpm: cfg.tempo,
+            golden_tempo_mode: cfg.golden_tempo_mode.clone(),
             tracks: cfg.tracks.clone(),
         };
         sample += seq.sample_energy(t) * 0.3;
@@ -132,6 +135,7 @@ pub fn synthesize_mono_sample(cfg: &ProceduralAudioConfig, t: f32, sample_rate: 
 pub fn analyze_procedural_audio(cfg: &ProceduralAudioConfig, t: f32) -> AudioFeatures {
     let seq = AudioSequence {
         bpm: cfg.tempo,
+        golden_tempo_mode: cfg.golden_tempo_mode.clone(),
         tracks: cfg.tracks.clone(),
     };
     analyze_sequence(&seq, t, cfg.seed)
@@ -231,6 +235,7 @@ pub fn default_demo_audio_config(seed: u32) -> ProceduralAudioConfig {
             phoneme_duration: 0.22,
         }),
         seed,
+        golden_tempo_mode: None,
     }
 }
 

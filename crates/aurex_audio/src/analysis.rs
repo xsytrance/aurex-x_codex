@@ -42,10 +42,11 @@ pub fn analyze_sequence(seq: &AudioSequence, t: f32, seed: u32) -> AudioFeatures
     let centroid = (kick * 80.0 + bass * 180.0 + mid * 1200.0 + high * 4200.0)
         / (kick + bass + mid + high + 1e-6);
 
-    let beat_position = t / (60.0 / seq.bpm.max(1.0));
+    let tempo = seq.tempo_at_time(t, seed);
+    let beat_position = t / (60.0 / tempo.max(1.0));
     let current_beat = beat_position.floor().max(0.0) as u32;
     let current_measure = current_beat / 4;
-    let current_phrase = current_measure / 4;
+    let current_phrase = seq.phrase_at_beat(beat_position);
     let beat_phase = beat_position.fract().clamp(0.0, 1.0);
 
     AudioFeatures {
@@ -63,7 +64,7 @@ pub fn analyze_sequence(seq: &AudioSequence, t: f32, seed: u32) -> AudioFeatures
         current_phrase,
         beat_phase,
         spectral_centroid: centroid,
-        tempo: seq.bpm,
+        tempo,
     }
 }
 
@@ -81,6 +82,7 @@ mod tests {
     fn spectral_features_are_deterministic_and_bounded() {
         let seq = AudioSequence {
             bpm: 140.0,
+            golden_tempo_mode: None,
             tracks: vec![],
         };
         let a = analyze_sequence(&seq, 1.2, 44);

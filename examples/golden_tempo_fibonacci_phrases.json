@@ -1,0 +1,28 @@
+{
+  "scene_name": "Golden Tempo Fibonacci Phrases",
+  "seed": 424242,
+  "audio": {
+    "tempo": 128.0,
+    "seed": 91,
+    "golden_tempo_mode": {
+      "tempo_drift": 0.0618
+    },
+    "tracks": [
+      {
+        "name": "pulse",
+        "volume": 0.9,
+        "patterns": [
+          {
+            "loops": 47,
+            "notes": [
+              { "pitch": 48, "duration_beats": 1.0, "velocity": 0.9, "instrument": "fm_bass" },
+              { "pitch": 55, "duration_beats": 1.0, "velocity": 0.8, "instrument": "fm_bass" },
+              { "pitch": 60, "duration_beats": 2.0, "velocity": 0.75, "instrument": "pad" }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "notes": "Phrase bars progress as 5, 8, 13, 21 with deterministic golden tempo drift."
+}
