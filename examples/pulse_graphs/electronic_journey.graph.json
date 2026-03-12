@@ -12,6 +12,18 @@
     {
       "from": "AmbientIntroPulse",
       "to": "PsytranceTunnelPulse",
+      "transition_type": "Manual",
+      "trigger": "launch_jazz"
+    },
+    {
+      "from": "AmbientIntroPulse",
+      "to": "InfiniteCircuitCityPulse",
+      "transition_type": "Manual",
+      "trigger": "launch_electronic"
+    },
+    {
+      "from": "AmbientIntroPulse",
+      "to": "PsytranceTunnelPulse",
       "transition_type": "Timeline",
       "after_seconds": 12.0
     },

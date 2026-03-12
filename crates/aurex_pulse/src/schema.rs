@@ -5,6 +5,8 @@ use aurex_music::sequencer::MusicSequenceConfig;
 use aurex_scene::{Scene, SceneTimeline};
 use serde::{Deserialize, Serialize};
 
+use crate::boot_world::BootWorldGenerator;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum PulseKind {
     Game,
@@ -68,6 +70,8 @@ pub struct PulseDefinition {
     pub generators: Vec<PulseGeneratorBinding>,
     #[serde(default)]
     pub music: Option<MusicSequenceConfig>,
+    #[serde(default)]
+    pub boot_world: Option<BootWorldGenerator>,
     #[serde(default)]
     pub parameters: BTreeMap<String, serde_json::Value>,
 }

@@ -1,3 +1,4 @@
+pub mod boot_world;
 pub mod diagnostics;
 pub mod loader;
 pub mod pulse_graph;
@@ -11,6 +12,7 @@ mod tests {
     use std::path::PathBuf;
 
     use crate::{
+        boot_world::{BootWorldGenerator, BootWorldState, District, DistrictPrime, PulsePortal},
         loader::load_pulse_from_str,
         pulse_graph::{
             PulseGraph, PulseGraphRunner, PulseNode, PulseTransition, PulseTransitionKind,
@@ -150,5 +152,70 @@ mod tests {
             .update(1.0 / 60.0)
             .expect("graph update should work");
         assert_eq!(graph_runner.active_node_id, "b");
+    }
+
+    #[test]
+    fn boot_world_portal_emits_manual_trigger_for_graph() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("workspace root parent")
+            .parent()
+            .expect("workspace root")
+            .to_path_buf();
+        let a_path = root
+            .join("examples/pulses/infinite_circuit_megacity.pulse.json")
+            .to_string_lossy()
+            .to_string();
+        let b_path = root
+            .join("examples/pulses/jazz_improv_world.pulse.json")
+            .to_string_lossy()
+            .to_string();
+
+        let graph = PulseGraph {
+            name: "boot_graph".into(),
+            seed: 7,
+            entry_node: "hub".into(),
+            nodes: vec![
+                PulseNode {
+                    id: "hub".into(),
+                    pulse_path: a_path,
+                },
+                PulseNode {
+                    id: "jazz".into(),
+                    pulse_path: b_path,
+                },
+            ],
+            transitions: vec![PulseTransition {
+                from: "hub".into(),
+                to: "jazz".into(),
+                kind: PulseTransitionKind::Manual {
+                    trigger: "portal_jazz".into(),
+                },
+            }],
+        };
+
+        let mut graph_runner = PulseGraphRunner::load(graph, None).expect("graph load");
+        let boot_cfg = BootWorldGenerator {
+            seed: 1,
+            districts: vec![District {
+                id: "jazz_district".into(),
+                prime: DistrictPrime::Jazz,
+                center: aurex_scene::Vec3::new(0.0, 0.0, 0.0),
+                radius: 5.0,
+                pulse_refs: vec!["jazz".into()],
+            }],
+            portals: vec![PulsePortal {
+                id: "jazz_portal".into(),
+                trigger: "portal_jazz".into(),
+                target_node: "jazz".into(),
+                position: aurex_scene::Vec3::new(0.0, 0.0, 0.0),
+                activation_radius: 2.0,
+            }],
+        };
+        let mut state = BootWorldState::new();
+        state.update_player_position(&boot_cfg, aurex_scene::Vec3::new(0.5, 0.0, 0.0));
+        state.emit_portal_triggers(&boot_cfg, &mut graph_runner);
+        graph_runner.update(0.0).expect("update graph");
+        assert_eq!(graph_runner.active_node_id, "jazz");
     }
 }

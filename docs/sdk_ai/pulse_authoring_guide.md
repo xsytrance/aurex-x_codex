@@ -48,3 +48,15 @@ Transition variants:
 
 Reference example:
 - `examples/pulse_graphs/electronic_journey.graph.json`
+
+## Boot World authoring
+Boot World is authored as a normal pulse with an additional optional `boot_world` block:
+
+- `seed`
+- `districts[]` (`id`, `prime`, `center`, `radius`, `pulse_refs`)
+- `portals[]` (`id`, `trigger`, `target_node`, `position`, `activation_radius`)
+
+Portals should emit manual trigger strings that are present in PulseGraph transitions.
+
+Reference:
+- `examples/pulses/boot_world.pulse.json`

@@ -61,3 +61,14 @@ Supported transition kinds:
 - generator event trigger
 
 Example graph: `examples/pulse_graphs/electronic_journey.graph.json`
+
+## Boot World pulse hub
+Pulse definitions may include optional `boot_world` metadata for hub-style experiences.
+
+Boot World uses:
+- `BootWorldGenerator`
+- `District`
+- `PulsePortal`
+- `BootWorldState`
+
+The runtime tracks district/portal proximity state, and portal systems can emit manual triggers into `PulseGraphRunner` for pulse launches.

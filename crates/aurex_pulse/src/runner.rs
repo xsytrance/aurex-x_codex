@@ -7,6 +7,7 @@ use aurex_render_sdf::{
 };
 use aurex_scene::{Scene, load_scene_from_json_path};
 
+use crate::boot_world::{BootWorldGenerator, BootWorldState};
 use crate::diagnostics::{PulseDiagnostics, RhythmSummary};
 use crate::schema::{PulseDefinition, PulseSceneSource};
 
@@ -27,6 +28,8 @@ pub struct PulseRunner {
     pub music_sequencer: Option<MusicSequencer>,
     pub rhythm_field: Option<RhythmField>,
     pub runtime_context: PulseRuntimeContext,
+    pub boot_world: Option<BootWorldGenerator>,
+    pub boot_world_state: Option<BootWorldState>,
     base_ambient_light: f32,
 }
 
@@ -52,6 +55,8 @@ impl PulseRunner {
             music_sequencer: None,
             rhythm_field: None,
             runtime_context: PulseRuntimeContext::default(),
+            boot_world: None,
+            boot_world_state: None,
             base_ambient_light,
         };
         runner.diagnostics.lifecycle.load_ms = load_start.elapsed().as_secs_f64() * 1000.0;
@@ -73,6 +78,10 @@ impl PulseRunner {
             }
             self.music_sequencer = Some(seq);
         }
+        if let Some(boot_world) = self.definition.boot_world.clone() {
+            self.boot_world = Some(boot_world);
+            self.boot_world_state = Some(BootWorldState::new());
+        }
         self.scene.sdf.seed = self.definition.metadata.seed;
         self.base_ambient_light = self.scene.sdf.lighting.ambient_light;
         self.state = PulseState::Initialized;
@@ -82,6 +91,11 @@ impl PulseRunner {
     pub fn update(&mut self, delta_seconds: f32) {
         let update_start = Instant::now();
         self.runtime_seconds = (self.runtime_seconds + delta_seconds).max(0.0);
+
+        if let (Some(cfg), Some(state)) = (&self.boot_world, &mut self.boot_world_state) {
+            state.update_player_position(cfg, self.scene.sdf.camera.position);
+        }
+
         if let Some(seq) = &mut self.music_sequencer {
             seq.update(delta_seconds);
             self.rhythm_field = Some(seq.rhythm_field);

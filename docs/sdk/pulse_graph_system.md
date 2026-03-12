@@ -35,3 +35,14 @@ Given fixed graph seed, pulse definitions, and timestep progression, transition 
 
 ## Example
 `examples/pulse_graphs/electronic_journey.graph.json`
+
+## Boot World integration
+Boot World runs as a normal pulse (`examples/pulses/boot_world.pulse.json`) and defines districts + portals.
+
+Core boot-world types (in `aurex_pulse::boot_world`):
+- `BootWorldGenerator`
+- `District`
+- `PulsePortal`
+- `BootWorldState`
+
+Portal proximity emits manual triggers into `PulseGraphRunner`, enabling world-space pulse launching without modifying renderer stages.

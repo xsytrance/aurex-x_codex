@@ -24,3 +24,5 @@ Transitions can be:
 - timeline based (after a duration)
 - musical cue based (RhythmField events)
 - generator/scene event based
+
+Boot World is a special pulse that acts as a hub. Its districts (Electronic, Jazz, Rock, Ambient) contain portals. Walking near a portal can trigger a graph transition into the linked pulse.
