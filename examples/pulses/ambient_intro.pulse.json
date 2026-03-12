@@ -1,0 +1,17 @@
+{
+  "metadata": {
+    "title": "Ambient Intro Pulse",
+    "author": "Aurex Team",
+    "description": "Soft opening pulse for PulseGraph journeys.",
+    "tags": ["ambient", "intro"],
+    "seed": 9101,
+    "pulse_kind": "Ambient",
+    "duration_hint": 45.0,
+    "interactivity": "Passive",
+    "prime_affinity": "Ambient"
+  },
+  "pulse_kind": "Ambient",
+  "scene": {
+    "scene_path": "../synesthesia_tunnel.json"
+  }
+}

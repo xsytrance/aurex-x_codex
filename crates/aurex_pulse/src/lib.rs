@@ -1,5 +1,6 @@
 pub mod diagnostics;
 pub mod loader;
+pub mod pulse_graph;
 pub mod runner;
 pub mod schema;
 
@@ -7,8 +8,13 @@ pub mod schema;
 mod tests {
     use aurex_render_sdf::RenderConfig;
 
+    use std::path::PathBuf;
+
     use crate::{
         loader::load_pulse_from_str,
+        pulse_graph::{
+            PulseGraph, PulseGraphRunner, PulseNode, PulseTransition, PulseTransitionKind,
+        },
         runner::{PulseRunner, PulseState},
     };
 
@@ -99,5 +105,50 @@ mod tests {
         assert!(runner.runtime_context().rhythm_field.is_some());
         assert!(runner.diagnostics.rhythm_summary.is_some());
         assert!(runner.scene.sdf.lighting.ambient_light >= baseline_ambient);
+    }
+
+    #[test]
+    fn pulse_graph_transitions_by_timeline() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("workspace root parent")
+            .parent()
+            .expect("workspace root")
+            .to_path_buf();
+        let a_path = root
+            .join("examples/pulses/infinite_circuit_megacity.pulse.json")
+            .to_string_lossy()
+            .to_string();
+        let b_path = root
+            .join("examples/pulses/jazz_improv_world.pulse.json")
+            .to_string_lossy()
+            .to_string();
+
+        let graph = PulseGraph {
+            name: "test_graph".into(),
+            seed: 12,
+            entry_node: "a".into(),
+            nodes: vec![
+                PulseNode {
+                    id: "a".into(),
+                    pulse_path: a_path,
+                },
+                PulseNode {
+                    id: "b".into(),
+                    pulse_path: b_path,
+                },
+            ],
+            transitions: vec![PulseTransition {
+                from: "a".into(),
+                to: "b".into(),
+                kind: PulseTransitionKind::Timeline { after_seconds: 0.0 },
+            }],
+        };
+        let mut graph_runner = PulseGraphRunner::load(graph, None).expect("graph should load");
+        assert_eq!(graph_runner.active_node_id, "a");
+        graph_runner
+            .update(1.0 / 60.0)
+            .expect("graph update should work");
+        assert_eq!(graph_runner.active_node_id, "b");
     }
 }

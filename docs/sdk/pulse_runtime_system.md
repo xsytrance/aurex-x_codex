@@ -43,3 +43,21 @@ Rhythm integration points:
 - stores `RhythmField` in pulse runtime context each update
 - publishes a diagnostics rhythm summary (`beat_phase`, `bar_index`, `bass_energy`)
 - applies lightweight scene modulation by scaling `scene.sdf.lighting.ambient_light` from `beat_strength` and `harmonic_energy`
+
+## PulseGraph orchestration
+`aurex_pulse::pulse_graph` adds graph-level orchestration on top of `PulseRunner`:
+
+- `PulseGraph`
+- `PulseNode`
+- `PulseTransition`
+- `PulseGraphRunner`
+
+`PulseGraphRunner` wraps and coordinates `PulseRunner` instances (it does not modify renderer stages).
+
+Supported transition kinds:
+- manual trigger
+- timeline threshold (`after_seconds`)
+- musical cue from `RhythmField`
+- generator event trigger
+
+Example graph: `examples/pulse_graphs/electronic_journey.graph.json`
