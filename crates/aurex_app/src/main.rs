@@ -313,37 +313,9 @@ fn runtime_diagnostics_report() -> String {
 fn main() {
     println!("{}", runtime_diagnostics_report());
 
-    let audio_boot_animator = BootAnimator::with_style_and_recipe(
-        BootAnimationConfig {
-            seed: 1337,
-            frame_count: 12,
-            ..BootAnimationConfig::default()
-        },
-        BootStyleProfile::from_preset(BootStylePreset::NeonStorm),
-        BootSequenceRecipe::GrandReveal,
-    );
-    let audio_boot_timeline = audio_boot_animator.generate_timeline(1);
-
     let _runtime_audio = match start_runtime_sine_output() {
         Ok(audio) => {
-            audio.set_pulse(0.3);
-            let pulse_control = audio.pulse_control();
-            let pulse_frames = audio_boot_timeline.frames.clone();
-            thread::spawn(move || {
-                loop {
-                    for frame in &pulse_frames {
-                        let normalized_glow = (frame.styled_glow / 1.6).clamp(0.0, 1.0);
-                        let phase_energy = match frame.phase {
-                            aurex_render::BootPhase::Ignition => 0.74 + frame.phase_t * 0.12,
-                            aurex_render::BootPhase::PulseLock => 0.86 + frame.phase_t * 0.12,
-                            aurex_render::BootPhase::Reveal => 0.7 + frame.phase_t * 0.22,
-                        };
-                        let pulse = (normalized_glow * phase_energy).clamp(0.0, 1.0);
-                        pulse_control.set_pulse(pulse);
-                        thread::sleep(Duration::from_millis(85));
-                    }
-                }
-            });
+            audio.set_pulse(0.35);
             println!("audio_runtime=started detail:cpal stream active");
             Some(audio)
         }
@@ -410,8 +382,8 @@ boot_screen_first=tick:1 progress:0.000 glow:0.566 glyphs:1
 boot_screen_latest=tick:12 progress:0.750 glow:1.108 glyphs:6
 boot_postfx_first=tick:1 bloom:0.752 fog:0.050
 boot_postfx_latest=tick:12 bloom:1.108 fog:0.560
-boot_raster_first=320x180 lit:11669 checksum:2473417577251446740
-boot_raster_latest=320x180 lit:12169 checksum:3319277554687216313";
+boot_raster_first=320x180 lit:17947 checksum:11461490184831736471
+boot_raster_latest=320x180 lit:19431 checksum:17951859828050323094";
 
         assert_eq!(runtime_diagnostics_report(), expected);
     }
