@@ -67,6 +67,16 @@ fn main() {
         runner.diagnostics.resonance_event_ready
     );
 
+    println!(
+        "prime_pulse distance={:.3} layer={} unlocked_layers={} force_field_active={} intensity={:.3} proximity={:.3}",
+        runner.diagnostics.prime_pulse_distance,
+        runner.diagnostics.prime_pulse_layer,
+        runner.diagnostics.prime_pulse_layers_unlocked,
+        runner.diagnostics.prime_pulse_force_field_active,
+        runner.diagnostics.prime_pulse_intensity,
+        runner.diagnostics.prime_pulse_proximity,
+    );
+
     if let Some(diag) = &runner.diagnostics.last_frame {
         println!(
             "renderer stages={:?} total_ms={:.3}",

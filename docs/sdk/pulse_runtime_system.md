@@ -94,3 +94,15 @@ Idle event rules are intentionally minimal:
 - later long-idle thresholds => `resonance_event_ready = true`
 
 No world mutation is performed yet; this only exposes deterministic state for future systems.
+
+## Prime Pulse megastructure
+Boot World now includes an optional Prime Pulse gate-state layer with resonance-based unlock progression.
+
+Runtime outputs:
+- proximity distance to Prime Pulse
+- current active resonance gate layer
+- unlocked layer count
+- force-field active state
+- modulation hooks (`prime_pulse_intensity`, `prime_pulse_proximity`)
+
+This remains logic/diagnostics only (no renderer stage changes, no heavy world mutation yet).

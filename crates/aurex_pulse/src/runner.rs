@@ -10,6 +10,7 @@ use aurex_scene::{Scene, load_scene_from_json_path};
 use crate::boot_world::{BootWorldGenerator, BootWorldState};
 use crate::diagnostics::{PulseDiagnostics, RhythmSummary};
 use crate::living_boot::LivingBootState;
+use crate::prime_pulse::PrimePulseState;
 use crate::resonance::ResonanceTracker;
 use crate::schema::{PulseDefinition, PulseSceneSource};
 
@@ -88,6 +89,7 @@ impl PulseRunner {
             if let Some(tracker) = &self.resonance_tracker {
                 state.living_boot_state = Some(LivingBootState::from_profile(tracker.profile()));
             }
+            state.prime_pulse_state = Some(PrimePulseState::default_boot_world());
             self.boot_world_state = Some(state);
         }
         if let (Some(tracker), Some(prime)) = (
@@ -138,6 +140,18 @@ impl PulseRunner {
                 self.diagnostics.warning_issued = living.idle_state.warning_issued;
                 self.diagnostics.resonance_event_count = living.idle_state.event_count;
                 self.diagnostics.resonance_event_ready = living.idle_state.resonance_event_ready;
+            }
+
+            if let (Some(tracker), Some(prime_pulse)) =
+                (&self.resonance_tracker, &mut state.prime_pulse_state)
+            {
+                prime_pulse.update(state.player_position, tracker.profile());
+                self.diagnostics.prime_pulse_distance = prime_pulse.proximity_distance;
+                self.diagnostics.prime_pulse_layer = prime_pulse.active_layer;
+                self.diagnostics.prime_pulse_layers_unlocked = prime_pulse.unlocked_layers;
+                self.diagnostics.prime_pulse_force_field_active = prime_pulse.force_field_active();
+                self.diagnostics.prime_pulse_intensity = prime_pulse.prime_pulse_intensity();
+                self.diagnostics.prime_pulse_proximity = prime_pulse.prime_pulse_proximity();
             }
         }
 

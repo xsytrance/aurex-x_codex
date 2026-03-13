@@ -87,3 +87,16 @@ Living Boot state is derived from the runtime resonance profile and currently ex
 - deterministic idle warning + resonance-event-ready state
 
 This is an extensible framework for future boot-screen personalization and boot-world evolution.
+
+## Prime Pulse gate progression
+Boot World runtime now tracks Prime Pulse gate layers from resonance profile data.
+
+Key outputs:
+- `prime_pulse_distance`
+- `prime_pulse_layer`
+- `prime_pulse_layers_unlocked`
+- `prime_pulse_force_field_active`
+- `prime_pulse_intensity`
+- `prime_pulse_proximity`
+
+This is currently logical gating + diagnostics only, intended for future Pulse Navigator and world mutation systems.

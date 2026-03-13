@@ -4,6 +4,7 @@ use aurex_scene::Vec3;
 use serde::{Deserialize, Serialize};
 
 use crate::living_boot::LivingBootState;
+use crate::prime_pulse::PrimePulseState;
 use crate::pulse_graph::PulseGraphRunner;
 use crate::resonance::{PrimeFaction, ResonanceTracker};
 
@@ -50,6 +51,8 @@ pub struct BootWorldState {
     pub resonance_tracker: Option<serde_json::Value>,
     #[serde(default)]
     pub living_boot_state: Option<LivingBootState>,
+    #[serde(default)]
+    pub prime_pulse_state: Option<PrimePulseState>,
 }
 
 impl Default for BootWorldState {
@@ -61,6 +64,7 @@ impl Default for BootWorldState {
             launched_portals: BTreeSet::new(),
             resonance_tracker: None,
             living_boot_state: None,
+            prime_pulse_state: None,
         }
     }
 }

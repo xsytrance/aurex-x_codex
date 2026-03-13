@@ -36,3 +36,9 @@ The Living Boot Screen reacts to your top resonance primes and idle behavior:
 - later long idle periods prepare resonance events
 
 These events are currently state-only (no major world mutation yet), so behavior stays predictable while future systems are added.
+
+At the center of Boot World is the Prime Pulse megastructure. It has layered resonance gates:
+- as your resonance profile grows, more layers unlock
+- until then, a force-field state remains active
+
+Current implementation exposes progression and proximity state for future world changes and Pulse Navigator-style features.

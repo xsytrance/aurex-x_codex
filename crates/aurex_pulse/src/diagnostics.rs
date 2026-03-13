@@ -24,6 +24,12 @@ pub struct PulseDiagnostics {
     pub warning_issued: bool,
     pub resonance_event_count: u32,
     pub resonance_event_ready: bool,
+    pub prime_pulse_distance: f32,
+    pub prime_pulse_layer: u32,
+    pub prime_pulse_layers_unlocked: u32,
+    pub prime_pulse_force_field_active: bool,
+    pub prime_pulse_intensity: f32,
+    pub prime_pulse_proximity: f32,
     pub last_frame: Option<FrameDiagnostics>,
 }
 
