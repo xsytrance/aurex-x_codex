@@ -1,4 +1,5 @@
 pub mod analysis;
+pub mod runtime_toolkit;
 pub mod sequencer;
 pub mod synth;
 pub mod voice;
@@ -13,6 +14,7 @@ use std::sync::{
     atomic::{AtomicU32, AtomicUsize, Ordering},
 };
 
+use runtime_toolkit::{Instrument, InstrumentVoice};
 use synth::{OscillatorType, SynthNode, sample_synth};
 use voice::{Phoneme, VoicePreset, VoiceSynth};
 
@@ -428,17 +430,15 @@ pub fn start_runtime_sine_output() -> Result<RuntimeAudioOutput, String> {
 #[derive(Debug, Default, Clone, Copy)]
 struct RuntimeBootSynthState {
     sub_phase: f32,
-    bass_phase: f32,
-    bass_env: f32,
-    bass_sweep: f32,
-    pad_phases: [f32; 7],
-    lead_phase: f32,
     width_phase: f32,
-    hat_env: f32,
-    noise_state: u32,
     seq_phase: f32,
     seq_step: u32,
     last_pulse: f32,
+    bass_voice: Option<InstrumentVoice>,
+    pad_voice: Option<InstrumentVoice>,
+    lead_voice: Option<InstrumentVoice>,
+    hat_voice: Option<InstrumentVoice>,
+    kick_voice: Option<InstrumentVoice>,
 }
 
 fn write_boot_data<T>(
@@ -451,23 +451,25 @@ fn write_boot_data<T>(
 ) where
     T: cpal::Sample + cpal::FromSample<f32>,
 {
+    if state.bass_voice.is_none() {
+        state.bass_voice = Some(InstrumentVoice::new(Instrument::trance_bass(), 13));
+        state.pad_voice = Some(InstrumentVoice::new(Instrument::supersaw_pad(), 23));
+        state.lead_voice = Some(InstrumentVoice::new(Instrument::analog_lead(), 31));
+        state.hat_voice = Some(InstrumentVoice::new(Instrument::noise_hat(), 47));
+        state.kick_voice = Some(InstrumentVoice::new(Instrument::kick_drum(), 59));
+    }
+
     let pulse_value = f32::from_bits(pulse.load(Ordering::Relaxed)).clamp(0.0, 1.0);
     let sub_freq_hz = 42.0 + pulse_value * 18.0;
     let beat_hz = 1.4 + pulse_value * 1.8;
-    let master_amp = 0.048 + pulse_value * 0.022;
+    let master_amp = 0.044 + pulse_value * 0.02;
     let bass_freq_hz = 53.0 + pulse_value * 16.0;
     let pad_base_hz = 108.0 + pulse_value * 28.0;
     let lead_hz = 216.0 + pulse_value * 44.0;
 
     let sub_inc = sub_freq_hz / sample_rate;
-    let bass_inc = bass_freq_hz / sample_rate;
-    let lead_inc = lead_hz / sample_rate;
     let width_inc = (0.07 + pulse_value * 0.08) / sample_rate;
     let beat_inc = beat_hz / sample_rate;
-
-    if state.noise_state == 0 {
-        state.noise_state = 0xA5A5_1F2Du32;
-    }
 
     const BASS_NOTES: [u8; 8] = [36, 36, 39, 36, 43, 39, 36, 34];
     const PAD_NOTES: [u8; 4] = [48, 55, 53, 60];
@@ -475,8 +477,6 @@ fn write_boot_data<T>(
 
     for frame in output.chunks_mut(channels.max(1)) {
         state.sub_phase = (state.sub_phase + sub_inc).fract();
-        state.bass_phase = (state.bass_phase + bass_inc).fract();
-        state.lead_phase = (state.lead_phase + lead_inc).fract();
         state.width_phase = (state.width_phase + width_inc).fract();
 
         let next_seq = (state.seq_phase + beat_inc).fract();
@@ -502,48 +502,66 @@ fn write_boot_data<T>(
             if step % 2 == 0 {
                 events.push(AudioEvent::LeadNote(lead_note));
             }
-
-            state.bass_env = 1.0;
-            state.bass_sweep = 1.0;
-            state.hat_env = 1.0;
+            if let Some(voice) = state.bass_voice.as_mut() {
+                voice.note_on();
+            }
+            if let Some(voice) = state.pad_voice.as_mut() {
+                if step % 2 == 0 {
+                    voice.note_on();
+                } else {
+                    voice.note_off();
+                }
+            }
+            if let Some(voice) = state.lead_voice.as_mut() {
+                if step % 2 == 0 {
+                    voice.note_on();
+                } else {
+                    voice.note_off();
+                }
+            }
+            if let Some(voice) = state.hat_voice.as_mut() {
+                voice.note_on();
+            }
+            if let Some(voice) = state.kick_voice.as_mut() {
+                voice.note_on();
+            }
             state.seq_step = (step + 1) & 15;
-        }
-
-        if (pulse_value - state.last_pulse) > 0.2 {
-            state.hat_env = (state.hat_env + 0.35).clamp(0.0, 1.0);
         }
 
         let sub_sine = (state.sub_phase * std::f32::consts::TAU).sin();
         let sub_tri = 4.0 * (state.sub_phase - 0.5).abs() - 1.0;
         let sub_layer = sub_sine * 0.75 + sub_tri * 0.25;
 
-        let detunes = [-0.021_f32, -0.013, -0.008, 0.0, 0.008, 0.013, 0.021];
-        let mut supersaw = 0.0;
-        for (idx, detune) in detunes.iter().enumerate() {
-            let inc = (pad_base_hz * (1.0 + detune)) / sample_rate;
-            state.pad_phases[idx] = (state.pad_phases[idx] + inc).fract();
-            let saw = state.pad_phases[idx] * 2.0 - 1.0;
-            supersaw += saw;
-        }
-        let pad = supersaw / 7.0;
+        let bass = state
+            .bass_voice
+            .as_mut()
+            .map(|v| v.sample(bass_freq_hz, sample_rate))
+            .unwrap_or(0.0);
+        let pad = state
+            .pad_voice
+            .as_mut()
+            .map(|v| v.sample(pad_base_hz, sample_rate))
+            .unwrap_or(0.0);
+        let lead = state
+            .lead_voice
+            .as_mut()
+            .map(|v| v.sample(lead_hz, sample_rate))
+            .unwrap_or(0.0);
+        let hat = state
+            .hat_voice
+            .as_mut()
+            .map(|v| v.sample(7_000.0 + pulse_value * 2_000.0, sample_rate))
+            .unwrap_or(0.0);
+        let kick_pitch = (90.0 + pulse_value * 20.0) * (1.0 + (1.0 - state.seq_phase).powf(2.0));
+        let kick = state
+            .kick_voice
+            .as_mut()
+            .map(|v| v.sample(kick_pitch, sample_rate))
+            .unwrap_or(0.0);
 
-        let bass_body = (state.bass_phase * std::f32::consts::TAU).sin();
-        let bass_voice = bass_body * state.bass_env * (0.65 + 0.35 * state.bass_sweep);
-        state.bass_env *= 0.9963 - pulse_value * 0.0009;
-        state.bass_sweep *= 0.9925;
-
-        state.noise_state = state
-            .noise_state
-            .wrapping_mul(1_664_525)
-            .wrapping_add(1_013_904_223);
-        let noise = ((state.noise_state >> 9) as f32 / (u32::MAX >> 9) as f32) * 2.0 - 1.0;
-        let hat = noise * state.hat_env;
-        state.hat_env *= 0.975 - pulse_value * 0.01;
-
-        let lead = (state.lead_phase * std::f32::consts::TAU).sin() * (0.25 + pulse_value * 0.2);
-
-        let center = (sub_layer * 0.42 + bass_voice * 0.24 + pad * 0.18 + hat * 0.05 + lead * 0.11)
-            * master_amp;
+        let center =
+            (sub_layer * 0.34 + bass * 0.22 + pad * 0.2 + lead * 0.1 + hat * 0.05 + kick * 0.2)
+                * master_amp;
         let width = ((state.width_phase * std::f32::consts::TAU).sin() * 0.5 + 0.5)
             * (0.008 + pulse_value * 0.012);
         let left = (center + width).clamp(-0.18, 0.18);
