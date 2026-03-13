@@ -81,8 +81,13 @@ const WORLD_SCALES: &[ScaleType] = &[
     ScaleType::Pentatonic,
     ScaleType::HarmonicMinor,
 ];
+const FUSION_SCALES: &[ScaleType] = &[
+    ScaleType::Dorian,
+    ScaleType::Mixolydian,
+    ScaleType::HarmonicMinor,
+];
 
-const STYLE_PROFILES: [StyleProfile; 10] = [
+const STYLE_PROFILES: [StyleProfile; 11] = [
     StyleProfile {
         name: "Electronic",
         tempo_min: 124.0,
@@ -193,6 +198,17 @@ const STYLE_PROFILES: [StyleProfile; 10] = [
         drum_pattern_type: DrumPatternType::WorldPulse,
         vocal_type: Some(VocalType::Chant),
     },
+    StyleProfile {
+        name: "Fusion",
+        tempo_min: 100.0,
+        tempo_max: 148.0,
+        scale_options: FUSION_SCALES,
+        bass_instrument: InstrumentPreset::TranceBass,
+        pad_instrument: InstrumentPreset::SupersawPad,
+        lead_instrument: InstrumentPreset::AnalogLead,
+        drum_pattern_type: DrumPatternType::Shuffle,
+        vocal_type: Some(VocalType::Scat),
+    },
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -206,19 +222,33 @@ pub fn choose_style(seed: u64) -> StyleProfile {
     STYLE_PROFILES[(seed as usize) % STYLE_PROFILES.len()]
 }
 
-pub fn choose_style_selection(seed: u64) -> StyleSelection {
-    let profile = choose_style(seed);
+pub fn find_style_profile(name: &str) -> Option<StyleProfile> {
+    STYLE_PROFILES
+        .iter()
+        .find(|profile| profile.name.eq_ignore_ascii_case(name))
+        .copied()
+}
+
+pub fn choose_style_profile_by_name_or_seed(name: &str, seed: u64) -> StyleProfile {
+    find_style_profile(name).unwrap_or_else(|| choose_style(seed))
+}
+
+pub fn choose_style_selection_for_profile(profile: StyleProfile, seed: u64) -> StyleSelection {
     let tempo_t = splitmix_f32(seed ^ 0x5EED_BAAD_77AA_1177);
     let bpm = profile.tempo_min + (profile.tempo_max - profile.tempo_min) * tempo_t;
-    let scale_idx = ((splitmix_u64(seed ^ 0xA9E3_00FF_1CE0_F00D) as usize)
-        % profile.scale_options.len())
-    .max(0);
+    let scale_idx =
+        (splitmix_u64(seed ^ 0xA9E3_00FF_1CE0_F00D) as usize) % profile.scale_options.len();
 
     StyleSelection {
         profile,
         bpm,
         scale: profile.scale_options[scale_idx],
     }
+}
+
+pub fn choose_style_selection(seed: u64) -> StyleSelection {
+    let profile = choose_style(seed);
+    choose_style_selection_for_profile(profile, seed)
 }
 
 pub fn styled_audio_config(seed: u64) -> ProceduralAudioConfig {

@@ -1,6 +1,8 @@
 use aurex_audio::song_planner::{SongPlan, generate_song_plan};
 use aurex_render::typography::{TypographyStyle, choose_typography_style};
 
+use crate::determinism::{splitmix_f32, splitmix_u64};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VisualTheme {
     Reactor,
@@ -61,17 +63,6 @@ pub fn generate_experience(seed: u64) -> ExperiencePlan {
         typography_style: choose_typography_style(seed ^ 0xDEAD_BEEF_5000_0001),
         visual_theme,
     }
-}
-
-fn splitmix_u64(mut x: u64) -> u64 {
-    x = x.wrapping_add(0x9E37_79B9_7F4A_7C15);
-    x = (x ^ (x >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-    x ^ (x >> 31)
-}
-
-fn splitmix_f32(seed: u64) -> f32 {
-    (splitmix_u64(seed) as f64 / u64::MAX as f64) as f32
 }
 
 #[cfg(test)]

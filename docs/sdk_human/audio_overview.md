@@ -103,3 +103,31 @@ The generated plan includes:
 - a visual theme for scene mood
 
 Because generation is deterministic, the same seed always produces the same audiovisual plan.
+
+
+## Identity Engine and Creative Director
+
+Aurex now adds an identity layer above songs and visuals so generated experiences feel authored rather than random.
+
+### Identity Engine
+
+`identity_engine` deterministically generates an `IdentityProfile` from seed:
+
+- identity type (solo artist, collective, mythic entity, AI construct, anonymous order)
+- generated name
+- symbol motif
+- tone
+- color palette
+- genre bias
+
+### Creative Director
+
+`creative_director::direct_experience(identity_seed, experience_seed)` combines identity + experience plan and aligns them.
+
+Examples of alignment:
+
+- tone influences visual theme and typography intensity
+- genre bias nudges song style family selection
+- identity name is stamped into the final experience title
+
+This all occurs in planning systems outside realtime audio callbacks.

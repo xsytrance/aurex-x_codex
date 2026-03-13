@@ -165,3 +165,35 @@ Use `aurex_app::experience_planner` for top-level deterministic AV planning.
 - duration clamped to 30–90 seconds
 
 This planner is intentionally outside realtime audio callback execution.
+
+
+## Identity + creative direction layer
+
+Aurex includes an app-level deterministic cohesion system:
+
+- `aurex_app::identity_engine`
+- `aurex_app::creative_director`
+
+### Identity Engine outputs
+`IdentityProfile` includes:
+- `IdentityType`
+- generated name
+- `SymbolType`
+- `ToneType`
+- 3-color palette
+- `StyleBias`
+
+### Creative Director flow
+`direct_experience(identity_seed, experience_seed)`:
+1. generate identity
+2. generate base experience
+3. adjust experience by identity tone + style bias
+
+Adjustments can include visual theme override, typography modulation, and style-family reseeding for song plan alignment.
+
+### Resonance seed model
+Use two deterministic seeds:
+- identity seed -> artistic persona
+- experience seed -> baseline AV plan
+
+This split keeps variation controllable while preserving deterministic reproducibility.

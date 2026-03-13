@@ -1,5 +1,6 @@
 use crate::style_profile::{
-    ScaleType, StyleProfile, choose_style, choose_style_selection, splitmix_u64,
+    ScaleType, StyleProfile, choose_style, choose_style_profile_by_name_or_seed,
+    choose_style_selection, choose_style_selection_for_profile, splitmix_u64,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,6 +63,22 @@ pub fn generate_chord_progression(seed: u64, scale: ScaleType) -> ChordProgressi
 pub fn generate_song_plan(seed: u64) -> SongPlan {
     let style_selection = choose_style_selection(seed);
     let style = choose_style(seed);
+    let structure = structure_for_style(style.name);
+    let chords = generate_chord_progression(seed ^ 0x55AA_11CC_7788_3300, style_selection.scale);
+
+    SongPlan {
+        title: generate_title(seed),
+        bpm: style_selection.bpm.round().clamp(40.0, 240.0) as u32,
+        scale: style_selection.scale,
+        structure,
+        chords,
+        style,
+    }
+}
+
+pub fn generate_song_plan_for_style(seed: u64, style_name: &str) -> SongPlan {
+    let style = choose_style_profile_by_name_or_seed(style_name, seed);
+    let style_selection = choose_style_selection_for_profile(style, seed);
     let structure = structure_for_style(style.name);
     let chords = generate_chord_progression(seed ^ 0x55AA_11CC_7788_3300, style_selection.scale);
 
@@ -148,7 +165,10 @@ fn generate_title(seed: u64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{Chord, SongSection, generate_chord_progression, generate_song_plan};
+    use super::{
+        Chord, SongSection, generate_chord_progression, generate_song_plan,
+        generate_song_plan_for_style,
+    };
     use crate::style_profile::ScaleType;
 
     #[test]
@@ -180,5 +200,14 @@ mod tests {
             a.structure.sections[a.structure.sections.len() - 1],
             SongSection::Outro
         );
+    }
+
+    #[test]
+    fn can_target_song_style_by_name() {
+        let p = generate_song_plan_for_style(42, "Fusion");
+        assert_eq!(p.style.name, "Fusion");
+
+        let fallback = generate_song_plan_for_style(42, "NotARealStyle");
+        assert_eq!(fallback.style.name, generate_song_plan(42).style.name);
     }
 }

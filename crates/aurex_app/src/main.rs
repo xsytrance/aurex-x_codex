@@ -1,4 +1,7 @@
+mod creative_director;
+mod determinism;
 mod experience_planner;
+mod identity_engine;
 use aurex_audio::{
     AudioBackendMode, AudioBackendReadiness, AudioEvent, MockAudioEngine, start_runtime_sine_output,
 };
@@ -16,7 +19,11 @@ use aurex_render::{
 use aurex_shape_synth::{PrimitiveType, ShapeDescriptor};
 use std::{thread, time::Duration};
 
+use crate::creative_director::direct_experience;
+
 fn runtime_diagnostics_report() -> String {
+    let creative_directive = direct_experience(0xA0E1_0001, 0xA0E1_0002);
+
     let mut clock = ConductorClock::default();
     let camera = CameraState::default();
 
@@ -170,6 +177,18 @@ fn runtime_diagnostics_report() -> String {
         audio_readiness.has_device_io,
         audio_readiness.has_stream_graph,
         audio_readiness.can_emit_sound
+    ));
+    lines.push(format!(
+        "creative_identity={} bias={:?} tone={:?}",
+        creative_directive.identity.name,
+        creative_directive.identity.genre_bias,
+        creative_directive.identity.tone
+    ));
+    lines.push(format!(
+        "creative_experience_title={} visual_theme={:?} style={}",
+        creative_directive.experience.title,
+        creative_directive.experience.visual_theme,
+        creative_directive.experience.song_plan.style.name
     ));
     lines.push(format!("ecs_entity_count={}", world.entity_count()));
     lines.push(format!(
@@ -414,6 +433,8 @@ audio_backend_transition=Transitioned
 audio_backend_after=CpalPlanned audio_ready_after=false
 audio_probe=tick:1 pulse:0.854
 audio_m1_readiness=device_io:true stream_graph:true can_emit_sound:true
+creative_identity=Echo Conclave bias=Classical tone=Cosmic
+creative_experience_title=Echo Conclave // Crystal Frequency visual_theme=Cathedral style=Classical
 ecs_entity_count=2
 render_bootstrap=Aurex-X 1280x720
 render_stage_count=3
