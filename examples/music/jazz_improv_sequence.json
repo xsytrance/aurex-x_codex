@@ -1,0 +1,21 @@
+{
+  "bpm": 112.0,
+  "ppq": 16,
+  "seed": 77,
+  "tracks": [
+    {
+      "name": "jazz_lead",
+      "instrument": "SineSynth",
+      "pattern": {
+        "steps": 12,
+        "events": [
+          {"Note": {"step": 0, "pitch": 60, "duration_beats": 0.75, "velocity": 0.7}},
+          {"Note": {"step": 3, "pitch": 63, "duration_beats": 0.5, "velocity": 0.68}},
+          {"Note": {"step": 6, "pitch": 67, "duration_beats": 0.75, "velocity": 0.72}},
+          {"Note": {"step": 9, "pitch": 70, "duration_beats": 0.5, "velocity": 0.66}}
+        ]
+      },
+      "volume": 0.8
+    }
+  ]
+}
