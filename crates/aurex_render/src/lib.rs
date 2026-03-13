@@ -291,6 +291,10 @@ where
         .generate_timeline(1)
         .to_boot_screen_sequence("AUREX-X", "Prime Pulse online");
     let start_time = std::time::Instant::now();
+    let mut last_frame_time = start_time;
+    let mut scene_particles = vec![Particle::default(); 220];
+    let mut particle_cursor = 0usize;
+    let starfield = build_starfield(200);
 
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("Aurex-X Boot Texture Shader"),
@@ -496,12 +500,17 @@ fn fs_main(inf: VsOut) -> @location(0) vec4<f32> {
                             Err(wgpu::SurfaceError::Other) => return,
                         };
 
+                        let now = std::time::Instant::now();
                         let elapsed = start_time.elapsed().as_secs_f32();
+                        let dt = (now - last_frame_time).as_secs_f32().clamp(0.0, 0.05);
+                        last_frame_time = now;
+                        let runtime_pulse =
+                            (elapsed * std::f32::consts::TAU * 0.6).sin() * 0.5 + 0.5;
                         let timeline_idx = ((elapsed * 24.0) as usize) % timeline_frames.len();
                         let boot = &timeline_frames[timeline_idx];
                         let screen = &boot_screen.frames[timeline_idx % boot_screen.frames.len()];
 
-                        let mut cpu_frame = if elapsed < 5.0 {
+                        let cpu_frame = if elapsed < 5.0 {
                             let mut frame = rasterize_boot_frame(boot, config.width, config.height);
                             overlay_boot_caption(
                                 &mut frame.rgba,
@@ -521,8 +530,23 @@ fn fs_main(inf: VsOut) -> @location(0) vec4<f32> {
                             let fade = (1.0 - (elapsed - 5.0)).clamp(0.0, 1.0);
                             apply_fade_to_black(&mut frame.rgba, fade);
                             frame
-                        } else {
+                        } else if elapsed < 12.0 {
                             rasterize_reveal_frame(config.width, config.height, elapsed - 6.0, boot)
+                        } else {
+                            let scene_time = elapsed - 12.0;
+                            let scene = select_demo_scene(scene_time);
+                            let local_t = local_scene_time(scene_time);
+                            rasterize_demo_scene(
+                                config.width,
+                                config.height,
+                                scene,
+                                local_t,
+                                dt,
+                                runtime_pulse,
+                                &mut scene_particles,
+                                &mut particle_cursor,
+                                &starfield,
+                            )
                         };
 
                         queue.write_texture(
@@ -665,6 +689,415 @@ fn rasterize_reveal_frame(
     }
 
     frame
+}
+
+#[cfg(feature = "real_graphics")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DemoScene {
+    Visualizer,
+    StarfieldWarp,
+    PulseReactorChamber,
+    ParticleStorm,
+    ReturnToTitle,
+}
+
+#[cfg(feature = "real_graphics")]
+#[derive(Debug, Clone, Copy)]
+struct Particle {
+    x: f32,
+    y: f32,
+    vx: f32,
+    vy: f32,
+    life: f32,
+    max_life: f32,
+    active: bool,
+}
+
+#[cfg(feature = "real_graphics")]
+impl Default for Particle {
+    fn default() -> Self {
+        Self {
+            x: 0.0,
+            y: 0.0,
+            vx: 0.0,
+            vy: 0.0,
+            life: 0.0,
+            max_life: 1.0,
+            active: false,
+        }
+    }
+}
+
+#[cfg(feature = "real_graphics")]
+#[derive(Debug, Clone, Copy)]
+struct Star {
+    x: f32,
+    y: f32,
+    z: f32,
+}
+
+#[cfg(feature = "real_graphics")]
+fn select_demo_scene(t: f32) -> DemoScene {
+    let cycle = t.rem_euclid(63.0);
+    if cycle < 10.0 {
+        DemoScene::Visualizer
+    } else if cycle < 23.0 {
+        DemoScene::StarfieldWarp
+    } else if cycle < 38.0 {
+        DemoScene::PulseReactorChamber
+    } else if cycle < 53.0 {
+        DemoScene::ParticleStorm
+    } else {
+        DemoScene::ReturnToTitle
+    }
+}
+
+#[cfg(feature = "real_graphics")]
+fn local_scene_time(t: f32) -> f32 {
+    let cycle = t.rem_euclid(63.0);
+    if cycle < 10.0 {
+        cycle
+    } else if cycle < 23.0 {
+        cycle - 10.0
+    } else if cycle < 38.0 {
+        cycle - 23.0
+    } else if cycle < 53.0 {
+        cycle - 38.0
+    } else {
+        cycle - 53.0
+    }
+}
+
+#[cfg(feature = "real_graphics")]
+fn build_starfield(count: usize) -> Vec<Star> {
+    (0..count)
+        .map(|i| {
+            let x = seeded_unit(0xA0E5_5001_u64, i as u32) * 2.0 - 1.0;
+            let y = seeded_unit(0xA0E5_6001_u64, i as u32) * 2.0 - 1.0;
+            let z = 0.1 + seeded_unit(0xA0E5_7001_u64, i as u32) * 0.9;
+            Star { x, y, z }
+        })
+        .collect()
+}
+
+#[cfg(feature = "real_graphics")]
+fn rasterize_demo_scene(
+    width: u32,
+    height: u32,
+    scene: DemoScene,
+    t: f32,
+    dt: f32,
+    pulse: f32,
+    particles: &mut [Particle],
+    cursor: &mut usize,
+    stars: &[Star],
+) -> BootFramebuffer {
+    let mut frame = BootFramebuffer {
+        width,
+        height,
+        rgba: vec![0; (width as usize) * (height as usize) * 4],
+    };
+    for px in frame.rgba.chunks_exact_mut(4) {
+        px[3] = 255;
+    }
+
+    paint_scene_background(&mut frame.rgba, width, height, t, scene, pulse);
+    match scene {
+        DemoScene::Visualizer => {
+            draw_reactor_rings(&mut frame.rgba, width, height, t, pulse, 2);
+            update_particles(
+                particles,
+                dt,
+                cursor,
+                6,
+                pulse,
+                width,
+                height,
+                t * 2.0,
+                18.0,
+            );
+            draw_particles(
+                &mut frame.rgba,
+                width,
+                height,
+                particles,
+                [255, 210, 145],
+                1.0,
+            );
+            draw_title_centered(&mut frame.rgba, width, height, "AUREX-X", 4, pulse, t);
+        }
+        DemoScene::StarfieldWarp => {
+            draw_starfield(&mut frame.rgba, width, height, stars, t, pulse);
+            draw_title_centered(&mut frame.rgba, width, height, "AUREX-X", 3, pulse * 0.7, t);
+        }
+        DemoScene::PulseReactorChamber => {
+            draw_reactor_rings(&mut frame.rgba, width, height, t * 0.7, pulse, 4);
+            draw_title_centered(&mut frame.rgba, width, height, "AUREX-X", 5, pulse, t);
+        }
+        DemoScene::ParticleStorm => {
+            update_particles(
+                particles,
+                dt,
+                cursor,
+                10,
+                pulse,
+                width,
+                height,
+                t * 3.0,
+                75.0,
+            );
+            swirl_particles(particles, dt, width, height, t);
+            draw_particles(
+                &mut frame.rgba,
+                width,
+                height,
+                particles,
+                [180, 225, 255],
+                1.3,
+            );
+            draw_title_centered(&mut frame.rgba, width, height, "AUREX-X", 3, pulse * 0.6, t);
+        }
+        DemoScene::ReturnToTitle => {
+            let fade = (1.0 - (t / 10.0)).clamp(0.0, 1.0);
+            update_particles(
+                particles,
+                dt,
+                cursor,
+                (4.0 * fade) as usize,
+                pulse,
+                width,
+                height,
+                t,
+                20.0 * fade,
+            );
+            draw_particles(
+                &mut frame.rgba,
+                width,
+                height,
+                particles,
+                [120, 190, 255],
+                fade,
+            );
+            draw_title_centered(&mut frame.rgba, width, height, "AUREX-X", 6, pulse, t * 0.6);
+        }
+    }
+
+    frame
+}
+
+#[cfg(feature = "real_graphics")]
+fn paint_scene_background(
+    rgba: &mut [u8],
+    width: u32,
+    height: u32,
+    t: f32,
+    scene: DemoScene,
+    pulse: f32,
+) {
+    let (base_r, base_g, base_b) = match scene {
+        DemoScene::Visualizer => (8.0, 16.0, 32.0),
+        DemoScene::StarfieldWarp => (4.0, 7.0, 14.0),
+        DemoScene::PulseReactorChamber => (10.0, 14.0, 24.0),
+        DemoScene::ParticleStorm => (7.0, 10.0, 22.0),
+        DemoScene::ReturnToTitle => (4.0, 9.0, 18.0),
+    };
+    for y in 0..height {
+        for x in 0..width {
+            let idx = ((y * width + x) * 4) as usize;
+            let nx = x as f32 / width as f32;
+            let ny = y as f32 / height as f32;
+            let vignette = (1.0 - ((nx - 0.5).powi(2) + (ny - 0.5).powi(2)) * 1.8).clamp(0.0, 1.0);
+            let drift = ((nx * 5.0 + ny * 3.0 + t * 0.35).sin() * 0.5 + 0.5) * 8.0;
+            let glow = 1.0 + pulse * 0.25;
+            rgba[idx] = ((base_r + drift) * vignette * glow).clamp(0.0, 255.0) as u8;
+            rgba[idx + 1] = ((base_g + drift * 1.2) * vignette * glow).clamp(0.0, 255.0) as u8;
+            rgba[idx + 2] = ((base_b + drift * 1.4) * vignette * glow).clamp(0.0, 255.0) as u8;
+        }
+    }
+}
+
+#[cfg(feature = "real_graphics")]
+fn draw_reactor_rings(
+    rgba: &mut [u8],
+    width: u32,
+    height: u32,
+    t: f32,
+    pulse: f32,
+    ring_count: usize,
+) {
+    let cx = width as f32 * 0.5;
+    let cy = height as f32 * 0.52;
+    let min_dim = width.min(height) as f32;
+    for y in 0..height {
+        for x in 0..width {
+            let dx = x as f32 - cx;
+            let dy = y as f32 - cy;
+            let r = (dx * dx + dy * dy).sqrt();
+            let mut lum = 0.0;
+            for i in 0..ring_count {
+                let base = min_dim * (0.10 + i as f32 * 0.08);
+                let orbit = (t * (0.6 + i as f32 * 0.2)).sin() * 8.0;
+                let d = (r - (base + orbit)).abs();
+                lum += (1.0 - d / 7.0).clamp(0.0, 1.0) * (0.22 + pulse * 0.25);
+            }
+            if lum > 0.01 {
+                blend_pixel(
+                    rgba,
+                    width,
+                    height,
+                    x as i32,
+                    y as i32,
+                    [70, 170, 255],
+                    (lum * 180.0).clamp(0.0, 255.0) as u8,
+                );
+            }
+        }
+    }
+}
+
+#[cfg(feature = "real_graphics")]
+fn draw_title_centered(
+    rgba: &mut [u8],
+    width: u32,
+    height: u32,
+    text: &str,
+    scale: i32,
+    pulse: f32,
+    t: f32,
+) {
+    let angle = t * 0.25;
+    let orbit_x = (angle.sin() * 22.0) as i32;
+    let perspective = 1.0 + angle.cos() * 0.05;
+    let s = ((scale as f32) * perspective).clamp(1.0, 12.0) as i32;
+    let w = text_pixel_width(text, s);
+    let h = 7 * s;
+    let x = (width as i32 - w) / 2 + orbit_x;
+    let y = (height as i32 - h) / 2;
+    let glow = 0.65 + pulse * 0.35;
+    draw_text(
+        rgba,
+        width,
+        height,
+        text,
+        x - 2,
+        y,
+        s,
+        [60, 145, 255],
+        0.20 * glow,
+    );
+    draw_text(
+        rgba,
+        width,
+        height,
+        text,
+        x,
+        y,
+        s,
+        [210, 240, 255],
+        0.85 * glow,
+    );
+}
+
+#[cfg(feature = "real_graphics")]
+fn update_particles(
+    particles: &mut [Particle],
+    dt: f32,
+    cursor: &mut usize,
+    spawn_count: usize,
+    pulse: f32,
+    width: u32,
+    height: u32,
+    t: f32,
+    speed: f32,
+) {
+    let cx = width as f32 * 0.5;
+    let cy = height as f32 * 0.5;
+    for p in particles.iter_mut() {
+        if p.active {
+            p.x += p.vx * dt;
+            p.y += p.vy * dt;
+            p.life += dt;
+            if p.life >= p.max_life {
+                p.active = false;
+            }
+        }
+    }
+
+    let actual_spawn = ((spawn_count as f32) * (0.4 + pulse * 0.9)).round() as usize;
+    for i in 0..actual_spawn.min(particles.len()) {
+        let idx = (*cursor + i) % particles.len();
+        let angle = (t * 1.3 + i as f32 * 0.618).rem_euclid(std::f32::consts::TAU);
+        let radius = 36.0 + pulse * 18.0;
+        particles[idx] = Particle {
+            x: cx + angle.cos() * radius,
+            y: cy + angle.sin() * radius,
+            vx: angle.cos() * speed + (seeded_unit(0xABCD5000, idx as u32) - 0.5) * 8.0,
+            vy: angle.sin() * speed + (seeded_unit(0xABCD6000, idx as u32) - 0.5) * 8.0,
+            life: 0.0,
+            max_life: 0.8 + seeded_unit(0xABCD7000, idx as u32) * 0.7,
+            active: true,
+        };
+    }
+    *cursor = (*cursor + actual_spawn) % particles.len().max(1);
+}
+
+#[cfg(feature = "real_graphics")]
+fn swirl_particles(particles: &mut [Particle], dt: f32, width: u32, height: u32, t: f32) {
+    let cx = width as f32 * 0.5;
+    let cy = height as f32 * 0.5;
+    for p in particles.iter_mut().filter(|p| p.active) {
+        let dx = p.x - cx;
+        let dy = p.y - cy;
+        let spin = (t * 0.8 + (dx + dy) * 0.01).sin() * 25.0;
+        p.vx += (-dy.signum() * spin) * dt;
+        p.vy += (dx.signum() * spin) * dt;
+    }
+}
+
+#[cfg(feature = "real_graphics")]
+fn draw_particles(
+    rgba: &mut [u8],
+    width: u32,
+    height: u32,
+    particles: &[Particle],
+    color: [u8; 3],
+    brightness: f32,
+) {
+    for p in particles.iter().filter(|p| p.active) {
+        let life_t = (1.0 - p.life / p.max_life).clamp(0.0, 1.0);
+        let alpha = (life_t * 180.0 * brightness).clamp(0.0, 255.0) as u8;
+        let x = p.x as i32;
+        let y = p.y as i32;
+        for oy in -1..=1 {
+            for ox in -1..=1 {
+                let a = if ox == 0 && oy == 0 { alpha } else { alpha / 3 };
+                blend_pixel(rgba, width, height, x + ox, y + oy, color, a);
+            }
+        }
+    }
+}
+
+#[cfg(feature = "real_graphics")]
+fn draw_starfield(rgba: &mut [u8], width: u32, height: u32, stars: &[Star], t: f32, pulse: f32) {
+    let cx = width as f32 * 0.5;
+    let cy = height as f32 * 0.5;
+    let speed = 0.22 + pulse * 0.95;
+    for (i, star) in stars.iter().enumerate() {
+        let mut z = star.z - (t * speed).fract();
+        if z <= 0.05 {
+            z += 1.0;
+        }
+        let depth = (1.0 - z).clamp(0.0, 1.0);
+        let sx = cx + (star.x / z) * (width as f32 * 0.45);
+        let sy = cy + (star.y / z) * (height as f32 * 0.45);
+        let alpha = (65.0 + depth * 190.0).clamp(0.0, 255.0) as u8;
+        let color = [
+            (150.0 + depth * 70.0) as u8,
+            (170.0 + depth * 60.0) as u8,
+            (220.0 + (i % 17) as f32) as u8,
+        ];
+        blend_pixel(rgba, width, height, sx as i32, sy as i32, color, alpha);
+    }
 }
 
 #[cfg(not(feature = "real_graphics"))]
