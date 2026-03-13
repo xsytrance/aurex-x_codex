@@ -206,6 +206,14 @@ pub struct RealRendererBootstrapStatus {
 
 #[cfg(feature = "real_graphics")]
 pub fn run_real_renderer_event_loop() -> Result<(), String> {
+    run_real_renderer_event_loop_with_frame_hook(|_| {})
+}
+
+#[cfg(feature = "real_graphics")]
+pub fn run_real_renderer_event_loop_with_frame_hook<F>(mut on_frame: F) -> Result<(), String>
+where
+    F: FnMut(f32) + 'static,
+{
     use winit::event::{Event, WindowEvent};
 
     let event_loop =
@@ -283,6 +291,7 @@ pub fn run_real_renderer_event_loop() -> Result<(), String> {
         .generate_timeline(1)
         .to_boot_screen_sequence("AUREX-X", "Prime Pulse online");
     let mut frame_idx = 0usize;
+    let start_time = std::time::Instant::now();
 
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("Aurex-X Boot Texture Shader"),
@@ -472,6 +481,8 @@ fn fs_main(inf: VsOut) -> @location(0) vec4<f32> {
                             return;
                         }
 
+                        on_frame(start_time.elapsed().as_secs_f32());
+
                         let frame = match surface.get_current_texture() {
                             Ok(frame) => frame,
                             Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
@@ -567,6 +578,14 @@ fn fs_main(inf: VsOut) -> @location(0) vec4<f32> {
 
 #[cfg(not(feature = "real_graphics"))]
 pub fn run_real_renderer_event_loop() -> Result<(), String> {
+    Err("real_graphics feature is disabled".to_string())
+}
+
+#[cfg(not(feature = "real_graphics"))]
+pub fn run_real_renderer_event_loop_with_frame_hook<F>(_on_frame: F) -> Result<(), String>
+where
+    F: FnMut(f32) + 'static,
+{
     Err("real_graphics feature is disabled".to_string())
 }
 
