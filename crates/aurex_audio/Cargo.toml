@@ -7,5 +7,6 @@ authors.workspace = true
 
 [dependencies]
 aurex_core = { path = "../aurex_core" }
+cpal = "0.15"
 
 serde = { version = "1", features = ["derive"] }

@@ -1,0 +1,1165 @@
+{
+  "metadata": {
+    "title": "Aurex First Light",
+    "author": "Aurex System",
+    "description": "20-second heartbeat-check cinematic pulse for visual/music sync validation.",
+    "tags": [
+      "demo",
+      "cinematic",
+      "validation",
+      "electronic"
+    ],
+    "seed": 1042,
+    "pulse_kind": "Demo",
+    "duration_hint": 20.0,
+    "interactivity": "Passive",
+    "prime_affinity": "Electronic"
+  },
+  "pulse_kind": "Demo",
+  "scene": {
+    "sdf": {
+      "seed": 1042,
+      "camera": {
+        "position": {
+          "x": 0.0,
+          "y": 1.1,
+          "z": -16.0
+        },
+        "target": {
+          "x": 0.0,
+          "y": 0.8,
+          "z": 0.0
+        },
+        "fov_degrees": 52.0,
+        "aspect_ratio": 1.7777
+      },
+      "lighting": {
+        "ambient_light": 0.045,
+        "key_lights": [
+          {
+            "direction": {
+              "x": -0.35,
+              "y": -1.0,
+              "z": -0.2
+            },
+            "intensity": 0.35,
+            "color": {
+              "x": 0.72,
+              "y": 0.86,
+              "z": 1.0
+            }
+          }
+        ],
+        "fog_color": {
+          "x": 0.05,
+          "y": 0.09,
+          "z": 0.18
+        },
+        "fog_density": 0.035,
+        "fog_height_falloff": 0.09,
+        "volumetric": {
+          "scattering_steps": 14,
+          "beam_falloff": 0.6,
+          "beam_density": 0.24,
+          "shaft_intensity": 0.85
+        }
+      },
+      "rhythm": {
+        "beat_geometry": true,
+        "echo_effect": true,
+        "particle_mode": "Bass"
+      },
+      "timeline": {
+        "duration": 20.0,
+        "loops": false,
+        "keyframes": [
+          {
+            "time": 0.0,
+            "target": "camera.position",
+            "value": {
+              "Vec3": {
+                "value": {
+                  "x": 0.0,
+                  "y": 1.1,
+                  "z": -16.0
+                }
+              }
+            },
+            "interpolation": "EaseIn"
+          },
+          {
+            "time": 6.0,
+            "target": "camera.position",
+            "value": {
+              "Vec3": {
+                "value": {
+                  "x": 0.0,
+                  "y": 1.3,
+                  "z": -12.6
+                }
+              }
+            },
+            "interpolation": "Smoothstep"
+          },
+          {
+            "time": 10.0,
+            "target": "camera.position",
+            "value": {
+              "Vec3": {
+                "value": {
+                  "x": 1.6,
+                  "y": 1.8,
+                  "z": -10.3
+                }
+              }
+            },
+            "interpolation": "Linear"
+          },
+          {
+            "time": 14.0,
+            "target": "camera.position",
+            "value": {
+              "Vec3": {
+                "value": {
+                  "x": -1.2,
+                  "y": 1.7,
+                  "z": -8.8
+                }
+              }
+            },
+            "interpolation": "Linear"
+          },
+          {
+            "time": 20.0,
+            "target": "camera.position",
+            "value": {
+              "Vec3": {
+                "value": {
+                  "x": 0.0,
+                  "y": 1.2,
+                  "z": -6.8
+                }
+              }
+            },
+            "interpolation": "EaseOut"
+          },
+          {
+            "time": 0.0,
+            "target": "camera.target",
+            "value": {
+              "Vec3": {
+                "value": {
+                  "x": 0.0,
+                  "y": 0.8,
+                  "z": 0.0
+                }
+              }
+            },
+            "interpolation": "Linear"
+          },
+          {
+            "time": 20.0,
+            "target": "camera.target",
+            "value": {
+              "Vec3": {
+                "value": {
+                  "x": 0.0,
+                  "y": 0.45,
+                  "z": 0.0
+                }
+              }
+            },
+            "interpolation": "Smoothstep"
+          },
+          {
+            "time": 0.0,
+            "target": "light.intensity",
+            "value": {
+              "Float": {
+                "value": 0.3
+              }
+            },
+            "interpolation": "Linear"
+          },
+          {
+            "time": 6.0,
+            "target": "light.intensity",
+            "value": {
+              "Float": {
+                "value": 0.7
+              }
+            },
+            "interpolation": "EaseOut"
+          },
+          {
+            "time": 10.0,
+            "target": "light.intensity",
+            "value": {
+              "Float": {
+                "value": 1.05
+              }
+            },
+            "interpolation": "Smoothstep"
+          },
+          {
+            "time": 11.0,
+            "target": "light.intensity",
+            "value": {
+              "Float": {
+                "value": 0.82
+              }
+            },
+            "interpolation": "Linear"
+          },
+          {
+            "time": 11.6,
+            "target": "light.intensity",
+            "value": {
+              "Float": {
+                "value": 1.22
+              }
+            },
+            "interpolation": "Linear"
+          },
+          {
+            "time": 12.2,
+            "target": "light.intensity",
+            "value": {
+              "Float": {
+                "value": 0.9
+              }
+            },
+            "interpolation": "Linear"
+          },
+          {
+            "time": 13.2,
+            "target": "light.intensity",
+            "value": {
+              "Float": {
+                "value": 1.35
+              }
+            },
+            "interpolation": "Linear"
+          },
+          {
+            "time": 20.0,
+            "target": "light.intensity",
+            "value": {
+              "Float": {
+                "value": 1.5
+              }
+            },
+            "interpolation": "EaseOut"
+          },
+          {
+            "time": 0.0,
+            "target": "material.emissive_strength",
+            "value": {
+              "Float": {
+                "value": 0.03
+              }
+            },
+            "interpolation": "Linear"
+          },
+          {
+            "time": 14.0,
+            "target": "material.emissive_strength",
+            "value": {
+              "Float": {
+                "value": 0.12
+              }
+            },
+            "interpolation": "Smoothstep"
+          },
+          {
+            "time": 16.0,
+            "target": "material.emissive_strength",
+            "value": {
+              "Float": {
+                "value": 0.36
+              }
+            },
+            "interpolation": "EaseOut"
+          },
+          {
+            "time": 20.0,
+            "target": "material.emissive_strength",
+            "value": {
+              "Float": {
+                "value": 0.62
+              }
+            },
+            "interpolation": "EaseOut"
+          }
+        ]
+      },
+      "automation_tracks": [
+        {
+          "target": "LightingIntensity",
+          "track": {
+            "name": "phase2_flicker",
+            "source": "Time",
+            "curve": "Sine",
+            "amplitude": 0.55,
+            "offset": -0.15,
+            "frequency": 0.4
+          }
+        },
+        {
+          "target": "MaterialEmissive",
+          "track": {
+            "name": "logo_breathe_with_beat",
+            "source": "Beat",
+            "curve": "Sine",
+            "amplitude": 0.45,
+            "offset": 0.0,
+            "frequency": 1.0
+          }
+        }
+      ],
+      "temporal_effects": [
+        {
+          "blend_mode": "BeatEcho",
+          "decay_rate": 0.9,
+          "feedback_strength": 0.28,
+          "beat_sync": 0.8,
+          "color_shift": {
+            "x": 0.03,
+            "y": 0.06,
+            "z": 0.1
+          }
+        }
+      ],
+      "objects": [
+        {
+          "primitive": {
+            "Plane": {
+              "normal": {
+                "x": 0.0,
+                "y": 1.0,
+                "z": 0.0
+              },
+              "offset": 1.0
+            }
+          },
+          "material": {
+            "material_type": "FractalMetal",
+            "base_color": {
+              "x": 0.08,
+              "y": 0.09,
+              "z": 0.11
+            },
+            "emissive_strength": 0.02,
+            "roughness": 0.82,
+            "pattern": "Bands"
+          }
+        },
+        {
+          "primitive": {
+            "Torus": {
+              "major_radius": 2.8,
+              "minor_radius": 0.07
+            }
+          },
+          "modifiers": [
+            {
+              "Translate": {
+                "offset": {
+                  "x": 0.0,
+                  "y": 2.0,
+                  "z": 0.0
+                }
+              }
+            }
+          ],
+          "material": {
+            "material_type": "Wireframe",
+            "base_color": {
+              "x": 0.5,
+              "y": 0.8,
+              "z": 1.0
+            },
+            "emissive_strength": 0.18,
+            "roughness": 0.12,
+            "pattern": "Rings"
+          }
+        },
+        {
+          "primitive": {
+            "Sphere": {
+              "radius": 0.28
+            }
+          },
+          "modifiers": [
+            {
+              "Translate": {
+                "offset": {
+                  "x": 2.8,
+                  "y": 2.0,
+                  "z": 0.0
+                }
+              }
+            }
+          ],
+          "material": {
+            "material_type": "Holographic",
+            "base_color": {
+              "x": 0.78,
+              "y": 0.92,
+              "z": 1.0
+            },
+            "emissive_strength": 0.45,
+            "roughness": 0.08,
+            "pattern": "Noise"
+          }
+        },
+        {
+          "primitive": {
+            "Box": {
+              "size": {
+                "x": 0.24,
+                "y": 1.1,
+                "z": 0.25
+              }
+            }
+          },
+          "modifiers": [
+            {
+              "Translate": {
+                "offset": {
+                  "x": -4.9,
+                  "y": 0.2,
+                  "z": 0
+                }
+              }
+            }
+          ],
+          "material": {
+            "material_type": "SpectralReactive",
+            "base_color": {
+              "x": 0.35,
+              "y": 0.62,
+              "z": 1.0
+            },
+            "emissive_strength": 0.1,
+            "roughness": 0.22
+          }
+        },
+        {
+          "primitive": {
+            "Box": {
+              "size": {
+                "x": 0.24,
+                "y": 1.1,
+                "z": 0.25
+              }
+            }
+          },
+          "modifiers": [
+            {
+              "Translate": {
+                "offset": {
+                  "x": -4.3,
+                  "y": 0.2,
+                  "z": 0
+                }
+              }
+            }
+          ],
+          "material": {
+            "material_type": "SpectralReactive",
+            "base_color": {
+              "x": 0.35,
+              "y": 0.62,
+              "z": 1.0
+            },
+            "emissive_strength": 0.1,
+            "roughness": 0.22
+          }
+        },
+        {
+          "primitive": {
+            "Box": {
+              "size": {
+                "x": 0.58,
+                "y": 0.2,
+                "z": 0.25
+              }
+            }
+          },
+          "modifiers": [
+            {
+              "Translate": {
+                "offset": {
+                  "x": -4.6,
+                  "y": 0.95,
+                  "z": 0
+                }
+              }
+            }
+          ],
+          "material": {
+            "material_type": "SpectralReactive",
+            "base_color": {
+              "x": 0.35,
+              "y": 0.62,
+              "z": 1.0
+            },
+            "emissive_strength": 0.1,
+            "roughness": 0.22
+          }
+        },
+        {
+          "primitive": {
+            "Box": {
+              "size": {
+                "x": 0.24,
+                "y": 1.1,
+                "z": 0.25
+              }
+            }
+          },
+          "modifiers": [
+            {
+              "Translate": {
+                "offset": {
+                  "x": -3.55,
+                  "y": 0.2,
+                  "z": 0
+                }
+              }
+            }
+          ],
+          "material": {
+            "material_type": "SpectralReactive",
+            "base_color": {
+              "x": 0.35,
+              "y": 0.62,
+              "z": 1.0
+            },
+            "emissive_strength": 0.1,
+            "roughness": 0.22
+          }
+        },
+        {
+          "primitive": {
+            "Box": {
+              "size": {
+                "x": 0.24,
+                "y": 1.1,
+                "z": 0.25
+              }
+            }
+          },
+          "modifiers": [
+            {
+              "Translate": {
+                "offset": {
+                  "x": -2.95,
+                  "y": 0.2,
+                  "z": 0
+                }
+              }
+            }
+          ],
+          "material": {
+            "material_type": "SpectralReactive",
+            "base_color": {
+              "x": 0.35,
+              "y": 0.62,
+              "z": 1.0
+            },
+            "emissive_strength": 0.1,
+            "roughness": 0.22
+          }
+        },
+        {
+          "primitive": {
+            "Box": {
+              "size": {
+                "x": 0.53,
+                "y": 0.22,
+                "z": 0.25
+              }
+            }
+          },
+          "modifiers": [
+            {
+              "Translate": {
+                "offset": {
+                  "x": -3.25,
+                  "y": -0.3,
+                  "z": 0
+                }
+              }
+            }
+          ],
+          "material": {
+            "material_type": "SpectralReactive",
+            "base_color": {
+              "x": 0.35,
+              "y": 0.62,
+              "z": 1.0
+            },
+            "emissive_strength": 0.1,
+            "roughness": 0.22
+          }
+        },
+        {
+          "primitive": {
+            "Box": {
+              "size": {
+                "x": 0.24,
+                "y": 1.1,
+                "z": 0.25
+              }
+            }
+          },
+          "modifiers": [
+            {
+              "Translate": {
+                "offset": {
+                  "x": -2.1,
+                  "y": 0.2,
+                  "z": 0
+                }
+              }
+            }
+          ],
+          "material": {
+            "material_type": "SpectralReactive",
+            "base_color": {
+              "x": 0.35,
+              "y": 0.62,
+              "z": 1.0
+            },
+            "emissive_strength": 0.1,
+            "roughness": 0.22
+          }
+        },
+        {
+          "primitive": {
+            "Box": {
+              "size": {
+                "x": 0.6,
+                "y": 0.2,
+                "z": 0.25
+              }
+            }
+          },
+          "modifiers": [
+            {
+              "Translate": {
+                "offset": {
+                  "x": -1.5,
+                  "y": 0.78,
+                  "z": 0
+                }
+              }
+            }
+          ],
+          "material": {
+            "material_type": "SpectralReactive",
+            "base_color": {
+              "x": 0.35,
+              "y": 0.62,
+              "z": 1.0
+            },
+            "emissive_strength": 0.1,
+            "roughness": 0.22
+          }
+        },
+        {
+          "primitive": {
+            "Box": {
+              "size": {
+                "x": 0.24,
+                "y": 0.9,
+                "z": 0.25
+              }
+            }
+          },
+          "modifiers": [
+            {
+              "Translate": {
+                "offset": {
+                  "x": -1.5,
+                  "y": 0.12,
+                  "z": 0
+                }
+              }
+            },
+            {
+              "Rotate": {
+                "axis": {
+                  "x": 0.0,
+                  "y": 0.0,
+                  "z": 1.0
+                },
+                "radians": -0.58
+              }
+            }
+          ],
+          "material": {
+            "material_type": "SpectralReactive",
+            "base_color": {
+              "x": 0.35,
+              "y": 0.62,
+              "z": 1.0
+            },
+            "emissive_strength": 0.1,
+            "roughness": 0.22
+          }
+        },
+        {
+          "primitive": {
+            "Box": {
+              "size": {
+                "x": 0.62,
+                "y": 0.2,
+                "z": 0.25
+              }
+            }
+          },
+          "modifiers": [
+            {
+              "Translate": {
+                "offset": {
+                  "x": -0.45,
+                  "y": 0.78,
+                  "z": 0
+                }
+              }
+            }
+          ],
+          "material": {
+            "material_type": "SpectralReactive",
+            "base_color": {
+              "x": 0.35,
+              "y": 0.62,
+              "z": 1.0
+            },
+            "emissive_strength": 0.1,
+            "roughness": 0.22
+          }
+        },
+        {
+          "primitive": {
+            "Box": {
+              "size": {
+                "x": 0.24,
+                "y": 1.1,
+                "z": 0.25
+              }
+            }
+          },
+          "modifiers": [
+            {
+              "Translate": {
+                "offset": {
+                  "x": -0.74,
+                  "y": 0.2,
+                  "z": 0
+                }
+              }
+            }
+          ],
+          "material": {
+            "material_type": "SpectralReactive",
+            "base_color": {
+              "x": 0.35,
+              "y": 0.62,
+              "z": 1.0
+            },
+            "emissive_strength": 0.1,
+            "roughness": 0.22
+          }
+        },
+        {
+          "primitive": {
+            "Box": {
+              "size": {
+                "x": 0.55,
+                "y": 0.2,
+                "z": 0.25
+              }
+            }
+          },
+          "modifiers": [
+            {
+              "Translate": {
+                "offset": {
+                  "x": -0.45,
+                  "y": 0.22,
+                  "z": 0
+                }
+              }
+            }
+          ],
+          "material": {
+            "material_type": "SpectralReactive",
+            "base_color": {
+              "x": 0.35,
+              "y": 0.62,
+              "z": 1.0
+            },
+            "emissive_strength": 0.1,
+            "roughness": 0.22
+          }
+        },
+        {
+          "primitive": {
+            "Box": {
+              "size": {
+                "x": 0.62,
+                "y": 0.2,
+                "z": 0.25
+              }
+            }
+          },
+          "modifiers": [
+            {
+              "Translate": {
+                "offset": {
+                  "x": -0.45,
+                  "y": -0.35,
+                  "z": 0
+                }
+              }
+            }
+          ],
+          "material": {
+            "material_type": "SpectralReactive",
+            "base_color": {
+              "x": 0.35,
+              "y": 0.62,
+              "z": 1.0
+            },
+            "emissive_strength": 0.1,
+            "roughness": 0.22
+          }
+        },
+        {
+          "primitive": {
+            "Box": {
+              "size": {
+                "x": 0.24,
+                "y": 1.35,
+                "z": 0.25
+              }
+            }
+          },
+          "modifiers": [
+            {
+              "Translate": {
+                "offset": {
+                  "x": 0.6,
+                  "y": 0.58,
+                  "z": 0
+                }
+              }
+            },
+            {
+              "Rotate": {
+                "axis": {
+                  "x": 0.0,
+                  "y": 0.0,
+                  "z": 1.0
+                },
+                "radians": 0.78
+              }
+            }
+          ],
+          "material": {
+            "material_type": "SpectralReactive",
+            "base_color": {
+              "x": 0.35,
+              "y": 0.62,
+              "z": 1.0
+            },
+            "emissive_strength": 0.1,
+            "roughness": 0.22
+          }
+        },
+        {
+          "primitive": {
+            "Box": {
+              "size": {
+                "x": 0.24,
+                "y": 1.35,
+                "z": 0.25
+              }
+            }
+          },
+          "modifiers": [
+            {
+              "Translate": {
+                "offset": {
+                  "x": 1.3,
+                  "y": 0.58,
+                  "z": 0
+                }
+              }
+            },
+            {
+              "Rotate": {
+                "axis": {
+                  "x": 0.0,
+                  "y": 0.0,
+                  "z": 1.0
+                },
+                "radians": -0.78
+              }
+            }
+          ],
+          "material": {
+            "material_type": "SpectralReactive",
+            "base_color": {
+              "x": 0.35,
+              "y": 0.62,
+              "z": 1.0
+            },
+            "emissive_strength": 0.1,
+            "roughness": 0.22
+          }
+        },
+        {
+          "primitive": {
+            "Box": {
+              "size": {
+                "x": 0.5,
+                "y": 0.16,
+                "z": 0.25
+              }
+            }
+          },
+          "modifiers": [
+            {
+              "Translate": {
+                "offset": {
+                  "x": 2.15,
+                  "y": 0.15,
+                  "z": 0
+                }
+              }
+            }
+          ],
+          "material": {
+            "material_type": "SpectralReactive",
+            "base_color": {
+              "x": 0.35,
+              "y": 0.62,
+              "z": 1.0
+            },
+            "emissive_strength": 0.1,
+            "roughness": 0.22
+          }
+        },
+        {
+          "primitive": {
+            "Box": {
+              "size": {
+                "x": 0.24,
+                "y": 1.35,
+                "z": 0.25
+              }
+            }
+          },
+          "modifiers": [
+            {
+              "Translate": {
+                "offset": {
+                  "x": 2.95,
+                  "y": 0.58,
+                  "z": 0
+                }
+              }
+            },
+            {
+              "Rotate": {
+                "axis": {
+                  "x": 0.0,
+                  "y": 0.0,
+                  "z": 1.0
+                },
+                "radians": 0.78
+              }
+            }
+          ],
+          "material": {
+            "material_type": "SpectralReactive",
+            "base_color": {
+              "x": 0.35,
+              "y": 0.62,
+              "z": 1.0
+            },
+            "emissive_strength": 0.1,
+            "roughness": 0.22
+          }
+        },
+        {
+          "primitive": {
+            "Box": {
+              "size": {
+                "x": 0.24,
+                "y": 1.35,
+                "z": 0.25
+              }
+            }
+          },
+          "modifiers": [
+            {
+              "Translate": {
+                "offset": {
+                  "x": 3.65,
+                  "y": 0.58,
+                  "z": 0
+                }
+              }
+            },
+            {
+              "Rotate": {
+                "axis": {
+                  "x": 0.0,
+                  "y": 0.0,
+                  "z": 1.0
+                },
+                "radians": -0.78
+              }
+            }
+          ],
+          "material": {
+            "material_type": "SpectralReactive",
+            "base_color": {
+              "x": 0.35,
+              "y": 0.62,
+              "z": 1.0
+            },
+            "emissive_strength": 0.1,
+            "roughness": 0.22
+          }
+        }
+      ]
+    }
+  },
+  "music": {
+    "bpm": 92.0,
+    "ppq": 16,
+    "seed": 1042,
+    "tracks": [
+      {
+        "name": "deep_kick",
+        "instrument": "PulseSynth",
+        "pattern": {
+          "steps": 16,
+          "events": [
+            {
+              "Note": {
+                "step": 0,
+                "pitch": 36,
+                "duration_beats": 0.5,
+                "velocity": 0.95
+              }
+            },
+            {
+              "Note": {
+                "step": 4,
+                "pitch": 36,
+                "duration_beats": 0.5,
+                "velocity": 0.88
+              }
+            },
+            {
+              "Note": {
+                "step": 8,
+                "pitch": 36,
+                "duration_beats": 0.5,
+                "velocity": 0.92
+              }
+            },
+            {
+              "Note": {
+                "step": 12,
+                "pitch": 36,
+                "duration_beats": 0.5,
+                "velocity": 0.86
+              }
+            }
+          ]
+        },
+        "volume": 0.95
+      },
+      {
+        "name": "ambient_pad",
+        "instrument": "SineSynth",
+        "pattern": {
+          "steps": 16,
+          "events": [
+            {
+              "Note": {
+                "step": 0,
+                "pitch": 52,
+                "duration_beats": 4.0,
+                "velocity": 0.42
+              }
+            },
+            {
+              "Note": {
+                "step": 8,
+                "pitch": 55,
+                "duration_beats": 4.0,
+                "velocity": 0.4
+              }
+            }
+          ]
+        },
+        "volume": 0.72
+      },
+      {
+        "name": "subtle_rhythm",
+        "instrument": "NoiseSynth",
+        "pattern": {
+          "steps": 16,
+          "events": [
+            {
+              "Note": {
+                "step": 2,
+                "pitch": 65,
+                "duration_beats": 0.25,
+                "velocity": 0.2
+              }
+            },
+            {
+              "Note": {
+                "step": 6,
+                "pitch": 67,
+                "duration_beats": 0.25,
+                "velocity": 0.22
+              }
+            },
+            {
+              "Note": {
+                "step": 10,
+                "pitch": 69,
+                "duration_beats": 0.25,
+                "velocity": 0.2
+              }
+            },
+            {
+              "Note": {
+                "step": 14,
+                "pitch": 72,
+                "duration_beats": 0.25,
+                "velocity": 0.24
+              }
+            }
+          ]
+        },
+        "volume": 0.32
+      }
+    ]
+  },
+  "parameters": {
+    "demo_mode": 1.0
+  }
+}

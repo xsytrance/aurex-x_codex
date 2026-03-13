@@ -1,0 +1,17 @@
+{
+  "metadata": {
+    "title": "Jazz Improvisation World Pulse",
+    "author": "Aurex Team",
+    "description": "Passive cinematic improvisation world.",
+    "tags": ["visual-music", "jazz", "cinematic"],
+    "seed": 9002,
+    "pulse_kind": "VisualMusic",
+    "duration_hint": 180.0,
+    "interactivity": "Passive",
+    "prime_affinity": "Jazz"
+  },
+  "pulse_kind": "VisualMusic",
+  "scene": {
+    "scene_path": "../jazz_improv_world.json"
+  }
+}
