@@ -41,3 +41,7 @@ Call:
 - `create_ambient_dreamscape_pulse(seed)`
 
 These helpers are deterministic for the same seed and pulse type.
+
+
+## Builder integration
+Example pulses are created through `PulseBuilder` so developer-created pulses, future APL, and UI tooling can share one construction path.

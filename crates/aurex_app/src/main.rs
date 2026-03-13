@@ -1,3 +1,4 @@
+mod pulse_builder;
 mod pulses;
 
 use aurex_audio::{

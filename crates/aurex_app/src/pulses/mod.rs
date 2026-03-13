@@ -2,48 +2,7 @@ pub mod ambient_dreamscape;
 pub mod electronic_megacity;
 pub mod jazz_atmosphere;
 
-use aurex_render::rhythm_field::{
-    GeneratorStackOutput, RhythmFieldSnapshot, SequencerState, VisualTheme,
-    apply_rhythm_modulation, sample_rhythm_field,
-};
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct WorldBlueprint {
-    pub name: &'static str,
-    pub theme: VisualTheme,
-    pub palette_hint: &'static str,
-    pub camera_motion: &'static str,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct ExamplePulseConfig {
-    pub pulse_name: &'static str,
-    pub world_blueprint: WorldBlueprint,
-    pub generator_output: GeneratorStackOutput,
-    pub rhythm_snapshot: RhythmFieldSnapshot,
-    pub modulated_output: GeneratorStackOutput,
-}
-
-pub fn build_example_pulse(
-    pulse_name: &'static str,
-    world_blueprint: WorldBlueprint,
-    seed: u64,
-    time: f32,
-    sequencer_state: SequencerState,
-    generator_output: GeneratorStackOutput,
-) -> ExamplePulseConfig {
-    let rhythm_snapshot = sample_rhythm_field(seed, time, sequencer_state);
-    let modulated_output =
-        apply_rhythm_modulation(&rhythm_snapshot, &generator_output, world_blueprint.theme);
-
-    ExamplePulseConfig {
-        pulse_name,
-        world_blueprint,
-        generator_output,
-        rhythm_snapshot,
-        modulated_output,
-    }
-}
+pub use crate::pulse_builder::ExamplePulseConfig;
 
 #[cfg(test)]
 mod tests {
