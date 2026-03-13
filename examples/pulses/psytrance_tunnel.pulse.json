@@ -1,0 +1,17 @@
+{
+  "metadata": {
+    "title": "Psytrance Tunnel Pulse",
+    "author": "Aurex Team",
+    "description": "Driving tunnel transition pulse.",
+    "tags": ["psytrance", "tunnel"],
+    "seed": 9102,
+    "pulse_kind": "VisualMusic",
+    "duration_hint": 90.0,
+    "interactivity": "Hybrid",
+    "prime_affinity": "Electronic"
+  },
+  "pulse_kind": "VisualMusic",
+  "scene": {
+    "scene_path": "../psytrance_tunnel_run.json"
+  }
+}

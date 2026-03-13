@@ -1,0 +1,30 @@
+{
+  "sdf": {
+    "seed": 4041,
+    "camera": {"position": {"x": 0.0, "y": 0.2, "z": -8.0}, "target": {"x": 0.0, "y": 0.0, "z": 0.0}, "fov_degrees": 58.0, "aspect_ratio": 1.7777},
+    "lighting": {
+      "ambient_light": 0.18,
+      "key_lights": [{"direction": {"x": -0.4, "y": -1.0, "z": 0.2}, "intensity": 2.2, "color": {"x": 0.9, "y": 0.6, "z": 1.0}}],
+      "fog_color": {"x": 0.05, "y": 0.07, "z": 0.11},
+      "fog_density": 0.04,
+      "fog_height_falloff": 0.06,
+      "volumetric": {"scattering_steps": 12, "beam_falloff": 0.8, "beam_density": 0.12, "shaft_intensity": 0.7}
+    },
+    "timeline": {
+      "duration": 12.0,
+      "loops": true,
+      "cinematic_camera": {
+        "type": "Flythrough",
+        "start": {"x": 0.0, "y": 0.2, "z": -12.0},
+        "end": {"x": 0.0, "y": 0.8, "z": 12.0},
+        "target": {"x": 0.0, "y": 0.0, "z": 2.0},
+        "fov_degrees": 58.0,
+        "roll": 0.0,
+        "rhythm": {"tempo_sync": 1.0, "beat_shake": 0.9}
+      },
+      "events": [{"time": 1.0, "name": "kick", "audio_hook": "Kick"}, {"time": 5.0, "name": "snare", "audio_hook": "Snare"}],
+      "keyframes": []
+    },
+    "objects": [{"primitive": {"Torus": {"major_radius": 2.2, "minor_radius": 0.5}}, "modifiers": [{"Repeat": {"cell": {"x": 0.0, "y": 0.0, "z": 5.0}}}], "material": {"material_type": "SpectralReactive", "emissive_strength": 0.9, "pattern": "Rings"}}]
+  }
+}

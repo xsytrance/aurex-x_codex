@@ -1,0 +1,17 @@
+{
+  "metadata": {
+    "title": "Fractal Finale Pulse",
+    "author": "Aurex Team",
+    "description": "Finale pulse with fractal temple motifs.",
+    "tags": ["fractal", "finale"],
+    "seed": 9103,
+    "pulse_kind": "Demo",
+    "duration_hint": 120.0,
+    "interactivity": "Passive",
+    "prime_affinity": "Cinematic"
+  },
+  "pulse_kind": "Demo",
+  "scene": {
+    "scene_path": "../infinite_fractal_temple.json"
+  }
+}
