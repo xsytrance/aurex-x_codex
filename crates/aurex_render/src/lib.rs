@@ -279,7 +279,144 @@ pub fn run_real_renderer_event_loop() -> Result<(), String> {
         BootSequenceRecipe::GrandReveal,
     );
     let timeline_frames = animator.generate_frames(1);
+    let boot_screen = animator
+        .generate_timeline(1)
+        .to_boot_screen_sequence("AUREX-X", "Prime Pulse online");
     let mut frame_idx = 0usize;
+
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("Aurex-X Boot Texture Shader"),
+        source: wgpu::ShaderSource::Wgsl(
+            r#"
+@group(0) @binding(0)
+var boot_tex: texture_2d<f32>;
+@group(0) @binding(1)
+var boot_sampler: sampler;
+
+struct VsOut {
+    @builtin(position) position: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+};
+
+@vertex
+fn vs_main(@builtin(vertex_index) vid: u32) -> VsOut {
+    var positions = array<vec2<f32>, 3>(
+        vec2<f32>(-1.0, -3.0),
+        vec2<f32>(-1.0, 1.0),
+        vec2<f32>(3.0, 1.0),
+    );
+    var uvs = array<vec2<f32>, 3>(
+        vec2<f32>(0.0, 2.0),
+        vec2<f32>(0.0, 0.0),
+        vec2<f32>(2.0, 0.0),
+    );
+    var out: VsOut;
+    out.position = vec4<f32>(positions[vid], 0.0, 1.0);
+    out.uv = uvs[vid];
+    return out;
+}
+
+@fragment
+fn fs_main(inf: VsOut) -> @location(0) vec4<f32> {
+    return textureSample(boot_tex, boot_sampler, inf.uv);
+}
+"#
+            .into(),
+        ),
+    });
+
+    let texture_bind_group_layout =
+        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Aurex-X Boot Texture BGL"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        multisampled: false,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("Aurex-X Boot Texture Pipeline Layout"),
+        bind_group_layouts: &[&texture_bind_group_layout],
+        push_constant_ranges: &[],
+    });
+
+    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("Aurex-X Boot Texture Pipeline"),
+        layout: Some(&pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &shader,
+            entry_point: Some("vs_main"),
+            buffers: &[],
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &shader,
+            entry_point: Some("fs_main"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: config.format,
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        }),
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        multiview: None,
+        cache: None,
+    });
+
+    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("Aurex-X Boot Sampler"),
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        mipmap_filter: wgpu::FilterMode::Nearest,
+        ..Default::default()
+    });
+
+    let mut boot_texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("Aurex-X Boot Texture"),
+        size: wgpu::Extent3d {
+            width: config.width,
+            height: config.height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    let mut boot_texture_view = boot_texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let mut boot_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("Aurex-X Boot Texture BG"),
+        layout: &texture_bind_group_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&boot_texture_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(&sampler),
+            },
+        ],
+    });
 
     event_loop
         .run(|event, target| {
@@ -293,6 +430,41 @@ pub fn run_real_renderer_event_loop() -> Result<(), String> {
                             config.width = size.width;
                             config.height = size.height;
                             surface.configure(&device, &config);
+
+                            boot_texture = device.create_texture(&wgpu::TextureDescriptor {
+                                label: Some("Aurex-X Boot Texture"),
+                                size: wgpu::Extent3d {
+                                    width: config.width,
+                                    height: config.height,
+                                    depth_or_array_layers: 1,
+                                },
+                                mip_level_count: 1,
+                                sample_count: 1,
+                                dimension: wgpu::TextureDimension::D2,
+                                format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                                usage: wgpu::TextureUsages::TEXTURE_BINDING
+                                    | wgpu::TextureUsages::COPY_DST,
+                                view_formats: &[],
+                            });
+                            boot_texture_view =
+                                boot_texture.create_view(&wgpu::TextureViewDescriptor::default());
+                            boot_bind_group =
+                                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                                    label: Some("Aurex-X Boot Texture BG"),
+                                    layout: &texture_bind_group_layout,
+                                    entries: &[
+                                        wgpu::BindGroupEntry {
+                                            binding: 0,
+                                            resource: wgpu::BindingResource::TextureView(
+                                                &boot_texture_view,
+                                            ),
+                                        },
+                                        wgpu::BindGroupEntry {
+                                            binding: 1,
+                                            resource: wgpu::BindingResource::Sampler(&sampler),
+                                        },
+                                    ],
+                                });
                         }
                     }
                     WindowEvent::RedrawRequested => {
@@ -315,16 +487,38 @@ pub fn run_real_renderer_event_loop() -> Result<(), String> {
                         };
 
                         let boot = &timeline_frames[frame_idx % timeline_frames.len()];
+                        let screen = &boot_screen.frames[frame_idx % boot_screen.frames.len()];
                         frame_idx = frame_idx.wrapping_add(1);
-                        let hue = ((boot.hue_shift + 360.0) % 360.0) / 360.0;
-                        let color = wgpu::Color {
-                            r: (0.03 + hue as f64 * 0.22).clamp(0.0, 1.0),
-                            g: (0.04 + boot.glow as f64 * 0.18).clamp(0.0, 1.0),
-                            b: (0.07 + boot.ring_radius as f64 * 0.09).clamp(0.0, 1.0),
-                            a: 1.0,
-                        };
 
-                        let view = frame
+                        let mut cpu_frame = rasterize_boot_frame(boot, config.width, config.height);
+                        overlay_boot_caption(
+                            &mut cpu_frame.rgba,
+                            config.width,
+                            config.height,
+                            screen,
+                        );
+
+                        queue.write_texture(
+                            wgpu::TexelCopyTextureInfo {
+                                texture: &boot_texture,
+                                mip_level: 0,
+                                origin: wgpu::Origin3d::ZERO,
+                                aspect: wgpu::TextureAspect::All,
+                            },
+                            &cpu_frame.rgba,
+                            wgpu::TexelCopyBufferLayout {
+                                offset: 0,
+                                bytes_per_row: Some(config.width * 4),
+                                rows_per_image: Some(config.height),
+                            },
+                            wgpu::Extent3d {
+                                width: config.width,
+                                height: config.height,
+                                depth_or_array_layers: 1,
+                            },
+                        );
+
+                        let swap_view = frame
                             .texture
                             .create_view(&wgpu::TextureViewDescriptor::default());
                         let mut encoder =
@@ -333,13 +527,18 @@ pub fn run_real_renderer_event_loop() -> Result<(), String> {
                             });
 
                         {
-                            let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                                 label: Some("Aurex-X Boot Loop Pass"),
                                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                                    view: &view,
+                                    view: &swap_view,
                                     resolve_target: None,
                                     ops: wgpu::Operations {
-                                        load: wgpu::LoadOp::Clear(color),
+                                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                                            r: 0.0,
+                                            g: 0.0,
+                                            b: 0.0,
+                                            a: 1.0,
+                                        }),
                                         store: wgpu::StoreOp::Store,
                                     },
                                 })],
@@ -347,6 +546,9 @@ pub fn run_real_renderer_event_loop() -> Result<(), String> {
                                 occlusion_query_set: None,
                                 timestamp_writes: None,
                             });
+                            pass.set_pipeline(&pipeline);
+                            pass.set_bind_group(0, &boot_bind_group, &[]);
+                            pass.draw(0..3, 0..1);
                         }
 
                         queue.submit([encoder.finish()]);
@@ -366,6 +568,46 @@ pub fn run_real_renderer_event_loop() -> Result<(), String> {
 #[cfg(not(feature = "real_graphics"))]
 pub fn run_real_renderer_event_loop() -> Result<(), String> {
     Err("real_graphics feature is disabled".to_string())
+}
+
+#[cfg(feature = "real_graphics")]
+fn overlay_boot_caption(rgba: &mut [u8], width: u32, height: u32, frame: &BootScreenFrame) {
+    if width < 32 || height < 16 {
+        return;
+    }
+
+    let glyphs = frame.glyphs_lit.max(1) as usize;
+    let total = 8usize;
+    let lit_ratio =
+        (frame.title_progress.clamp(0.0, 1.0) * glyphs as f32 / total as f32).clamp(0.0, 1.0);
+
+    let y0 = (height as f32 * 0.82) as u32;
+    let y1 = (height as f32 * 0.92) as u32;
+    let x0 = (width as f32 * 0.16) as u32;
+    let x1 = (width as f32 * 0.84) as u32;
+    let span = (x1.saturating_sub(x0)).max(1);
+    let lit_w = (span as f32 * lit_ratio) as u32;
+
+    for y in y0..y1.min(height) {
+        for x in x0..x1.min(width) {
+            let i = ((y * width + x) * 4) as usize;
+            let in_lit = x <= x0.saturating_add(lit_w);
+            let glow = frame.title_glow.clamp(0.0, 2.0);
+            let (r, g, b) = if in_lit {
+                (
+                    (120.0 + 100.0 * glow).clamp(0.0, 255.0) as u8,
+                    (180.0 + 60.0 * glow).clamp(0.0, 255.0) as u8,
+                    255u8,
+                )
+            } else {
+                (40, 55, 75)
+            };
+            rgba[i] = rgba[i].saturating_add(r / 2);
+            rgba[i + 1] = rgba[i + 1].saturating_add(g / 2);
+            rgba[i + 2] = rgba[i + 2].saturating_add(b / 2);
+            rgba[i + 3] = 255;
+        }
+    }
 }
 
 pub fn attempt_real_renderer_bootstrap() -> RealRendererBootstrapStatus {
