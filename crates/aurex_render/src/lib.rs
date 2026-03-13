@@ -290,7 +290,6 @@ where
     let boot_screen = animator
         .generate_timeline(1)
         .to_boot_screen_sequence("AUREX-X", "Prime Pulse online");
-    let mut frame_idx = 0usize;
     let start_time = std::time::Instant::now();
 
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -497,17 +496,34 @@ fn fs_main(inf: VsOut) -> @location(0) vec4<f32> {
                             Err(wgpu::SurfaceError::Other) => return,
                         };
 
-                        let boot = &timeline_frames[frame_idx % timeline_frames.len()];
-                        let screen = &boot_screen.frames[frame_idx % boot_screen.frames.len()];
-                        frame_idx = frame_idx.wrapping_add(1);
+                        let elapsed = start_time.elapsed().as_secs_f32();
+                        let timeline_idx = ((elapsed * 24.0) as usize) % timeline_frames.len();
+                        let boot = &timeline_frames[timeline_idx];
+                        let screen = &boot_screen.frames[timeline_idx % boot_screen.frames.len()];
 
-                        let mut cpu_frame = rasterize_boot_frame(boot, config.width, config.height);
-                        overlay_boot_caption(
-                            &mut cpu_frame.rgba,
-                            config.width,
-                            config.height,
-                            screen,
-                        );
+                        let mut cpu_frame = if elapsed < 5.0 {
+                            let mut frame = rasterize_boot_frame(boot, config.width, config.height);
+                            overlay_boot_caption(
+                                &mut frame.rgba,
+                                config.width,
+                                config.height,
+                                screen,
+                            );
+                            frame
+                        } else if elapsed < 6.0 {
+                            let mut frame = rasterize_boot_frame(boot, config.width, config.height);
+                            overlay_boot_caption(
+                                &mut frame.rgba,
+                                config.width,
+                                config.height,
+                                screen,
+                            );
+                            let fade = (1.0 - (elapsed - 5.0)).clamp(0.0, 1.0);
+                            apply_fade_to_black(&mut frame.rgba, fade);
+                            frame
+                        } else {
+                            rasterize_reveal_frame(config.width, config.height, elapsed - 6.0, boot)
+                        };
 
                         queue.write_texture(
                             wgpu::TexelCopyTextureInfo {
@@ -574,6 +590,81 @@ fn fs_main(inf: VsOut) -> @location(0) vec4<f32> {
             }
         })
         .map_err(|err| format!("event loop run failed: {err}"))
+}
+
+#[cfg(feature = "real_graphics")]
+fn apply_fade_to_black(rgba: &mut [u8], fade: f32) {
+    let k = fade.clamp(0.0, 1.0);
+    for px in rgba.chunks_exact_mut(4) {
+        px[0] = ((px[0] as f32) * k) as u8;
+        px[1] = ((px[1] as f32) * k) as u8;
+        px[2] = ((px[2] as f32) * k) as u8;
+    }
+}
+
+#[cfg(feature = "real_graphics")]
+fn rasterize_reveal_frame(
+    width: u32,
+    height: u32,
+    reveal_t: f32,
+    boot: &BootTimelineFrame,
+) -> BootFramebuffer {
+    let mut frame = BootFramebuffer {
+        width,
+        height,
+        rgba: vec![0; (width as usize) * (height as usize) * 4],
+    };
+    for px in frame.rgba.chunks_exact_mut(4) {
+        px[3] = 255;
+    }
+
+    let angle = reveal_t * 0.25;
+    let x_offset = angle.sin() * 40.0;
+    let scale = 1.0 + angle.cos() * 0.05;
+    let pulse = (boot.styled_glow * 0.5).clamp(0.0, 1.0);
+    let glow = 0.7 + pulse * 0.8;
+
+    let base_scale = ((width as f32 / 240.0) * scale).clamp(2.0, 7.0) as i32;
+    let title = "AUREX-X";
+    let title_w = text_pixel_width(title, base_scale);
+    let title_h = 7 * base_scale;
+    let x = ((width as i32 - title_w) / 2) + x_offset as i32;
+    let y = ((height as i32 - title_h) / 2) - (angle.sin() * 10.0) as i32;
+
+    let layers = [
+        (3, [30, 120, 255], 0.10 * glow),
+        (2, [75, 170, 255], 0.18 * glow),
+        (1, [130, 215, 255], 0.30 * glow),
+        (0, [205, 240, 255], 0.95),
+    ];
+    for (spread, color, intensity) in layers {
+        draw_text(
+            &mut frame.rgba,
+            width,
+            height,
+            title,
+            x - spread,
+            y,
+            base_scale,
+            color,
+            intensity.clamp(0.0, 1.0),
+        );
+        if spread > 0 {
+            draw_text(
+                &mut frame.rgba,
+                width,
+                height,
+                title,
+                x + spread,
+                y,
+                base_scale,
+                color,
+                intensity.clamp(0.0, 1.0),
+            );
+        }
+    }
+
+    frame
 }
 
 #[cfg(not(feature = "real_graphics"))]
