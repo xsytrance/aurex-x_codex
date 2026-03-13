@@ -8,6 +8,7 @@ use aurex_render::{
     BootStyleProfile, CameraRig, MockRenderer, RENDER_MAIN_STAGES, RenderBackendMode,
     RenderBackendReadiness, RenderBootstrapConfig, RenderBootstrapExecutor, RenderBootstrapPlan,
     RenderStage, attempt_real_renderer_bootstrap, rasterize_boot_frame,
+    run_real_renderer_event_loop,
 };
 use aurex_shape_synth::{PrimitiveType, ShapeDescriptor};
 
@@ -308,6 +309,12 @@ fn runtime_diagnostics_report() -> String {
 
 fn main() {
     println!("{}", runtime_diagnostics_report());
+
+    if let Err(err) = run_real_renderer_event_loop() {
+        if !err.contains("real_graphics feature is disabled") {
+            eprintln!("render_real_loop=error detail:{err}");
+        }
+    }
 }
 
 #[cfg(test)]
