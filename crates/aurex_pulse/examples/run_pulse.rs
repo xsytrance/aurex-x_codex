@@ -52,6 +52,13 @@ fn main() {
         );
     }
 
+    if let Some(prime) = runner.diagnostics.dominant_prime {
+        println!(
+            "resonance dominant_prime={:?} top_three={:?}",
+            prime, runner.diagnostics.top_three_primes
+        );
+    }
+
     if let Some(diag) = &runner.diagnostics.last_frame {
         println!(
             "renderer stages={:?} total_ms={:.3}",

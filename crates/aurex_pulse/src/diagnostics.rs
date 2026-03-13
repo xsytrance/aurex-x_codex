@@ -1,6 +1,8 @@
 use aurex_music::rhythm_field::RhythmField;
 use aurex_render_sdf::diagnostics::FrameDiagnostics;
 
+use crate::resonance::PrimeFaction;
+
 #[derive(Debug, Clone, Default)]
 pub struct LifecycleTiming {
     pub load_ms: f64,
@@ -16,6 +18,8 @@ pub struct PulseDiagnostics {
     pub frames_rendered: u64,
     pub rhythm_field: Option<RhythmField>,
     pub rhythm_summary: Option<RhythmSummary>,
+    pub dominant_prime: Option<PrimeFaction>,
+    pub top_three_primes: Vec<PrimeFaction>,
     pub last_frame: Option<FrameDiagnostics>,
 }
 

@@ -9,6 +9,7 @@ use aurex_scene::{Scene, load_scene_from_json_path};
 
 use crate::boot_world::{BootWorldGenerator, BootWorldState};
 use crate::diagnostics::{PulseDiagnostics, RhythmSummary};
+use crate::resonance::ResonanceTracker;
 use crate::schema::{PulseDefinition, PulseSceneSource};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,6 +31,7 @@ pub struct PulseRunner {
     pub runtime_context: PulseRuntimeContext,
     pub boot_world: Option<BootWorldGenerator>,
     pub boot_world_state: Option<BootWorldState>,
+    pub resonance_tracker: Option<ResonanceTracker>,
     base_ambient_light: f32,
 }
 
@@ -57,6 +59,7 @@ impl PulseRunner {
             runtime_context: PulseRuntimeContext::default(),
             boot_world: None,
             boot_world_state: None,
+            resonance_tracker: Some(ResonanceTracker::default()),
             base_ambient_light,
         };
         runner.diagnostics.lifecycle.load_ms = load_start.elapsed().as_secs_f64() * 1000.0;
@@ -82,6 +85,12 @@ impl PulseRunner {
             self.boot_world = Some(boot_world);
             self.boot_world_state = Some(BootWorldState::new());
         }
+        if let (Some(tracker), Some(prime)) = (
+            &mut self.resonance_tracker,
+            self.definition.metadata.prime_affinity,
+        ) {
+            tracker.record_pulse_launch(prime);
+        }
         self.scene.sdf.seed = self.definition.metadata.seed;
         self.base_ambient_light = self.scene.sdf.lighting.ambient_light;
         self.state = PulseState::Initialized;
@@ -92,8 +101,19 @@ impl PulseRunner {
         let update_start = Instant::now();
         self.runtime_seconds = (self.runtime_seconds + delta_seconds).max(0.0);
 
+        if let Some(tracker) = &mut self.resonance_tracker {
+            tracker.update_from_pulse(delta_seconds, &self.definition);
+        }
+
         if let (Some(cfg), Some(state)) = (&self.boot_world, &mut self.boot_world_state) {
+            let prev_district = state.active_district.clone();
             state.update_player_position(cfg, self.scene.sdf.camera.position);
+            if prev_district != state.active_district
+                && let (Some(tracker), Some(active_prime)) =
+                    (&mut self.resonance_tracker, state.active_prime(cfg))
+            {
+                tracker.record_district_visit(active_prime);
+            }
         }
 
         if let Some(seq) = &mut self.music_sequencer {
@@ -125,6 +145,17 @@ impl PulseRunner {
             }
         }
         self.state = PulseState::Running;
+
+        if let Some(tracker) = &self.resonance_tracker {
+            let profile = tracker.profile();
+            self.diagnostics.dominant_prime = profile.dominant_prime();
+            self.diagnostics.top_three_primes = profile
+                .top_primes(3)
+                .into_iter()
+                .map(|(prime, _)| prime)
+                .collect();
+        }
+
         self.diagnostics.lifecycle.update_ms += update_start.elapsed().as_secs_f64() * 1000.0;
     }
 

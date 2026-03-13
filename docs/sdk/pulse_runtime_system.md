@@ -72,3 +72,13 @@ Boot World uses:
 - `BootWorldState`
 
 The runtime tracks district/portal proximity state, and portal systems can emit manual triggers into `PulseGraphRunner` for pulse launches.
+
+## Resonance tracker
+Pulse runtime can maintain a per-player `ResonanceTracker` profile keyed by `PrimeFaction`.
+
+Sources:
+- pulse `metadata.prime_affinity`
+- Boot World district visits
+- Boot World portal launches
+
+Diagnostics expose `dominant_prime` and `top_three_primes` snapshots without affecting renderer diagnostics payloads.

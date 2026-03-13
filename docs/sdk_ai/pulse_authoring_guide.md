@@ -20,7 +20,7 @@ A Pulse definition includes:
 - `pulse_kind`
 - `duration_hint`
 - `interactivity` (`Interactive` | `Passive` | `Hybrid`)
-- `prime_affinity`
+- `prime_affinity` (maps to PrimeFaction resonance tracking)
 
 ## Scene source
 Use either:
@@ -60,3 +60,22 @@ Portals should emit manual trigger strings that are present in PulseGraph transi
 
 Reference:
 - `examples/pulses/boot_world.pulse.json`
+
+## Resonance tracker notes
+Pulse `metadata.prime_affinity` feeds runtime resonance accumulation.
+
+Tracked Prime factions:
+- Pop
+- Rock
+- HipHopRap
+- Electronic
+- RnBSoulFunk
+- Classical
+- Jazz
+- CountryFolk
+- ReggaeCaribbeanAfrobeat
+- WorldTraditional
+- AmbientExperimental
+- Kazoom
+
+Boot World district entries and portal launches can further update resonance profile metrics.

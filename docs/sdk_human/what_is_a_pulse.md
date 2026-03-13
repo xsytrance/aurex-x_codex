@@ -26,3 +26,7 @@ Transitions can be:
 - generator/scene event based
 
 Boot World is a special pulse that acts as a hub. Its districts (Electronic, Jazz, Rock, Ambient) contain portals. Walking near a portal can trigger a graph transition into the linked pulse.
+
+Pulses also contribute to a **Resonance Tracker** profile that measures your affinity with Prime factions over time. District exploration and portal launches in Boot World can increase those affinities.
+
+This profile is planned to power Living Boot Screen personalization and pulse recommendations.

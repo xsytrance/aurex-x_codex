@@ -6,6 +6,7 @@ use aurex_scene::{Scene, SceneTimeline};
 use serde::{Deserialize, Serialize};
 
 use crate::boot_world::BootWorldGenerator;
+use crate::resonance::PrimeFaction;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum PulseKind {
@@ -37,8 +38,16 @@ pub struct PulseMetadata {
     #[serde(default)]
     pub duration_hint: Option<f32>,
     pub interactivity: Interactivity,
-    #[serde(default)]
-    pub prime_affinity: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_prime_affinity_opt")]
+    pub prime_affinity: Option<PrimeFaction>,
+}
+
+fn deserialize_prime_affinity_opt<'de, D>(deserializer: D) -> Result<Option<PrimeFaction>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw: Option<String> = Option::<String>::deserialize(deserializer)?;
+    Ok(raw.and_then(|s| PrimeFaction::from_label(&s)))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

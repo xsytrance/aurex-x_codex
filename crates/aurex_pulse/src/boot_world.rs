@@ -4,19 +4,12 @@ use aurex_scene::Vec3;
 use serde::{Deserialize, Serialize};
 
 use crate::pulse_graph::PulseGraphRunner;
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub enum DistrictPrime {
-    Electronic,
-    Jazz,
-    Rock,
-    Ambient,
-}
+use crate::resonance::{PrimeFaction, ResonanceTracker};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct District {
     pub id: String,
-    pub prime: DistrictPrime,
+    pub prime: PrimeFaction,
     pub center: Vec3,
     pub radius: f32,
     #[serde(default)]
@@ -100,14 +93,34 @@ impl BootWorldState {
         &mut self,
         cfg: &BootWorldGenerator,
         graph_runner: &mut PulseGraphRunner,
+        resonance_tracker: Option<&mut ResonanceTracker>,
     ) {
+        let mut resonance_tracker = resonance_tracker;
         for portal in &cfg.portals {
             let hit = distance(self.player_position, portal.position) <= portal.activation_radius;
             if hit && !self.launched_portals.contains(&portal.id) {
                 graph_runner.trigger_manual(portal.trigger.clone());
                 self.launched_portals.insert(portal.id.clone());
+                if let Some(prime) = cfg
+                    .districts
+                    .iter()
+                    .find(|d| d.pulse_refs.iter().any(|p| p == &portal.target_node))
+                    .map(|d| d.prime)
+                {
+                    if let Some(tracker) = resonance_tracker.as_deref_mut() {
+                        tracker.record_pulse_launch(prime);
+                    }
+                }
             }
         }
+    }
+
+    pub fn active_prime(&self, cfg: &BootWorldGenerator) -> Option<PrimeFaction> {
+        let district_id = self.active_district.as_ref()?;
+        cfg.districts
+            .iter()
+            .find(|d| &d.id == district_id)
+            .map(|d| d.prime)
     }
 }
 

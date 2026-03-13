@@ -2,6 +2,7 @@ pub mod boot_world;
 pub mod diagnostics;
 pub mod loader;
 pub mod pulse_graph;
+pub mod resonance;
 pub mod runner;
 pub mod schema;
 
@@ -12,11 +13,12 @@ mod tests {
     use std::path::PathBuf;
 
     use crate::{
-        boot_world::{BootWorldGenerator, BootWorldState, District, DistrictPrime, PulsePortal},
+        boot_world::{BootWorldGenerator, BootWorldState, District, PulsePortal},
         loader::load_pulse_from_str,
         pulse_graph::{
             PulseGraph, PulseGraphRunner, PulseNode, PulseTransition, PulseTransitionKind,
         },
+        resonance::{PrimeFaction, ResonanceTracker},
         runner::{PulseRunner, PulseState},
     };
 
@@ -106,6 +108,8 @@ mod tests {
         assert!(rhythm.bar_index <= rhythm.beat_index);
         assert!(runner.runtime_context().rhythm_field.is_some());
         assert!(runner.diagnostics.rhythm_summary.is_some());
+        assert!(runner.diagnostics.dominant_prime.is_some());
+        assert!(!runner.diagnostics.top_three_primes.is_empty());
         assert!(runner.scene.sdf.lighting.ambient_light >= baseline_ambient);
     }
 
@@ -199,7 +203,7 @@ mod tests {
             seed: 1,
             districts: vec![District {
                 id: "jazz_district".into(),
-                prime: DistrictPrime::Jazz,
+                prime: PrimeFaction::Jazz,
                 center: aurex_scene::Vec3::new(0.0, 0.0, 0.0),
                 radius: 5.0,
                 pulse_refs: vec!["jazz".into()],
@@ -214,8 +218,10 @@ mod tests {
         };
         let mut state = BootWorldState::new();
         state.update_player_position(&boot_cfg, aurex_scene::Vec3::new(0.5, 0.0, 0.0));
-        state.emit_portal_triggers(&boot_cfg, &mut graph_runner);
+        let mut tracker = ResonanceTracker::default();
+        state.emit_portal_triggers(&boot_cfg, &mut graph_runner, Some(&mut tracker));
         graph_runner.update(0.0).expect("update graph");
         assert_eq!(graph_runner.active_node_id, "jazz");
+        assert_eq!(tracker.profile().pulse_count, 1);
     }
 }
