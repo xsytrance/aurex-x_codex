@@ -21,6 +21,12 @@ Pulse runtime **orchestrates existing systems** rather than replacing them:
 - existing generator/effect graph/automation/timeline/demo/camera stack
 - existing renderer diagnostics
 
+## Planner bridge
+Pulse orchestration currently treats planning outputs as upstream inputs:
+- `WorldBlueprint` captures high-level world intent.
+- `GeneratorStack` deterministically expands it into scene parameters consumed by rendering.
+- `RenderTheme` is the style bridge between ExperiencePlanner intent and renderer-facing configuration.
+
 ## Rendering pipeline
 Pulse runtime invokes the existing renderer pipeline unchanged:
 - ScenePreprocess

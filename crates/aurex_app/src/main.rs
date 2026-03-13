@@ -13,8 +13,6 @@ use aurex_render::{
     run_real_renderer_event_loop_with_frame_hook,
 };
 use aurex_shape_synth::{PrimitiveType, ShapeDescriptor};
-use std::thread;
-use std::time::{Duration, Instant};
 
 fn runtime_diagnostics_report() -> String {
     let mut clock = ConductorClock::default();
@@ -331,10 +329,9 @@ fn main() {
             let pulse = (t * std::f32::consts::TAU * 0.6).sin() * 0.5 + 0.5;
             audio.set_pulse(pulse);
         }
-    }) {
-        if !err.contains("real_graphics feature is disabled") {
-            eprintln!("render_real_loop=error detail:{err}");
-        }
+    }) && !err.contains("real_graphics feature is disabled")
+    {
+        eprintln!("render_real_loop=error detail:{err}");
     }
 }
 
