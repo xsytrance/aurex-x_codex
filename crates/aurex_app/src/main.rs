@@ -13,6 +13,8 @@ use aurex_render::{
     run_real_renderer_event_loop_with_frame_hook,
 };
 use aurex_shape_synth::{PrimitiveType, ShapeDescriptor};
+use std::thread;
+use std::time::{Duration, Instant};
 
 fn runtime_diagnostics_report() -> String {
     let mut clock = ConductorClock::default();
