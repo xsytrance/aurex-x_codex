@@ -1,0 +1,16 @@
+{
+  "sdf": {
+    "seed": 6203,
+    "camera": {"position": {"x": 0.0, "y": 1.0, "z": -10.0}, "target": {"x": 0.0, "y": 0.2, "z": 0.0}, "fov_degrees": 54.0, "aspect_ratio": 1.7777},
+    "lighting": {"ambient_light": 0.16, "key_lights": [{"direction": {"x": 0.2, "y": -1.0, "z": 0.2}, "intensity": 2.2, "color": {"x": 0.85, "y": 0.9, "z": 1.0}}], "fog_density": 0.03, "fog_height_falloff": 0.05},
+    "demo_sequence": {
+      "timeline": {
+        "entries": [
+          {"SceneBlock": {"scene_reference": "examples/prime_pulse_flythrough.json", "duration": 8.0, "camera_style": "wide", "lighting_preset": "neon", "automation_tracks": []}},
+          {"Transition": {"transition_type": "PatternMorph", "duration": 2.0, "intensity": 0.75, "auto": true}},
+          {"SceneBlock": {"scene_reference": "examples/circuit_cathedral_cinematic.json", "duration": 8.0, "camera_style": "close", "lighting_preset": "bright", "automation_tracks": []}}
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "sdf": {
+    "seed": 4044,
+    "camera": {"position": {"x": 0.0, "y": 1.0, "z": -11.0}, "target": {"x": 0.0, "y": 0.0, "z": 0.0}, "fov_degrees": 52.0, "aspect_ratio": 1.7777},
+    "lighting": {"ambient_light": 0.16, "key_lights": [{"direction": {"x": 0.2, "y": -1.0, "z": 0.2}, "intensity": 2.4, "color": {"x": 0.8, "y": 0.9, "z": 1.0}}], "fog_density": 0.035, "fog_height_falloff": 0.06, "volumetric": {"scattering_steps": 12, "beam_falloff": 0.85, "beam_density": 0.11, "shaft_intensity": 0.65}},
+    "timeline": {
+      "duration": 14.0,
+      "loops": true,
+      "keyframes": [],
+      "events": [{"time": 2.0, "name": "kick", "audio_hook": "Kick"}],
+      "shot_sequence": {
+        "shots": [
+          {"start": 0.0, "end": 7.0, "label": "orbit_intro", "camera": {"type": "Orbit", "center": {"x": 0.0, "y": 0.5, "z": 0.0}, "radius": 9.5, "speed": 0.35, "height": 1.4, "fov_degrees": 50.0, "roll": 0.0, "rhythm": {"tempo_sync": 0.4, "beat_shake": 0.2}}},
+          {"start": 7.0, "end": 14.0, "label": "detail_path", "camera": {"type": "BezierPath", "control_points": [{"x": -6.0, "y": 2.0, "z": -6.0}, {"x": 4.0, "y": 1.0, "z": -2.0}, {"x": 2.0, "y": 1.4, "z": 5.0}], "target": {"x": 0.0, "y": 0.8, "z": 0.0}, "fov_degrees": 54.0, "roll": 0.0, "rhythm": {"tempo_sync": 0.8, "beat_shake": 0.3}}}
+        ]
+      }
+    },
+    "patterns": [{"name": "cathedral-energy", "preset": "ElectronicCircuit", "layers": []}],
+    "objects": [{
+      "primitive": {"Box": {"size": {"x": 2.0, "y": 4.0, "z": 2.0}}},
+      "material": {"material_type": "Wireframe", "emissive_strength": 0.7, "pattern_network": {"name": "mat", "preset": "ElectronicCircuit", "layers": []}}
+    }]
+  }
+}

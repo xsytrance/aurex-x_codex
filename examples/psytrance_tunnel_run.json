@@ -1,0 +1,11 @@
+{
+  "sdf": {
+    "seed": 4042,
+    "camera": {"position": {"x": 0.0, "y": 0.4, "z": -10.0}, "target": {"x": 0.0, "y": 0.0, "z": 0.0}, "fov_degrees": 62.0, "aspect_ratio": 1.7777},
+    "lighting": {"ambient_light": 0.14, "key_lights": [{"direction": {"x": 0.5, "y": -1.0, "z": -0.1}, "intensity": 2.8, "color": {"x": 0.6, "y": 0.8, "z": 1.0}}], "fog_density": 0.05, "fog_height_falloff": 0.08, "volumetric": {"scattering_steps": 14, "beam_falloff": 0.9, "beam_density": 0.15, "shaft_intensity": 0.8}},
+    "timeline": {"duration": 10.0, "loops": true, "events": [{"time": 0.5, "name": "kick", "audio_hook": "Kick"}], "keyframes": [],
+      "cinematic_camera": {"type": "Rhythm", "position": {"x": 0.0, "y": 0.5, "z": -8.0}, "target": {"x": 0.0, "y": 0.0, "z": 0.0}, "fov_degrees": 62.0, "roll": 0.0, "tempo_sync": 1.0}
+    },
+    "objects": [{"primitive": {"Torus": {"major_radius": 2.0, "minor_radius": 0.45}}, "modifiers": [{"Twist": {"strength": 0.8}}, {"Repeat": {"cell": {"x": 0.0, "y": 0.0, "z": 4.0}}}], "material": {"material_type": "Plasma", "emissive_strength": 1.0, "pattern": "Bands"}}]
+  }
+}

@@ -7,6 +7,9 @@ authors.workspace = true
 
 [dependencies]
 aurex_core = { path = "../aurex_core" }
+wgpu = { version = "25.0.2", optional = true }
+winit = { version = "0.30.12", optional = true }
+pollster = { version = "0.4", optional = true }
 
 [features]
-real_graphics = []
+real_graphics = ["dep:wgpu", "dep:winit", "dep:pollster"]
