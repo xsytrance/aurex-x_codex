@@ -53,3 +53,6 @@ No external audio files required.
 - `docs/sdk_human/music_shaping_worlds.md`
 - `docs/sdk_human/music_controls_time.md`
 
+
+## Cinematic viewing
+- Cinematic world presentation guide: `docs/sdk_human/cinematic_world_presentation.md`
