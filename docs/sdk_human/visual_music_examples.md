@@ -1,15 +1,16 @@
 # Visual Music Examples
 
-Aurex now includes three small visual-music showcase pulses:
+Aurex ships three visual-music showcase pulses:
+- **Electronic Megacity**
+- **Jazz Atmosphere**
+- **Ambient Dreamscape**
 
-- **Electronic Megacity**: strong neon lighting pulses and active particles.
-- **Jazz Atmosphere**: warm lounge mood with smoother atmospheric drift.
-- **Ambient Dreamscape**: slow, fog-rich, minimal-structure world motion.
+They are built with `PulseBuilder`, which lets developers (and future tools) define pulse intent with simple hints, then map them to the existing world + rhythm systems.
 
-How they work:
-1. The pulse defines a world identity (WorldBlueprint).
-2. Generator parameters define base terrain/structure/atmosphere/lighting/particles/camera hints.
-3. RhythmField music signals gently modulate those parameters.
-4. The renderer draws the result through the same fixed pipeline.
+Each pulse follows the same deterministic flow:
+1. Builder config defines world identity and style hints.
+2. Base generator parameters are created.
+3. RhythmField signals modulate those parameters.
+4. Renderer executes the unchanged pipeline.
 
-These examples are deterministic: same pulse + same seed gives the same initial world setup.
+Same pulse type + same seed gives the same output.

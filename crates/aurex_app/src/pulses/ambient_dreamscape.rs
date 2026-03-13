@@ -1,15 +1,20 @@
 use super::ExamplePulseConfig;
-use crate::pulse_builder::{CameraStyle, LightingStyle, PulseBuilder};
+use crate::pulse_builder::{
+    AtmosphereType, CameraRig, GeometryStyle, LightingMode, PulseBuilder, StructureSet,
+};
 use aurex_render::rhythm_field::VisualTheme;
 
 pub fn create_ambient_dreamscape_pulse(seed: u64) -> ExamplePulseConfig {
     PulseBuilder::new("Ambient Dreamscape")
-        .theme(VisualTheme::Ambient)
         .seed(seed)
-        .structure_density(0.14)
-        .particle_intensity(0.2)
-        .lighting_style(LightingStyle::Diffuse)
-        .camera_style(CameraStyle::Float)
-        .rhythm_reactivity(0.6)
+        .theme(VisualTheme::Ambient)
+        .geometry_style(GeometryStyle::Dreamscape)
+        .structures(StructureSet::Minimal)
+        .lighting(LightingMode::DiffuseSoft)
+        .atmosphere(AtmosphereType::Foggy)
+        .color_palette("mist_blue_violet")
+        .camera_rig(CameraRig::Float)
+        .rhythm_intensity(0.6)
+        .particle_density_multiplier(0.2)
         .build()
 }

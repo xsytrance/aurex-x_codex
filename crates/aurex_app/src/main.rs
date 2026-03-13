@@ -252,6 +252,14 @@ fn runtime_diagnostics_report() -> String {
         pulse_electronic.world_blueprint.theme
     ));
     lines.push(format!(
+        "Geometry: {:?}",
+        pulse_electronic.pulse_config.geometry_style
+    ));
+    lines.push(format!(
+        "Structures: {:?}",
+        pulse_electronic.pulse_config.structure_set
+    ));
+    lines.push(format!(
         "Geometry: structures_density={:.3}",
         pulse_electronic.modulated_output.structures.density
     ));
