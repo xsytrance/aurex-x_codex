@@ -1,4 +1,6 @@
-use aurex_audio::{AudioBackendMode, AudioBackendReadiness, MockAudioEngine};
+use aurex_audio::{
+    AudioBackendMode, AudioBackendReadiness, MockAudioEngine, start_runtime_sine_output,
+};
 use aurex_conductor::{ConductorClock, ConductorStage, MAIN_LOOP_STAGES, execute_frame};
 use aurex_ecs::{CommandBuffer, EcsCommand, EcsWorld, EntityId, Transform2p5D};
 use aurex_lighting::{LightDescriptor, LightKind};
@@ -309,6 +311,18 @@ fn runtime_diagnostics_report() -> String {
 
 fn main() {
     println!("{}", runtime_diagnostics_report());
+
+    let _runtime_audio = match start_runtime_sine_output() {
+        Ok(audio) => {
+            audio.set_pulse(0.35);
+            println!("audio_runtime=started detail:cpal stream active");
+            Some(audio)
+        }
+        Err(err) => {
+            eprintln!("audio_runtime=error detail:{err}");
+            None
+        }
+    };
 
     if let Err(err) = run_real_renderer_event_loop() {
         if !err.contains("real_graphics feature is disabled") {
