@@ -13,7 +13,8 @@ use aurex_render::{
     run_real_renderer_event_loop,
 };
 use aurex_shape_synth::{PrimitiveType, ShapeDescriptor};
-use std::{thread, time::Duration};
+use std::thread;
+use std::time::{Duration, Instant};
 
 fn runtime_diagnostics_report() -> String {
     let mut clock = ConductorClock::default();
@@ -313,11 +314,19 @@ fn runtime_diagnostics_report() -> String {
 fn main() {
     println!("{}", runtime_diagnostics_report());
 
-    let _runtime_audio = match start_runtime_sine_output() {
+    let _runtime_audio_driver = match start_runtime_sine_output() {
         Ok(audio) => {
-            audio.set_pulse(0.35);
+            let driver = thread::spawn(move || {
+                let start = Instant::now();
+                loop {
+                    let t = start.elapsed().as_secs_f32();
+                    let pulse = (t * std::f32::consts::TAU * 0.6).sin() * 0.5 + 0.5;
+                    audio.set_pulse(pulse);
+                    thread::sleep(Duration::from_millis(16));
+                }
+            });
             println!("audio_runtime=started detail:cpal stream active");
-            Some(audio)
+            Some(driver)
         }
         Err(err) => {
             eprintln!("audio_runtime=error detail:{err}");

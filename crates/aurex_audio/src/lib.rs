@@ -352,9 +352,15 @@ pub fn default_demo_audio_config(seed: u32) -> ProceduralAudioConfig {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicU32, Ordering},
+    };
+
     use super::{
         AudioBackendMode, AudioBackendReadiness, AudioTransition, MockAudioEngine,
         analyze_procedural_audio, default_demo_audio_config, synthesize_mono_sample,
+        write_sine_data,
     };
 
     #[test]
@@ -403,5 +409,23 @@ mod tests {
         let fa = analyze_procedural_audio(&cfg, 1.0);
         let fb = analyze_procedural_audio(&cfg, 1.0);
         assert_eq!(fa, fb);
+    }
+
+    #[test]
+    fn runtime_pulse_changes_generated_waveform() {
+        let pulse = Arc::new(AtomicU32::new(0.0f32.to_bits()));
+        let mut low_phase = 0.0_f32;
+        let mut low = vec![0.0_f32; 16];
+        write_sine_data(&mut low, 1, 48_000.0, &mut low_phase, &pulse);
+
+        pulse.store(1.0f32.to_bits(), Ordering::Relaxed);
+        let mut high_phase = 0.0_f32;
+        let mut high = vec![0.0_f32; 16];
+        write_sine_data(&mut high, 1, 48_000.0, &mut high_phase, &pulse);
+
+        let low_energy: f32 = low.iter().map(|s| s.abs()).sum();
+        let high_energy: f32 = high.iter().map(|s| s.abs()).sum();
+        assert!(high_energy > low_energy);
+        assert_ne!(low, high);
     }
 }
