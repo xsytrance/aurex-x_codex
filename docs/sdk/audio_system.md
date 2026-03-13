@@ -133,3 +133,14 @@ Sampling API:
 ## Cinematic and render integration
 - Camera and director system: `docs/sdk/cinematic_systems.md`
 - Post/volumetric pipeline guidance: `docs/sdk/cinematic_systems.md`
+
+
+## Style profiles
+
+Aurex supports deterministic genre scaffolding in `aurex_audio::style_profile`:
+
+- `choose_style(seed)` selects one profile from built-ins (Electronic, Pop, HipHop, Rock, RnB, Jazz, Classical, Country, Reggae, World).
+- `choose_style_selection(seed)` deterministically selects profile + BPM + scale.
+- `styled_audio_config(seed)` builds sequencer tracks and instrument mappings from that style.
+
+This provides genre-aware generation while keeping runtime callback behavior deterministic and allocation-free.

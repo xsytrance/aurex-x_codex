@@ -46,6 +46,33 @@ Use stateful `FilterState::process(...)` sample-by-sample.
 
 `InstrumentVoice` contains mutable runtime state and `sample(freq, sample_rate)`.
 
+## Style profile system
+
+Use `style_profile` module for deterministic genre scaffolding.
+
+### Core types
+- `StyleProfile`
+- `ScaleType`
+- `InstrumentPreset`
+- `DrumPatternType`
+
+### Deterministic style flow
+1. `choose_style(seed)` -> genre profile
+2. `choose_style_selection(seed)` -> profile + bpm + scale
+3. `styled_audio_config(seed)` -> sequencer tracks and config
+
+### Built-in style names
+- Electronic
+- Pop
+- HipHop
+- Rock
+- RnB
+- Jazz
+- Classical
+- Country
+- Reggae
+- World
+
 ## Sequencer/event linkage
 
 In callback:
@@ -55,11 +82,3 @@ In callback:
 In renderer:
 - drain events once per frame
 - map to beat-energy and visual systems
-
-## Built-in defaults
-Use provided constructors as base presets:
-- `Instrument::trance_bass()`
-- `Instrument::supersaw_pad()`
-- `Instrument::analog_lead()`
-- `Instrument::noise_hat()`
-- `Instrument::kick_drum()`

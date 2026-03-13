@@ -1,6 +1,7 @@
 pub mod analysis;
 pub mod runtime_toolkit;
 pub mod sequencer;
+pub mod style_profile;
 pub mod synth;
 pub mod voice;
 
@@ -581,6 +582,10 @@ fn write_boot_data<T>(
 }
 
 pub fn default_demo_audio_config(seed: u32) -> ProceduralAudioConfig {
+    style_profile::styled_audio_config(seed as u64)
+}
+
+pub(crate) fn fallback_demo_audio_config(seed: u32) -> ProceduralAudioConfig {
     ProceduralAudioConfig {
         tempo: 140.0,
         tracks: vec![sequencer::AudioTrack {

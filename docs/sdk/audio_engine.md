@@ -28,15 +28,23 @@ All modules run allocation-free per sample.
 
 `InstrumentVoice` owns persistent runtime state (oscillator phase, supersaw phases, envelope state, filter state, delay/chorus buffers). Voices are triggered by sequencer steps and sampled per frame inside the CPAL callback.
 
-## Built-in instruments
+## Style profiles (genre-aware song setup)
 
-- `TranceBass`
-- `SupersawPad`
-- `AnalogLead`
-- `NoiseHat`
-- `KickDrum`
+`crates/aurex_audio/src/style_profile.rs` adds deterministic style selection:
 
-Runtime bass/pad/lead/hat/kick voices in `write_boot_data` use these definitions.
+- `StyleProfile` fields:
+  - name
+  - tempo range (`tempo_min`..`tempo_max`)
+  - scale options
+  - bass/pad/lead instrument presets
+  - drum pattern type
+- `choose_style(seed)` chooses genre profile deterministically.
+- `choose_style_selection(seed)` chooses style + BPM + scale deterministically.
+- `styled_audio_config(seed)` builds a sequencer-ready `ProceduralAudioConfig` using selected profile.
+
+Built-in style names:
+
+- Electronic, Pop, HipHop, Rock, RnB, Jazz, Classical, Country, Reggae, World
 
 ## Event coupling
 

@@ -13,12 +13,31 @@ The realtime engine combines small reusable synth modules:
 
 These modules are combined into instruments like bass, pad, lead, hi-hat, and kick.
 
+## Genre-aware style profiles
+
+Aurex now supports style profiles to drive song generation by genre.
+Each style defines:
+
+- tempo range
+- candidate musical scales
+- default bass/pad/lead instruments
+- drum pattern type
+
+Example built-in genres include Electronic, Pop, HipHop, Rock, RnB, Jazz, Classical, Country, Reggae, and World.
+
+When a song starts, Aurex deterministically:
+
+1. picks a style from seed
+2. picks BPM within style tempo range
+3. picks a scale from style options
+4. builds tracks with matching instrument presets and drum pattern
+
 ## Why this design
 
-- deterministic behavior (same input -> same output)
+- deterministic behavior (same seed -> same song foundation)
 - low CPU overhead
 - no heap allocations in the audio callback
-- easy to build new instruments by recombining modules
+- easy expansion: add styles without redesigning runtime audio I/O
 
 ## Visual sync
 
