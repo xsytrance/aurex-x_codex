@@ -1,4 +1,5 @@
 mod pulse_builder;
+mod pulse_sequence;
 mod pulses;
 
 use aurex_audio::{
@@ -273,6 +274,12 @@ fn runtime_diagnostics_report() -> String {
         pulse_electronic.rhythm_snapshot.bass_energy,
         pulse_electronic.rhythm_snapshot.intensity
     ));
+    if let Some(duration) = pulse_electronic.sequence_duration_seconds {
+        lines.push(format!("Sequence Duration: {:.1}s", duration));
+    }
+    if let Some(phase) = pulse_electronic.current_phase_name.as_deref() {
+        lines.push(format!("Current Phase: {}", phase));
+    }
     lines.push(format!("Pulse: {}", pulse_jazz.pulse_name));
     lines.push(format!("Theme: {:?}", pulse_jazz.world_blueprint.theme));
     lines.push(format!("Pulse: {}", pulse_ambient.pulse_name));
@@ -400,5 +407,7 @@ mod tests {
         assert!(report.contains("Pulse: Electronic Megacity"));
         assert!(report.contains("Theme: Electronic"));
         assert!(report.contains("Rhythm snapshot: pulse="));
+        assert!(report.contains("Sequence Duration:"));
+        assert!(report.contains("Current Phase:"));
     }
 }

@@ -14,3 +14,6 @@ Each pulse follows the same deterministic flow:
 4. Renderer executes the unchanged pipeline.
 
 Same pulse type + same seed gives the same output.
+
+## Time-based phases
+Some showcase pulses also use a phase sequence so scenes evolve in clear chapters while staying deterministic.

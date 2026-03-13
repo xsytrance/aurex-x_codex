@@ -1,10 +1,11 @@
 use super::config::{
     AtmosphereType, CameraRig, GeometryStyle, LightingMode, PulseConfig, StructureSet,
 };
+use crate::pulse_sequence::{PulseSequence, apply_phase_overrides};
 use aurex_render::rhythm_field::{
-    AtmosphereLayerParams, CameraLayerHints, GeneratorStackOutput, RhythmFieldSnapshot,
-    SequencerState, StructureLayerParams, TerrainLayerParams, VisualTheme, apply_rhythm_modulation,
-    sample_rhythm_field,
+    AtmosphereLayerParams, CameraLayerHints, GeneratorStackOutput, LightingLayerParams,
+    ParticleLayerParams, RhythmFieldSnapshot, SequencerState, StructureLayerParams,
+    TerrainLayerParams, VisualTheme, apply_rhythm_modulation, sample_rhythm_field,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -23,10 +24,14 @@ pub struct ExamplePulseConfig {
     pub generator_output: GeneratorStackOutput,
     pub rhythm_snapshot: RhythmFieldSnapshot,
     pub modulated_output: GeneratorStackOutput,
+    pub sequence: Option<PulseSequence>,
+    pub current_phase_name: Option<String>,
+    pub sequence_duration_seconds: Option<f32>,
 }
 
 pub struct PulseBuilder {
     config: PulseConfig,
+    sequence: Option<PulseSequence>,
 }
 
 impl PulseBuilder {
@@ -36,6 +41,7 @@ impl PulseBuilder {
                 name: name.into(),
                 ..PulseConfig::default()
             },
+            sequence: None,
         }
     }
 
@@ -89,8 +95,26 @@ impl PulseBuilder {
         self
     }
 
+    pub fn sequence(mut self, sequence: PulseSequence) -> Self {
+        self.sequence = Some(sequence);
+        self
+    }
+
     pub fn build(self) -> ExamplePulseConfig {
-        let config = self.config;
+        let mut config = self.config;
+        let sequence = self.sequence;
+
+        let base_time = sample_time_for_theme(config.theme);
+        let mut current_phase_name = None;
+        let mut sequence_duration_seconds = None;
+
+        if let Some(seq) = &sequence {
+            let phase = seq.phase_at_time(base_time);
+            current_phase_name = Some(phase.name.clone());
+            sequence_duration_seconds = Some(seq.total_duration());
+            config = apply_phase_overrides(&config, phase);
+        }
+
         let world_blueprint = WorldBlueprint {
             name: config.name.clone(),
             theme: config.theme,
@@ -100,11 +124,7 @@ impl PulseBuilder {
 
         let generator_output = build_generator_output(&config);
         let sequencer_state = build_sequencer_state(config.theme);
-        let rhythm_snapshot = sample_rhythm_field(
-            config.seed,
-            sample_time_for_theme(config.theme),
-            sequencer_state,
-        );
+        let rhythm_snapshot = sample_rhythm_field(config.seed, base_time, sequencer_state);
 
         let fully_modulated =
             apply_rhythm_modulation(&rhythm_snapshot, &generator_output, config.theme);
@@ -118,6 +138,9 @@ impl PulseBuilder {
             generator_output,
             rhythm_snapshot,
             modulated_output,
+            sequence,
+            current_phase_name,
+            sequence_duration_seconds,
         }
     }
 }
@@ -157,15 +180,15 @@ fn build_generator_output(config: &PulseConfig) -> GeneratorStackOutput {
     };
 
     let lighting = match config.lighting_mode {
-        LightingMode::NeonPulse => aurex_render::rhythm_field::LightingLayerParams {
+        LightingMode::NeonPulse => LightingLayerParams {
             flash_envelope: 0.8,
             exposure: 0.7,
         },
-        LightingMode::WarmGlow => aurex_render::rhythm_field::LightingLayerParams {
+        LightingMode::WarmGlow => LightingLayerParams {
             flash_envelope: 0.24,
             exposure: 0.56,
         },
-        LightingMode::DiffuseSoft => aurex_render::rhythm_field::LightingLayerParams {
+        LightingMode::DiffuseSoft => LightingLayerParams {
             flash_envelope: 0.15,
             exposure: 0.42,
         },
@@ -194,7 +217,7 @@ fn build_generator_output(config: &PulseConfig) -> GeneratorStackOutput {
         },
         atmosphere,
         lighting,
-        particles: aurex_render::rhythm_field::ParticleLayerParams {
+        particles: ParticleLayerParams {
             density_multiplier: particle_intensity,
             brightness: (0.1 + particle_intensity * 0.78).clamp(0.0, 1.0),
         },
@@ -231,14 +254,14 @@ fn blend_stack_output(
                 modulated.atmosphere.fog_density,
             ),
         },
-        lighting: aurex_render::rhythm_field::LightingLayerParams {
+        lighting: LightingLayerParams {
             flash_envelope: lerp(
                 base.lighting.flash_envelope,
                 modulated.lighting.flash_envelope,
             ),
             exposure: lerp(base.lighting.exposure, modulated.lighting.exposure),
         },
-        particles: aurex_render::rhythm_field::ParticleLayerParams {
+        particles: ParticleLayerParams {
             density_multiplier: lerp(
                 base.particles.density_multiplier,
                 modulated.particles.density_multiplier,
@@ -311,6 +334,7 @@ mod tests {
     use crate::pulse_builder::config::{
         AtmosphereType, CameraRig, GeometryStyle, LightingMode, StructureSet,
     };
+    use crate::pulse_sequence::{PulsePhaseOverrides, PulseSequence};
     use aurex_render::rhythm_field::VisualTheme;
 
     #[test]
@@ -331,5 +355,42 @@ mod tests {
         };
 
         assert_eq!(build(), build());
+    }
+
+    #[test]
+    fn sequence_override_application_is_predictable() {
+        let sequence = PulseSequence::new()
+            .add_phase("Silence", 1.0)
+            .add_phase_with_overrides(
+                "Reveal",
+                5.0,
+                PulsePhaseOverrides {
+                    lighting_override: Some(LightingMode::WarmGlow),
+                    atmosphere_override: None,
+                    particle_override: Some(0.4),
+                    camera_override: None,
+                    rhythm_intensity_override: Some(0.2),
+                    structure_override: Some(StructureSet::Sparse),
+                },
+            );
+
+        let pulse = PulseBuilder::new("Seq Demo")
+            .seed(9)
+            .theme(VisualTheme::Electronic)
+            .geometry_style(GeometryStyle::City)
+            .structures(StructureSet::Dense)
+            .lighting(LightingMode::NeonPulse)
+            .atmosphere(AtmosphereType::Clear)
+            .camera_rig(CameraRig::Orbit)
+            .rhythm_intensity(1.0)
+            .particle_density_multiplier(0.82)
+            .sequence(sequence)
+            .build();
+
+        assert_eq!(pulse.current_phase_name.as_deref(), Some("Reveal"));
+        assert_eq!(pulse.pulse_config.lighting_mode, LightingMode::WarmGlow);
+        assert_eq!(pulse.pulse_config.structure_set, StructureSet::Sparse);
+        assert!(pulse.pulse_config.rhythm_intensity < 1.0);
+        assert!(pulse.sequence_duration_seconds.unwrap_or_default() > 0.0);
     }
 }

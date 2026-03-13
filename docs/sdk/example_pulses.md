@@ -42,3 +42,7 @@ Implemented in `crates/aurex_app/src/pulses/`:
 - `ambient_dreamscape`
 
 All are deterministic for the same pulse type + seed.
+
+## Phase-based evolution
+Example pulses can optionally attach a `PulseSequence` of named phases.
+Phase overrides are deterministic bounded adjustments applied through PulseBuilder before RhythmField modulation.

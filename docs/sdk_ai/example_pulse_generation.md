@@ -22,3 +22,8 @@ Builder output must remain deterministic and reuse existing systems:
 - `create_ambient_dreamscape_pulse(seed)`
 
 Do not introduce new renderer stages or alter stage order.
+
+## Optional PulseSequence
+Generated pulses may include a phase sequence for narrative progression.
+Keep phases deterministic and use bounded overrides only.
+Current interface is phase-level (track-level sequencing is future work).

@@ -42,6 +42,7 @@ let pulse = PulseBuilder::new("Electronic Megacity")
     .camera_rig(CameraRig::Orbit)
     .rhythm_intensity(1.0)
     .particle_density_multiplier(0.82)
+    .sequence(sequence)
     .build();
 ```
 
@@ -53,3 +54,8 @@ let pulse = PulseBuilder::new("Electronic Megacity")
 4. apply modulation
 
 No renderer stage changes are introduced.
+
+
+## Optional sequencing
+Use `.sequence(PulseSequence)` to enable deterministic phase-level evolution.
+Without a sequence, behavior is identical to previous PulseBuilder output.
