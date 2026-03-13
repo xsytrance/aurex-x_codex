@@ -129,3 +129,7 @@ Sampling API:
 - Harmonic geometry: `docs/sdk/harmonic_system.md`
 - Rhythm-space/time-warp: `docs/sdk/rhythm_space_system.md`
 
+
+## Cinematic and render integration
+- Camera and director system: `docs/sdk/cinematic_systems.md`
+- Post/volumetric pipeline guidance: `docs/sdk/cinematic_systems.md`
