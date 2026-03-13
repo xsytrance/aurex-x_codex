@@ -13,6 +13,7 @@ use aurex_render::{
     run_real_renderer_event_loop,
 };
 use aurex_shape_synth::{PrimitiveType, ShapeDescriptor};
+use std::{thread, time::Duration};
 
 fn runtime_diagnostics_report() -> String {
     let mut clock = ConductorClock::default();
@@ -312,9 +313,37 @@ fn runtime_diagnostics_report() -> String {
 fn main() {
     println!("{}", runtime_diagnostics_report());
 
+    let audio_boot_animator = BootAnimator::with_style_and_recipe(
+        BootAnimationConfig {
+            seed: 1337,
+            frame_count: 12,
+            ..BootAnimationConfig::default()
+        },
+        BootStyleProfile::from_preset(BootStylePreset::NeonStorm),
+        BootSequenceRecipe::GrandReveal,
+    );
+    let audio_boot_timeline = audio_boot_animator.generate_timeline(1);
+
     let _runtime_audio = match start_runtime_sine_output() {
         Ok(audio) => {
-            audio.set_pulse(0.35);
+            audio.set_pulse(0.3);
+            let pulse_control = audio.pulse_control();
+            let pulse_frames = audio_boot_timeline.frames.clone();
+            thread::spawn(move || {
+                loop {
+                    for frame in &pulse_frames {
+                        let normalized_glow = (frame.styled_glow / 1.6).clamp(0.0, 1.0);
+                        let phase_energy = match frame.phase {
+                            aurex_render::BootPhase::Ignition => 0.74 + frame.phase_t * 0.12,
+                            aurex_render::BootPhase::PulseLock => 0.86 + frame.phase_t * 0.12,
+                            aurex_render::BootPhase::Reveal => 0.7 + frame.phase_t * 0.22,
+                        };
+                        let pulse = (normalized_glow * phase_energy).clamp(0.0, 1.0);
+                        pulse_control.set_pulse(pulse);
+                        thread::sleep(Duration::from_millis(85));
+                    }
+                }
+            });
             println!("audio_runtime=started detail:cpal stream active");
             Some(audio)
         }
