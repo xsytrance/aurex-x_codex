@@ -1,5 +1,5 @@
 use aurex_audio::{
-    AudioBackendMode, AudioBackendReadiness, MockAudioEngine, start_runtime_sine_output,
+    AudioBackendMode, AudioBackendReadiness, AudioEvent, MockAudioEngine, start_runtime_sine_output,
 };
 use aurex_conductor::{ConductorClock, ConductorStage, MAIN_LOOP_STAGES, execute_frame};
 use aurex_ecs::{CommandBuffer, EcsCommand, EcsWorld, EntityId, Transform2p5D};
@@ -7,12 +7,13 @@ use aurex_lighting::{LightDescriptor, LightKind};
 use aurex_postfx::BloomSettings;
 use aurex_render::{
     BootAnimationConfig, BootAnimator, BootPostFxTrack, BootSequenceRecipe, BootStylePreset,
-    BootStyleProfile, CameraRig, MockRenderer, RENDER_MAIN_STAGES, RenderBackendMode,
-    RenderBackendReadiness, RenderBootstrapConfig, RenderBootstrapExecutor, RenderBootstrapPlan,
-    RenderStage, attempt_real_renderer_bootstrap, rasterize_boot_frame,
-    run_real_renderer_event_loop,
+    BootStyleProfile, CameraRig, MockRenderer, MusicReactiveEvent, MusicReactiveVisualState,
+    RENDER_MAIN_STAGES, RenderBackendMode, RenderBackendReadiness, RenderBootstrapConfig,
+    RenderBootstrapExecutor, RenderBootstrapPlan, RenderStage, attempt_real_renderer_bootstrap,
+    rasterize_boot_frame, run_real_renderer_event_loop,
 };
 use aurex_shape_synth::{PrimitiveType, ShapeDescriptor};
+use std::{thread, time::Duration};
 
 fn runtime_diagnostics_report() -> String {
     let mut clock = ConductorClock::default();
@@ -312,9 +313,66 @@ fn runtime_diagnostics_report() -> String {
 fn main() {
     println!("{}", runtime_diagnostics_report());
 
+    let audio_boot_animator = BootAnimator::with_style_and_recipe(
+        BootAnimationConfig {
+            seed: 1337,
+            frame_count: 12,
+            ..BootAnimationConfig::default()
+        },
+        BootStyleProfile::from_preset(BootStylePreset::NeonStorm),
+        BootSequenceRecipe::GrandReveal,
+    );
+    let audio_boot_timeline = audio_boot_animator.generate_timeline(1);
+
     let _runtime_audio = match start_runtime_sine_output() {
         Ok(audio) => {
-            audio.set_pulse(0.35);
+            audio.set_pulse(0.3);
+            let pulse_control = audio.pulse_control();
+            let event_reader = audio.event_reader();
+            let pulse_frames = audio_boot_timeline.frames.clone();
+            thread::spawn(move || {
+                let mut visual_state = MusicReactiveVisualState::default();
+                let mut events = Vec::with_capacity(64);
+                loop {
+                    for frame in &pulse_frames {
+                        events.clear();
+                        event_reader.drain_into(&mut events);
+                        if !events.is_empty() {
+                            for event in &events {
+                                let mapped = match event {
+                                    AudioEvent::Kick => MusicReactiveEvent::Kick,
+                                    AudioEvent::Snare => MusicReactiveEvent::Snare,
+                                    AudioEvent::Hat => MusicReactiveEvent::Hat,
+                                    AudioEvent::BassNote(note) => {
+                                        MusicReactiveEvent::BassNote(*note)
+                                    }
+                                    AudioEvent::PadNote(note) => MusicReactiveEvent::PadNote(*note),
+                                    AudioEvent::LeadNote(note) => {
+                                        MusicReactiveEvent::LeadNote(*note)
+                                    }
+                                };
+                                visual_state.apply_event(mapped);
+                            }
+                        }
+                        visual_state.advance_frame();
+
+                        let normalized_glow = (frame.styled_glow / 1.6).clamp(0.0, 1.0);
+                        let visual_energy = (visual_state.reactor_glow_boost * 0.45
+                            + visual_state.ambient_glow_boost * 0.25
+                            + (visual_state.pulse_ring_scale - 1.0) * 2.2)
+                            .clamp(0.0, 1.0);
+                        let phase_energy = match frame.phase {
+                            aurex_render::BootPhase::Ignition => 0.74 + frame.phase_t * 0.12,
+                            aurex_render::BootPhase::PulseLock => 0.86 + frame.phase_t * 0.12,
+                            aurex_render::BootPhase::Reveal => 0.7 + frame.phase_t * 0.22,
+                        };
+                        let pulse =
+                            (normalized_glow * phase_energy + visual_energy * 0.35).clamp(0.0, 1.0);
+                        pulse_control.set_pulse(pulse);
+                        thread::sleep(Duration::from_millis(85));
+                    }
+                }
+            });
             println!("audio_runtime=started detail:cpal stream active");
             Some(audio)
         }

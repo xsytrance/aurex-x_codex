@@ -731,6 +731,83 @@ pub struct RenderFrameStats {
     pub stages_executed: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MusicReactiveEvent {
+    Kick,
+    Snare,
+    Hat,
+    BassNote(u8),
+    PadNote(u8),
+    LeadNote(u8),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MusicReactiveVisualState {
+    pub reactor_glow_boost: f32,
+    pub particle_burst_energy: f32,
+    pub spark_energy: f32,
+    pub pulse_ring_scale: f32,
+    pub ambient_glow_boost: f32,
+    pub camera_wobble: f32,
+}
+
+impl Default for MusicReactiveVisualState {
+    fn default() -> Self {
+        Self {
+            reactor_glow_boost: 0.0,
+            particle_burst_energy: 0.0,
+            spark_energy: 0.0,
+            pulse_ring_scale: 1.0,
+            ambient_glow_boost: 0.0,
+            camera_wobble: 0.0,
+        }
+    }
+}
+
+impl MusicReactiveVisualState {
+    pub fn apply_event(&mut self, event: MusicReactiveEvent) {
+        match event {
+            MusicReactiveEvent::Kick => {
+                self.reactor_glow_boost = (self.reactor_glow_boost + 0.32).clamp(0.0, 1.0);
+            }
+            MusicReactiveEvent::Snare => {
+                self.particle_burst_energy = (self.particle_burst_energy + 0.45).clamp(0.0, 1.0);
+            }
+            MusicReactiveEvent::Hat => {
+                self.spark_energy = (self.spark_energy + 0.2).clamp(0.0, 1.0);
+            }
+            MusicReactiveEvent::BassNote(note) => {
+                let note_bias = (note as f32 - 36.0).max(0.0) * 0.0008;
+                self.pulse_ring_scale = (1.0 + 0.045 + note_bias).clamp(1.0, 1.16);
+            }
+            MusicReactiveEvent::PadNote(note) => {
+                let note_bias = (note as f32 - 40.0).max(0.0) * 0.002;
+                self.ambient_glow_boost =
+                    (self.ambient_glow_boost + 0.18 + note_bias).clamp(0.0, 1.0);
+            }
+            MusicReactiveEvent::LeadNote(note) => {
+                let note_bias = (note as f32 - 60.0).max(0.0) * 0.0015;
+                self.camera_wobble = (self.camera_wobble + 0.06 + note_bias).clamp(0.0, 0.35);
+            }
+        }
+    }
+
+    pub fn apply_events(&mut self, events: &[MusicReactiveEvent]) {
+        for event in events {
+            self.apply_event(*event);
+        }
+    }
+
+    pub fn advance_frame(&mut self) {
+        self.reactor_glow_boost *= 0.86;
+        self.particle_burst_energy *= 0.74;
+        self.spark_energy *= 0.7;
+        self.pulse_ring_scale = 1.0 + (self.pulse_ring_scale - 1.0) * 0.68;
+        self.ambient_glow_boost *= 0.91;
+        self.camera_wobble *= 0.82;
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct RenderBackendStatus {
     pub mode: RenderBackendMode,
@@ -748,6 +825,7 @@ pub struct MockRenderer {
     config: RenderBootstrapConfig,
     frames_rendered: u64,
     backend_ready: bool,
+    reactive_visuals: MusicReactiveVisualState,
 }
 
 impl MockRenderer {
@@ -757,6 +835,7 @@ impl MockRenderer {
             config,
             frames_rendered: 0,
             backend_ready,
+            reactive_visuals: MusicReactiveVisualState::default(),
         }
     }
 
@@ -783,10 +862,19 @@ impl MockRenderer {
 
     pub fn run_frame(&mut self, stages: &[RenderStage]) -> RenderFrameStats {
         self.frames_rendered += 1;
+        self.reactive_visuals.advance_frame();
         RenderFrameStats {
             frame_id: self.frames_rendered,
             stages_executed: stages.len(),
         }
+    }
+
+    pub fn apply_music_events(&mut self, events: &[MusicReactiveEvent]) {
+        self.reactive_visuals.apply_events(events);
+    }
+
+    pub fn reactive_visuals(&self) -> &MusicReactiveVisualState {
+        &self.reactive_visuals
     }
 }
 
@@ -1668,5 +1756,40 @@ mod tests {
 
         assert!(lit > 0);
         assert!(lit < image.pixel_count());
+    }
+
+    #[test]
+    fn music_reactive_visuals_respond_to_events() {
+        let mut state = MusicReactiveVisualState::default();
+        state.apply_events(&[
+            MusicReactiveEvent::Kick,
+            MusicReactiveEvent::Snare,
+            MusicReactiveEvent::Hat,
+            MusicReactiveEvent::BassNote(42),
+            MusicReactiveEvent::PadNote(55),
+            MusicReactiveEvent::LeadNote(79),
+        ]);
+
+        assert!(state.reactor_glow_boost > 0.0);
+        assert!(state.particle_burst_energy > 0.0);
+        assert!(state.spark_energy > 0.0);
+        assert!(state.pulse_ring_scale > 1.0);
+        assert!(state.ambient_glow_boost > 0.0);
+        assert!(state.camera_wobble > 0.0);
+    }
+
+    #[test]
+    fn music_reactive_visuals_decay_deterministically() {
+        let mut state = MusicReactiveVisualState::default();
+        state.apply_event(MusicReactiveEvent::Kick);
+        state.apply_event(MusicReactiveEvent::PadNote(50));
+
+        let first = state.clone();
+        state.advance_frame();
+        let second = state.clone();
+
+        assert!(second.reactor_glow_boost < first.reactor_glow_boost);
+        assert!(second.ambient_glow_boost < first.ambient_glow_boost);
+        assert!(second.pulse_ring_scale <= first.pulse_ring_scale.max(1.0));
     }
 }
