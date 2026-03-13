@@ -42,3 +42,18 @@ When a song starts, Aurex deterministically:
 ## Visual sync
 
 When beats/notes trigger, audio emits compact events. The renderer drains events once per frame and uses beat energy + event reactions to drive glow, ring scale, particles, and camera behavior.
+
+
+## Procedural vocal styles
+
+Aurex now includes a sample-free vocal engine with several styles:
+
+- Chant
+- Choir pad
+- R&B synth vocal
+- Robot vocal
+- Jazz-style scat
+
+Vocal phrases are generated deterministically from phoneme sets, then shaped by formant filters (vowel-like resonances) and synth envelopes/effects.
+
+Style profiles can optionally assign a vocal type (for example Electronic→Robot, Pop/RnB→RnbSynth, Jazz→Scat, World→Chant), so genre choice also influences vocal character.

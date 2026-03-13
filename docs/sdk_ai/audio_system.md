@@ -82,3 +82,20 @@ In callback:
 In renderer:
 - drain events once per frame
 - map to beat-energy and visual systems
+
+
+## Vocal synthesis system
+
+Use `aurex_audio::vocal_engine` for deterministic procedural vocals.
+
+### Core pieces
+- `VocalType`: `Chant`, `ChoirPad`, `RnbSynth`, `Robot`, `Scat`
+- phoneme sets:
+  - `CHANT_PHONEMES = ["AH", "OH", "YA", "NA", "HE"]`
+  - `SCAT_PHONEMES = ["BA", "DA", "DOO", "BEE", "SKA"]`
+- `generate_phrase(seed, phonemes)` -> deterministic `Phrase`
+- `Formant { frequency, bandwidth }` + vowel presets (AH/OO/EE/OH)
+- `VocalVoice` sample path: oscillator -> formant filter -> envelope -> optional effects
+
+### Style integration
+`StyleProfile` includes optional `vocal_type`; `styled_audio_config(seed)` maps this to a `VoiceSynthConfig` for genre-aligned vocals.

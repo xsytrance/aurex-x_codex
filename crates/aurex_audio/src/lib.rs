@@ -3,6 +3,7 @@ pub mod runtime_toolkit;
 pub mod sequencer;
 pub mod style_profile;
 pub mod synth;
+pub mod vocal_engine;
 pub mod voice;
 
 use analysis::{AudioFeatures, analyze_sequence};

@@ -48,6 +48,16 @@ impl Default for Envelope {
 }
 
 impl Envelope {
+    pub fn from_adsr(attack: f32, decay: f32, sustain: f32, release: f32) -> Self {
+        let mut env = Self::default();
+        env.attack = attack;
+        env.decay = decay;
+        env.sustain = sustain;
+        env.release = release;
+        env.value = 0.0;
+        env
+    }
+
     pub fn note_on(&mut self) {
         self.stage = EnvelopeStage::Attack;
     }

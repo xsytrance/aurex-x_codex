@@ -54,3 +54,15 @@ Audio callback emits:
 - `BassNote(u8)`, `PadNote(u8)`, `LeadNote(u8)`
 
 Renderer drains these once per frame and updates beat/visual energy systems deterministically.
+
+
+## Procedural vocal engine
+
+`crates/aurex_audio/src/vocal_engine.rs` adds deterministic vocal synthesis without samples:
+
+- vocal styles: `Chant`, `ChoirPad`, `RnbSynth`, `Robot`, `Scat`
+- deterministic phrase generation from phoneme sets
+- formant synthesis (`Formant`, vowel presets AH/OO/EE/OH)
+- `VocalVoice` combines oscillator + formant filters + envelope + optional effects
+
+Style profiles can attach a `vocal_type` so generated songs include genre-matched procedural vocals.

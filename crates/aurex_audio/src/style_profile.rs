@@ -2,6 +2,7 @@ use crate::{
     ProceduralAudioConfig,
     runtime_toolkit::Instrument,
     sequencer::{AudioNote, AudioPattern, AudioTrack},
+    vocal_engine::{VocalType, vocal_type_to_config},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,6 +66,7 @@ pub struct StyleProfile {
     pub pad_instrument: InstrumentPreset,
     pub lead_instrument: InstrumentPreset,
     pub drum_pattern_type: DrumPatternType,
+    pub vocal_type: Option<VocalType>,
 }
 
 const MAJOR_MINOR: &[ScaleType] = &[ScaleType::Major, ScaleType::Minor];
@@ -90,6 +92,7 @@ const STYLE_PROFILES: [StyleProfile; 10] = [
         pad_instrument: InstrumentPreset::SupersawPad,
         lead_instrument: InstrumentPreset::AnalogLead,
         drum_pattern_type: DrumPatternType::FourOnFloor,
+        vocal_type: Some(VocalType::Robot),
     },
     StyleProfile {
         name: "Pop",
@@ -100,6 +103,7 @@ const STYLE_PROFILES: [StyleProfile; 10] = [
         pad_instrument: InstrumentPreset::SupersawPad,
         lead_instrument: InstrumentPreset::AnalogLead,
         drum_pattern_type: DrumPatternType::Backbeat,
+        vocal_type: Some(VocalType::RnbSynth),
     },
     StyleProfile {
         name: "HipHop",
@@ -110,6 +114,7 @@ const STYLE_PROFILES: [StyleProfile; 10] = [
         pad_instrument: InstrumentPreset::SupersawPad,
         lead_instrument: InstrumentPreset::AnalogLead,
         drum_pattern_type: DrumPatternType::HalfTime,
+        vocal_type: Some(VocalType::RnbSynth),
     },
     StyleProfile {
         name: "Rock",
@@ -120,6 +125,7 @@ const STYLE_PROFILES: [StyleProfile; 10] = [
         pad_instrument: InstrumentPreset::AnalogLead,
         lead_instrument: InstrumentPreset::AnalogLead,
         drum_pattern_type: DrumPatternType::Backbeat,
+        vocal_type: None,
     },
     StyleProfile {
         name: "RnB",
@@ -130,6 +136,7 @@ const STYLE_PROFILES: [StyleProfile; 10] = [
         pad_instrument: InstrumentPreset::SupersawPad,
         lead_instrument: InstrumentPreset::AnalogLead,
         drum_pattern_type: DrumPatternType::HalfTime,
+        vocal_type: Some(VocalType::RnbSynth),
     },
     StyleProfile {
         name: "Jazz",
@@ -140,6 +147,7 @@ const STYLE_PROFILES: [StyleProfile; 10] = [
         pad_instrument: InstrumentPreset::SupersawPad,
         lead_instrument: InstrumentPreset::AnalogLead,
         drum_pattern_type: DrumPatternType::Shuffle,
+        vocal_type: Some(VocalType::Scat),
     },
     StyleProfile {
         name: "Classical",
@@ -150,6 +158,7 @@ const STYLE_PROFILES: [StyleProfile; 10] = [
         pad_instrument: InstrumentPreset::SupersawPad,
         lead_instrument: InstrumentPreset::AnalogLead,
         drum_pattern_type: DrumPatternType::WorldPulse,
+        vocal_type: Some(VocalType::ChoirPad),
     },
     StyleProfile {
         name: "Country",
@@ -160,6 +169,7 @@ const STYLE_PROFILES: [StyleProfile; 10] = [
         pad_instrument: InstrumentPreset::AnalogLead,
         lead_instrument: InstrumentPreset::AnalogLead,
         drum_pattern_type: DrumPatternType::Backbeat,
+        vocal_type: None,
     },
     StyleProfile {
         name: "Reggae",
@@ -170,6 +180,7 @@ const STYLE_PROFILES: [StyleProfile; 10] = [
         pad_instrument: InstrumentPreset::SupersawPad,
         lead_instrument: InstrumentPreset::AnalogLead,
         drum_pattern_type: DrumPatternType::ReggaeSkank,
+        vocal_type: Some(VocalType::Chant),
     },
     StyleProfile {
         name: "World",
@@ -180,6 +191,7 @@ const STYLE_PROFILES: [StyleProfile; 10] = [
         pad_instrument: InstrumentPreset::SupersawPad,
         lead_instrument: InstrumentPreset::AnalogLead,
         drum_pattern_type: DrumPatternType::WorldPulse,
+        vocal_type: Some(VocalType::Chant),
     },
 ];
 
@@ -305,6 +317,10 @@ pub fn styled_audio_config(seed: u64) -> ProceduralAudioConfig {
     cfg.tracks = tracks;
     cfg.synth_graph = Some(synth_graph);
     cfg.seed = seed as u32;
+    cfg.voice = sel
+        .profile
+        .vocal_type
+        .map(|vocal_type| vocal_type_to_config(vocal_type, seed));
 
     // touch instrument constructors to keep style→preset mapping explicit and compiled
     let _ = sel.profile.bass_instrument.to_instrument().effect_flags;
@@ -388,5 +404,11 @@ mod tests {
         let b = styled_audio_config(99);
         assert_eq!(a, b);
         assert!(!a.tracks.is_empty());
+    }
+
+    #[test]
+    fn configured_style_may_provide_voice() {
+        let cfg = styled_audio_config(0);
+        assert!(cfg.voice.is_some());
     }
 }
