@@ -742,7 +742,46 @@ pub enum MusicReactiveEvent {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct BeatEnergy {
+    pub kick_energy: f32,
+    pub snare_energy: f32,
+    pub bass_energy: f32,
+    pub pad_energy: f32,
+}
+
+impl Default for BeatEnergy {
+    fn default() -> Self {
+        Self {
+            kick_energy: 0.0,
+            snare_energy: 0.0,
+            bass_energy: 0.0,
+            pad_energy: 0.0,
+        }
+    }
+}
+
+impl BeatEnergy {
+    pub fn apply_event(&mut self, event: MusicReactiveEvent) {
+        match event {
+            MusicReactiveEvent::Kick => self.kick_energy += 1.0,
+            MusicReactiveEvent::Snare => self.snare_energy += 0.8,
+            MusicReactiveEvent::BassNote(_) => self.bass_energy += 0.5,
+            MusicReactiveEvent::PadNote(_) => self.pad_energy += 0.3,
+            _ => {}
+        }
+    }
+
+    pub fn decay_frame(&mut self) {
+        self.kick_energy *= 0.92;
+        self.snare_energy *= 0.92;
+        self.bass_energy *= 0.94;
+        self.pad_energy *= 0.96;
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct MusicReactiveVisualState {
+    pub beat_energy: BeatEnergy,
     pub reactor_glow_boost: f32,
     pub particle_burst_energy: f32,
     pub spark_energy: f32,
@@ -754,6 +793,7 @@ pub struct MusicReactiveVisualState {
 impl Default for MusicReactiveVisualState {
     fn default() -> Self {
         Self {
+            beat_energy: BeatEnergy::default(),
             reactor_glow_boost: 0.0,
             particle_burst_energy: 0.0,
             spark_energy: 0.0,
@@ -766,24 +806,40 @@ impl Default for MusicReactiveVisualState {
 
 impl MusicReactiveVisualState {
     pub fn apply_event(&mut self, event: MusicReactiveEvent) {
+        self.beat_energy.apply_event(event);
+
         match event {
             MusicReactiveEvent::Kick => {
-                self.reactor_glow_boost = (self.reactor_glow_boost + 0.32).clamp(0.0, 1.0);
+                self.reactor_glow_boost =
+                    (self.reactor_glow_boost + 0.22 + self.beat_energy.kick_energy * 0.08)
+                        .clamp(0.0, 2.5);
+                self.pulse_ring_scale =
+                    (self.pulse_ring_scale + 0.03 + self.beat_energy.kick_energy * 0.012)
+                        .clamp(1.0, 1.22);
             }
             MusicReactiveEvent::Snare => {
-                self.particle_burst_energy = (self.particle_burst_energy + 0.45).clamp(0.0, 1.0);
+                self.particle_burst_energy =
+                    (self.particle_burst_energy + 0.2 + self.beat_energy.snare_energy * 0.1)
+                        .clamp(0.0, 2.5);
             }
             MusicReactiveEvent::Hat => {
                 self.spark_energy = (self.spark_energy + 0.2).clamp(0.0, 1.0);
             }
             MusicReactiveEvent::BassNote(note) => {
                 let note_bias = (note as f32 - 36.0).max(0.0) * 0.0008;
-                self.pulse_ring_scale = (1.0 + 0.045 + note_bias).clamp(1.0, 1.16);
+                self.pulse_ring_scale = (self.pulse_ring_scale
+                    + 0.01
+                    + self.beat_energy.bass_energy * 0.01
+                    + note_bias)
+                    .clamp(1.0, 1.22);
             }
             MusicReactiveEvent::PadNote(note) => {
                 let note_bias = (note as f32 - 40.0).max(0.0) * 0.002;
-                self.ambient_glow_boost =
-                    (self.ambient_glow_boost + 0.18 + note_bias).clamp(0.0, 1.0);
+                self.ambient_glow_boost = (self.ambient_glow_boost
+                    + 0.07
+                    + self.beat_energy.pad_energy * 0.06
+                    + note_bias)
+                    .clamp(0.0, 2.5);
             }
             MusicReactiveEvent::LeadNote(note) => {
                 let note_bias = (note as f32 - 60.0).max(0.0) * 0.0015;
@@ -799,6 +855,19 @@ impl MusicReactiveVisualState {
     }
 
     pub fn advance_frame(&mut self) {
+        self.beat_energy.decay_frame();
+
+        self.pulse_ring_scale = (self.pulse_ring_scale
+            + self.beat_energy.kick_energy * 0.004
+            + self.beat_energy.bass_energy * 0.002)
+            .clamp(1.0, 1.24);
+        self.reactor_glow_boost =
+            (self.reactor_glow_boost + self.beat_energy.kick_energy * 0.015).clamp(0.0, 2.5);
+        self.particle_burst_energy =
+            (self.particle_burst_energy + self.beat_energy.snare_energy * 0.02).clamp(0.0, 2.5);
+        self.ambient_glow_boost =
+            (self.ambient_glow_boost + self.beat_energy.pad_energy * 0.012).clamp(0.0, 2.5);
+
         self.reactor_glow_boost *= 0.86;
         self.particle_burst_energy *= 0.74;
         self.spark_energy *= 0.7;
@@ -1791,5 +1860,37 @@ mod tests {
         assert!(second.reactor_glow_boost < first.reactor_glow_boost);
         assert!(second.ambient_glow_boost < first.ambient_glow_boost);
         assert!(second.pulse_ring_scale <= first.pulse_ring_scale.max(1.0));
+    }
+
+    #[test]
+    fn beat_energy_accumulates_with_expected_weights() {
+        let mut energy = BeatEnergy::default();
+        energy.apply_event(MusicReactiveEvent::Kick);
+        energy.apply_event(MusicReactiveEvent::Snare);
+        energy.apply_event(MusicReactiveEvent::BassNote(42));
+        energy.apply_event(MusicReactiveEvent::PadNote(55));
+        energy.apply_event(MusicReactiveEvent::Hat);
+
+        assert_eq!(energy.kick_energy, 1.0);
+        assert_eq!(energy.snare_energy, 0.8);
+        assert_eq!(energy.bass_energy, 0.5);
+        assert_eq!(energy.pad_energy, 0.3);
+    }
+
+    #[test]
+    fn beat_energy_decays_with_expected_factors() {
+        let mut energy = BeatEnergy {
+            kick_energy: 1.0,
+            snare_energy: 0.8,
+            bass_energy: 0.5,
+            pad_energy: 0.3,
+        };
+
+        energy.decay_frame();
+
+        assert!((energy.kick_energy - 0.92).abs() < 1e-6);
+        assert!((energy.snare_energy - 0.736).abs() < 1e-6);
+        assert!((energy.bass_energy - 0.47).abs() < 1e-6);
+        assert!((energy.pad_energy - 0.288).abs() < 1e-6);
     }
 }

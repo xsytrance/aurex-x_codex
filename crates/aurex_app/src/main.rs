@@ -357,6 +357,11 @@ fn main() {
                         visual_state.advance_frame();
 
                         let normalized_glow = (frame.styled_glow / 1.6).clamp(0.0, 1.0);
+                        let beat_energy = (visual_state.beat_energy.kick_energy * 0.28
+                            + visual_state.beat_energy.snare_energy * 0.2
+                            + visual_state.beat_energy.bass_energy * 0.22
+                            + visual_state.beat_energy.pad_energy * 0.16)
+                            .clamp(0.0, 1.0);
                         let visual_energy = (visual_state.reactor_glow_boost * 0.45
                             + visual_state.ambient_glow_boost * 0.25
                             + (visual_state.pulse_ring_scale - 1.0) * 2.2)
@@ -366,8 +371,10 @@ fn main() {
                             aurex_render::BootPhase::PulseLock => 0.86 + frame.phase_t * 0.12,
                             aurex_render::BootPhase::Reveal => 0.7 + frame.phase_t * 0.22,
                         };
-                        let pulse =
-                            (normalized_glow * phase_energy + visual_energy * 0.35).clamp(0.0, 1.0);
+                        let pulse = (normalized_glow * phase_energy
+                            + visual_energy * 0.28
+                            + beat_energy * 0.24)
+                            .clamp(0.0, 1.0);
                         pulse_control.set_pulse(pulse);
                         thread::sleep(Duration::from_millis(85));
                     }
