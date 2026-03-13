@@ -1,5 +1,6 @@
 use aurex_audio::song_planner::{SongPlan, generate_song_plan};
 use aurex_render::typography::{TypographyStyle, choose_typography_style};
+use aurex_render::world_generator::VisualTheme as RenderVisualTheme;
 
 use crate::determinism::{splitmix_f32, splitmix_u64};
 
@@ -10,6 +11,18 @@ pub enum VisualTheme {
     DesertMonolith,
     StormField,
     NeonCity,
+}
+
+impl VisualTheme {
+    pub fn as_render_theme(self) -> RenderVisualTheme {
+        match self {
+            VisualTheme::Reactor => RenderVisualTheme::Reactor,
+            VisualTheme::Cathedral => RenderVisualTheme::Cathedral,
+            VisualTheme::DesertMonolith => RenderVisualTheme::DesertMonolith,
+            VisualTheme::StormField => RenderVisualTheme::StormField,
+            VisualTheme::NeonCity => RenderVisualTheme::NeonCity,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

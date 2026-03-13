@@ -124,3 +124,14 @@ Generated timelines are intended for UI/renderer consumption and are not execute
   - visual theme
 
 No CPAL stream/callback architecture changes are involved.
+
+
+## Procedural World Generator
+
+Aurex now includes a deterministic world blueprint pass in `aurex_render::world_generator`.
+
+- `generate_world_blueprint(seed, theme)` creates lightweight parameters (no mesh/assets).
+- Blueprint fields: theme, structure set, geometry style, atmosphere, lighting mode, color palette, and camera rig.
+- Theme drives structure + lighting + camera defaults, while seed drives style/atmosphere/palette choices.
+- `MockRenderer` stores `world_blueprint: Option<WorldBlueprint>` and can emit a debug summary for diagnostics.
+- Generation runs outside the realtime audio callback, preserving CPAL determinism and callback allocation constraints.

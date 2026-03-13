@@ -1,8 +1,10 @@
 pub mod typography;
+pub mod world_generator;
 use typography::{
     LyricRenderEvent, TimedLyricRenderEvent, TypographyReactiveState, TypographyStyle,
     choose_typography_style,
 };
+use world_generator::{VisualTheme, WorldBlueprint, generate_world_blueprint};
 
 #[cfg(feature = "real_graphics")]
 use winit::{dpi::PhysicalSize, event_loop::EventLoop, window::Window};
@@ -954,6 +956,7 @@ pub struct MockRenderer {
     lyric_bpm: u32,
     camera_state: CameraState,
     camera_time_seconds: f32,
+    world_blueprint: Option<WorldBlueprint>,
 }
 
 impl MockRenderer {
@@ -972,6 +975,7 @@ impl MockRenderer {
             lyric_bpm: 120,
             camera_state: CameraState::default(),
             camera_time_seconds: 0.0,
+            world_blueprint: None,
         }
     }
 
@@ -1070,6 +1074,29 @@ impl MockRenderer {
 
     pub fn active_lyric(&self) -> Option<&LyricRenderEvent> {
         self.active_lyric.as_ref()
+    }
+
+    pub fn set_world_blueprint(&mut self, blueprint: WorldBlueprint) {
+        self.set_camera_rig(blueprint.camera_rig);
+        self.world_blueprint = Some(blueprint);
+    }
+
+    pub fn initialize_world_from_theme(&mut self, seed: u64, theme: VisualTheme) {
+        let blueprint = generate_world_blueprint(seed, theme);
+        self.set_world_blueprint(blueprint);
+    }
+
+    pub fn world_blueprint(&self) -> Option<&WorldBlueprint> {
+        self.world_blueprint.as_ref()
+    }
+
+    pub fn world_debug_summary(&self) -> Option<String> {
+        self.world_blueprint.as_ref().map(|world| {
+            format!(
+                "world_theme={:?} geometry_style={:?} atmosphere={:?} lighting={:?} camera_rig={:?}",
+                world.theme, world.geometry_style, world.atmosphere, world.lighting, world.camera_rig
+            )
+        })
     }
 }
 
@@ -2124,5 +2151,29 @@ mod tests {
         assert!(state.glow_boost > 0.0);
         assert!(state.ambient_boost > 0.0);
         assert!(state.letter_motion > 0.0);
+    }
+}
+
+#[cfg(test)]
+mod world_generator_integration_tests {
+    use super::{MockRenderer, RenderBootstrapConfig};
+    use crate::world_generator::VisualTheme;
+
+    #[test]
+    fn renderer_stores_world_blueprint_and_debug_summary() {
+        let mut renderer = MockRenderer::new(RenderBootstrapConfig::default());
+        renderer.initialize_world_from_theme(99, VisualTheme::NeonCity);
+
+        let world = renderer.world_blueprint().expect("world should be set");
+        assert_eq!(world.theme, VisualTheme::NeonCity);
+
+        let summary = renderer
+            .world_debug_summary()
+            .expect("summary should exist");
+        assert!(summary.contains("world_theme=NeonCity"));
+        assert!(summary.contains("geometry_style="));
+        assert!(summary.contains("atmosphere="));
+        assert!(summary.contains("lighting="));
+        assert!(summary.contains("camera_rig="));
     }
 }

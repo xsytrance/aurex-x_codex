@@ -75,6 +75,10 @@ fn runtime_diagnostics_report() -> String {
     world.apply_commands(&mut commands);
 
     let mut renderer = MockRenderer::new(RenderBootstrapConfig::default());
+    renderer.initialize_world_from_theme(
+        0xA0E1_00F0,
+        creative_directive.experience.visual_theme.as_render_theme(),
+    );
     let render_stats = renderer.run_frame(&RENDER_MAIN_STAGES);
 
     let mut visited = Vec::new();
@@ -190,6 +194,12 @@ fn runtime_diagnostics_report() -> String {
         creative_directive.experience.visual_theme,
         creative_directive.experience.song_plan.style.name
     ));
+    if let Some(world) = renderer.world_blueprint() {
+        lines.push(format!(
+            "world_theme={:?} geometry_style={:?} atmosphere={:?} lighting={:?} camera_rig={:?}",
+            world.theme, world.geometry_style, world.atmosphere, world.lighting, world.camera_rig
+        ));
+    }
     lines.push(format!("ecs_entity_count={}", world.entity_count()));
     lines.push(format!(
         "render_bootstrap={} {}x{}",
@@ -435,6 +445,7 @@ audio_probe=tick:1 pulse:0.854
 audio_m1_readiness=device_io:true stream_graph:true can_emit_sound:true
 creative_identity=Echo Conclave bias=Classical tone=Cosmic
 creative_experience_title=Echo Conclave // Crystal Frequency visual_theme=Cathedral style=Classical
+world_theme=Cathedral geometry_style=SpireField atmosphere=Mist lighting=CrystalRefraction camera_rig=Orbit
 ecs_entity_count=2
 render_bootstrap=Aurex-X 1280x720
 render_stage_count=3
