@@ -1,0 +1,60 @@
+{
+  "sdf": {
+    "seed": 9200,
+    "camera": {
+      "position": {"x": 0.0, "y": 3.0, "z": -12.0},
+      "target": {"x": 0.0, "y": 1.0, "z": 0.0},
+      "fov_degrees": 60.0,
+      "aspect_ratio": 1.7777778
+    },
+    "lighting": {
+      "ambient_light": 0.14,
+      "key_lights": [
+        {
+          "direction": {"x": -0.35, "y": -1.0, "z": -0.2},
+          "intensity": 1.1,
+          "color": {"x": 0.85, "y": 0.9, "z": 1.0}
+        }
+      ],
+      "fog_color": {"x": 0.04, "y": 0.05, "z": 0.09},
+      "fog_density": 0.04,
+      "fog_height_falloff": 0.07
+    },
+    "generator_stack": {
+      "layers": [
+        {
+          "BaseGenerator": {
+            "generator": {
+              "ElectronicCity": {"block_count": 28, "tower_height": 2.4}
+            }
+          }
+        },
+        {
+          "StructureLayer": {
+            "generator": {
+              "JazzImprovisation": {"ribbon_count": 20, "swing": 0.6}
+            },
+            "strength": 0.7
+          }
+        },
+        {
+          "DetailLayer": {
+            "generator": {
+              "RockAmpMountain": {"peak_count": 8, "amp_height": 2.2}
+            },
+            "strength": 0.5
+          }
+        },
+        {
+          "ParticleLayer": {
+            "generator": {
+              "ReggaeIsland": {"island_count": 6, "wave_scale": 0.5}
+            },
+            "strength": 0.45
+          }
+        }
+      ]
+    },
+    "root": {"Empty": null}
+  }
+}
