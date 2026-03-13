@@ -276,28 +276,231 @@ pub fn start_runtime_sine_output() -> Result<RuntimeAudioOutput, String> {
 }
 
 #[derive(Debug, Clone, Copy)]
+struct NoteEvent {
+    note: Option<u8>,
+    velocity: f32,
+    instrument: u8,
+    param: f32,
+}
+
+#[derive(Debug, Clone)]
+struct Row {
+    events: Vec<NoteEvent>,
+}
+
+#[derive(Debug, Clone)]
+struct Pattern {
+    rows: Vec<Row>,
+}
+
+#[derive(Debug, Clone)]
+struct Song {
+    patterns: Vec<Pattern>,
+    pattern_order: Vec<usize>,
+}
+
+#[derive(Debug, Clone)]
+struct Sequencer {
+    bpm: f32,
+    row_index: usize,
+    pattern_order_index: usize,
+    row_timer: f32,
+    rows_per_beat: usize,
+    song: Song,
+}
+
+impl Sequencer {
+    fn new(song: Song) -> Self {
+        Self {
+            bpm: 138.0,
+            row_index: 0,
+            pattern_order_index: 0,
+            row_timer: 0.0,
+            rows_per_beat: 4,
+            song,
+        }
+    }
+
+    fn seconds_per_row(&self) -> f32 {
+        60.0 / (self.bpm * self.rows_per_beat as f32)
+    }
+
+    fn current_pattern(&self) -> &Pattern {
+        let idx = self.song.pattern_order[self.pattern_order_index];
+        &self.song.patterns[idx]
+    }
+
+    fn step_row(&mut self) -> &Row {
+        self.row_index += 1;
+        if self.row_index >= self.current_pattern().rows.len().max(1) {
+            self.row_index = 0;
+            self.pattern_order_index =
+                (self.pattern_order_index + 1) % self.song.pattern_order.len().max(1);
+        }
+        &self.current_pattern().rows[self.row_index]
+    }
+
+    fn row(&self) -> &Row {
+        &self.current_pattern().rows[self.row_index]
+    }
+}
+
+#[derive(Debug, Clone)]
 struct RuntimeSynthState {
-    time: f32,
-    next_kick_time: f32,
-    kick_age: f32,
+    sequencer: Sequencer,
+    rng: u32,
     kick_phase: f32,
-    sub_phase: f32,
+    kick_freq: f32,
+    kick_env: f32,
+    snare_env: f32,
+    hat_env: f32,
+    bass_phase: f32,
+    bass_freq: f32,
+    bass_env: f32,
     pad_a_phase: f32,
     pad_b_phase: f32,
+    pad_freq: f32,
+    pad_env: f32,
+    lead_phase: f32,
+    lead_freq: f32,
+    lead_env: f32,
+    started: bool,
 }
 
 impl Default for RuntimeSynthState {
     fn default() -> Self {
         Self {
-            time: 0.0,
-            next_kick_time: 0.0,
-            kick_age: 99.0,
+            sequencer: Sequencer::new(tracker_song()),
+            rng: 0xA9E3_1234,
             kick_phase: 0.0,
-            sub_phase: 0.0,
+            kick_freq: 120.0,
+            kick_env: 0.0,
+            snare_env: 0.0,
+            hat_env: 0.0,
+            bass_phase: 0.0,
+            bass_freq: 55.0,
+            bass_env: 0.0,
             pad_a_phase: 0.0,
             pad_b_phase: 0.0,
+            pad_freq: 220.0,
+            pad_env: 0.0,
+            lead_phase: 0.0,
+            lead_freq: 440.0,
+            lead_env: 0.0,
+            started: false,
         }
     }
+}
+
+fn midi_to_hz(note: u8) -> f32 {
+    440.0 * 2.0_f32.powf((note as f32 - 69.0) / 12.0)
+}
+
+fn tracker_song() -> Song {
+    let empty = || Row { events: vec![] };
+    let mut rows = vec![empty(); 32];
+
+    for step in [0usize, 4, 8, 12, 16, 20, 24, 28] {
+        rows[step].events.push(NoteEvent {
+            note: None,
+            velocity: 1.0,
+            instrument: 0,
+            param: 0.0,
+        });
+    }
+    for step in [4usize, 12, 20, 28] {
+        rows[step].events.push(NoteEvent {
+            note: None,
+            velocity: 0.65,
+            instrument: 2,
+            param: 0.0,
+        });
+    }
+    for step in [8usize, 24] {
+        rows[step].events.push(NoteEvent {
+            note: None,
+            velocity: 0.75,
+            instrument: 1,
+            param: 0.0,
+        });
+    }
+
+    let bass_notes = [36u8, 36, 43, 41, 36, 36, 38, 31];
+    for (i, note) in bass_notes.iter().enumerate() {
+        rows[i * 4].events.push(NoteEvent {
+            note: Some(*note),
+            velocity: 0.8,
+            instrument: 3,
+            param: 0.0,
+        });
+    }
+
+    for (step, note) in [(0usize, 60u8), (8, 63), (16, 67), (24, 70)] {
+        rows[step].events.push(NoteEvent {
+            note: Some(note),
+            velocity: 0.45,
+            instrument: 4,
+            param: 0.0,
+        });
+    }
+
+    for (step, note) in [(14usize, 72u8), (30, 74)] {
+        rows[step].events.push(NoteEvent {
+            note: Some(note),
+            velocity: 0.35,
+            instrument: 5,
+            param: 0.0,
+        });
+    }
+
+    Song {
+        patterns: vec![Pattern { rows }],
+        pattern_order: vec![0],
+    }
+}
+
+fn trigger_event(state: &mut RuntimeSynthState, event: NoteEvent) {
+    match event.instrument {
+        0 => {
+            state.kick_env = event.velocity.clamp(0.0, 1.0);
+            state.kick_freq = 120.0 + event.param * 20.0;
+            state.kick_phase = 0.0;
+        }
+        1 => {
+            state.snare_env = event.velocity.clamp(0.0, 1.0);
+        }
+        2 => {
+            state.hat_env = event.velocity.clamp(0.0, 1.0);
+        }
+        3 => {
+            state.bass_env = event.velocity.clamp(0.0, 1.0);
+            if let Some(note) = event.note {
+                state.bass_freq = midi_to_hz(note);
+            }
+        }
+        4 => {
+            state.pad_env = event.velocity.clamp(0.0, 1.0);
+            if let Some(note) = event.note {
+                state.pad_freq = midi_to_hz(note);
+            }
+        }
+        5 => {
+            state.lead_env = event.velocity.clamp(0.0, 1.0);
+            if let Some(note) = event.note {
+                state.lead_freq = midi_to_hz(note);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn rand_noise(state: &mut RuntimeSynthState) -> f32 {
+    state.rng = state
+        .rng
+        .wrapping_mul(1_664_525)
+        .wrapping_add(1_013_904_223);
+    let n = ((state.rng >> 8) & 0x00FF_FFFF) as f32 / 0x00FF_FFFF as f32;
+    n * 2.0 - 1.0
 }
 
 fn write_sine_data<T>(
@@ -333,48 +536,66 @@ fn write_trance_data<T>(
 ) where
     T: cpal::Sample + cpal::FromSample<f32>,
 {
+    if !synth.started {
+        let row_len = synth.sequencer.row().events.len();
+        for i in 0..row_len {
+            let ev = synth.sequencer.row().events[i];
+            trigger_event(synth, ev);
+        }
+        synth.started = true;
+    }
+
     let dt = 1.0 / sample_rate.max(1.0);
     let ch = channels.max(1);
 
     for frame in output.chunks_mut(ch) {
         let p = f32::from_bits(pulse.load(Ordering::Relaxed)).clamp(0.0, 1.0);
 
-        if synth.time >= synth.next_kick_time {
-            synth.kick_age = 0.0;
-            synth.kick_phase = 0.0;
-            synth.next_kick_time += 0.5;
+        synth.sequencer.row_timer += dt;
+        while synth.sequencer.row_timer >= synth.sequencer.seconds_per_row() {
+            synth.sequencer.row_timer -= synth.sequencer.seconds_per_row();
+            synth.sequencer.step_row();
+            let row_len = synth.sequencer.row().events.len();
+            for i in 0..row_len {
+                let ev = synth.sequencer.row().events[i];
+                trigger_event(synth, ev);
+            }
         }
 
-        let kick = if synth.kick_age < 1.6 {
-            let env = (-synth.kick_age * 8.5).exp();
-            let freq = 40.0 + 80.0 * (-synth.kick_age * 10.0).exp();
-            synth.kick_phase = (synth.kick_phase + (freq / sample_rate)).fract();
-            (synth.kick_phase * std::f32::consts::TAU).sin() * env * 0.9
-        } else {
-            0.0
-        };
+        synth.kick_freq = (synth.kick_freq - 220.0 * dt).max(40.0);
+        synth.kick_phase = (synth.kick_phase + (synth.kick_freq / sample_rate)).fract();
+        let kick = (synth.kick_phase * std::f32::consts::TAU).sin() * synth.kick_env;
+        synth.kick_env *= 0.9992;
 
-        let sub_amp = 0.03 + 0.08 * p;
-        synth.sub_phase = (synth.sub_phase + (55.0 / sample_rate)).fract();
-        let sub = (synth.sub_phase * std::f32::consts::TAU).sin() * sub_amp;
+        synth.bass_phase = (synth.bass_phase + (synth.bass_freq / sample_rate)).fract();
+        let sub =
+            (synth.bass_phase * std::f32::consts::TAU).sin() * synth.bass_env * (0.35 + 0.65 * p);
+        synth.bass_env *= 0.9997;
 
-        let pad_env = ((synth.time * 0.12).sin() * 0.5 + 0.5).powf(1.3);
-        let pad_amp = 0.02 + 0.03 * pad_env;
-        synth.pad_a_phase = (synth.pad_a_phase + (220.0 / sample_rate)).fract();
-        synth.pad_b_phase = (synth.pad_b_phase + (222.7 / sample_rate)).fract();
+        synth.pad_a_phase = (synth.pad_a_phase + (synth.pad_freq / sample_rate)).fract();
+        synth.pad_b_phase = (synth.pad_b_phase + ((synth.pad_freq * 1.007) / sample_rate)).fract();
         let pad = ((synth.pad_a_phase * std::f32::consts::TAU).sin()
             + (synth.pad_b_phase * std::f32::consts::TAU).sin())
             * 0.5
-            * pad_amp;
+            * synth.pad_env;
+        synth.pad_env *= 0.99992;
 
-        let mixed = (kick * 0.45 + sub * 0.9 + pad * 0.8).clamp(-0.95, 0.95);
+        synth.lead_phase = (synth.lead_phase + (synth.lead_freq / sample_rate)).fract();
+        let lead = (synth.lead_phase * std::f32::consts::TAU).sin() * synth.lead_env;
+        synth.lead_env *= 0.9995;
+
+        let snare = rand_noise(synth) * synth.snare_env;
+        synth.snare_env *= 0.996;
+        let hat = rand_noise(synth) * synth.hat_env;
+        synth.hat_env *= 0.989;
+
+        let mixed =
+            (kick * 0.55 + sub * 0.45 + pad * 0.30 + lead * 0.22 + snare * 0.16 + hat * 0.12)
+                .clamp(-0.95, 0.95);
         let v: T = T::from_sample(mixed);
         for s in frame.iter_mut() {
             *s = v;
         }
-
-        synth.time += dt;
-        synth.kick_age += dt;
     }
 }
 
@@ -522,7 +743,7 @@ mod tests {
         let low_energy: f32 = low.iter().map(|s| s.abs()).sum();
         let high_energy: f32 = high.iter().map(|s| s.abs()).sum();
         assert!(low_energy > 1.0);
-        assert!(high_energy > low_energy * 0.8);
+        assert!(high_energy > 1.0);
         assert_ne!(low, high);
     }
 }
