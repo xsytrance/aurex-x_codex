@@ -1,3 +1,6 @@
+#[cfg(feature = "real_graphics")]
+use winit::{dpi::PhysicalSize, event_loop::EventLoop, window::Window};
+
 #[derive(Debug, Clone)]
 pub struct CameraRig {
     pub eye: [f32; 3],
@@ -204,9 +207,200 @@ pub struct RealRendererBootstrapStatus {
 pub fn attempt_real_renderer_bootstrap() -> RealRendererBootstrapStatus {
     #[cfg(feature = "real_graphics")]
     {
+        let instance = wgpu::Instance::default();
+
+        let adapter_probe = |compatible_surface| {
+            pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::HighPerformance,
+                compatible_surface,
+                force_fallback_adapter: false,
+            }))
+        };
+
+        let device_probe = |adapter: &wgpu::Adapter| {
+            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+                label: Some("Aurex-X Boot Device"),
+                required_features: wgpu::Features::empty(),
+                required_limits: wgpu::Limits::default(),
+                memory_hints: wgpu::MemoryHints::default(),
+                trace: wgpu::Trace::Off,
+            }))
+        };
+
+        let event_loop = match EventLoop::new() {
+            Ok(loop_handle) => loop_handle,
+            Err(err) => {
+                let adapter = match adapter_probe(None) {
+                    Ok(adapter) => adapter,
+                    Err(adapter_err) => {
+                        return RealRendererBootstrapStatus {
+                            result: RealRendererBootstrapResult::AdapterUnavailable,
+                            detail: format!(
+                                "event loop initialization failed: {err}; headless request_adapter failed: {adapter_err}"
+                            ),
+                        };
+                    }
+                };
+                return match device_probe(&adapter) {
+                    Ok(_) => RealRendererBootstrapStatus {
+                        result: RealRendererBootstrapResult::Ready,
+                        detail: format!(
+                            "headless adapter/device initialized (window unavailable: {err})"
+                        ),
+                    },
+                    Err(device_err) => RealRendererBootstrapStatus {
+                        result: RealRendererBootstrapResult::DeviceRequestFailed,
+                        detail: format!(
+                            "window unavailable ({err}); request_device failed: {device_err}"
+                        ),
+                    },
+                };
+            }
+        };
+
+        let window = match event_loop.create_window(
+            Window::default_attributes()
+                .with_title("Aurex-X Boot")
+                .with_inner_size(PhysicalSize::new(1280, 720)),
+        ) {
+            Ok(window) => window,
+            Err(err) => {
+                let adapter = match adapter_probe(None) {
+                    Ok(adapter) => adapter,
+                    Err(adapter_err) => {
+                        return RealRendererBootstrapStatus {
+                            result: RealRendererBootstrapResult::AdapterUnavailable,
+                            detail: format!(
+                                "window creation failed: {err}; headless request_adapter failed: {adapter_err}"
+                            ),
+                        };
+                    }
+                };
+                return match device_probe(&adapter) {
+                    Ok(_) => RealRendererBootstrapStatus {
+                        result: RealRendererBootstrapResult::Ready,
+                        detail: format!(
+                            "headless adapter/device initialized (window creation failed: {err})"
+                        ),
+                    },
+                    Err(device_err) => RealRendererBootstrapStatus {
+                        result: RealRendererBootstrapResult::DeviceRequestFailed,
+                        detail: format!(
+                            "window creation failed ({err}); request_device failed: {device_err}"
+                        ),
+                    },
+                };
+            }
+        };
+
+        let surface = match instance.create_surface(&window) {
+            Ok(surface) => surface,
+            Err(err) => {
+                return RealRendererBootstrapStatus {
+                    result: RealRendererBootstrapResult::AdapterUnavailable,
+                    detail: format!("surface creation failed: {err}"),
+                };
+            }
+        };
+
+        let adapter = match adapter_probe(Some(&surface)) {
+            Ok(adapter) => adapter,
+            Err(err) => {
+                return RealRendererBootstrapStatus {
+                    result: RealRendererBootstrapResult::AdapterUnavailable,
+                    detail: format!("request_adapter failed: {err}"),
+                };
+            }
+        };
+
+        let (device, queue) = match device_probe(&adapter) {
+            Ok(pair) => pair,
+            Err(err) => {
+                return RealRendererBootstrapStatus {
+                    result: RealRendererBootstrapResult::DeviceRequestFailed,
+                    detail: format!("request_device failed: {err}"),
+                };
+            }
+        };
+
+        let capabilities = surface.get_capabilities(&adapter);
+        let Some(format) = capabilities.formats.first().copied() else {
+            return RealRendererBootstrapStatus {
+                result: RealRendererBootstrapResult::AdapterUnavailable,
+                detail: "surface has no supported texture formats".to_string(),
+            };
+        };
+        let present_mode = capabilities
+            .present_modes
+            .iter()
+            .copied()
+            .find(|mode| *mode == wgpu::PresentMode::Fifo)
+            .unwrap_or(wgpu::PresentMode::AutoVsync);
+        let alpha_mode = capabilities
+            .alpha_modes
+            .first()
+            .copied()
+            .unwrap_or(wgpu::CompositeAlphaMode::Auto);
+
+        let config = wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            format,
+            width: 1280,
+            height: 720,
+            present_mode,
+            alpha_mode,
+            view_formats: vec![],
+            desired_maximum_frame_latency: 2,
+        };
+        surface.configure(&device, &config);
+
+        let frame = match surface.get_current_texture() {
+            Ok(frame) => frame,
+            Err(err) => {
+                return RealRendererBootstrapStatus {
+                    result: RealRendererBootstrapResult::DeviceRequestFailed,
+                    detail: format!("surface acquire failed: {err}"),
+                };
+            }
+        };
+
+        let view = frame
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Aurex-X Boot Encoder"),
+        });
+        {
+            let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Aurex-X Boot Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.03,
+                            g: 0.05,
+                            b: 0.09,
+                            a: 1.0,
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
+        }
+
+        queue.submit([encoder.finish()]);
+        frame.present();
+
         return RealRendererBootstrapStatus {
-            result: RealRendererBootstrapResult::AdapterUnavailable,
-            detail: "real_graphics feature enabled; adapter probe not wired yet".to_string(),
+            result: RealRendererBootstrapResult::Ready,
+            detail: format!(
+                "adapter acquired; device initialized; surface configured and first frame presented at {}x{}",
+                config.width, config.height
+            ),
         };
     }
 
