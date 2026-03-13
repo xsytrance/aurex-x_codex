@@ -47,3 +47,12 @@ Use this guide to generate valid Rhythm-Space scenes.
   }
 }
 ```
+
+
+## RhythmField placement
+Use RhythmField as a modulation source for GeneratorStackOutput parameters.
+Do not describe it as a geometry generator or a renderer stage.
+Preferred framing:
+- sequencer state -> RhythmField snapshot
+- snapshot -> bounded parameter modulation
+- renderer executes unchanged pipeline stages
