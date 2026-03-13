@@ -1,4 +1,5 @@
 pub mod analysis;
+pub mod lyric_engine;
 pub mod runtime_toolkit;
 pub mod sequencer;
 pub mod song_planner;

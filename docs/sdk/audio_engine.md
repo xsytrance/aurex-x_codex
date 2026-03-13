@@ -87,3 +87,23 @@ Style profiles can attach a `vocal_type` so generated songs include genre-matche
 6. title from deterministic word pools
 
 The planner runs outside the realtime audio callback and does not alter CPAL stream architecture.
+
+
+## Lyric engine and synchronized timeline
+
+`crates/aurex_audio/src/lyric_engine.rs` adds deterministic lyric planning outside realtime audio:
+
+- `generate_lyrics(seed, style)` builds style-conditioned lyric lines from word banks.
+- `build_lyric_timeline(lyrics, bpm)` converts words to beat-aligned syllables.
+
+Generated timelines are intended for UI/renderer consumption and are not executed in the CPAL callback.
+
+## Procedural typography renderer bridge
+
+`crates/aurex_render/src/typography.rs` defines deterministic typography styles and lyric render events:
+
+- `GlyphStyle` and `TypographyStyle`
+- `choose_typography_style(seed)`
+- `LyricRenderEvent` + `TimedLyricRenderEvent`
+
+`MockRenderer` can ingest lyric timelines and expose currently active lyric text while applying BeatEnergy/music-event-driven typography reactions.

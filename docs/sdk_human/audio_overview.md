@@ -72,3 +72,19 @@ The plan includes:
 - procedural title
 
 This planner is deterministic and runs outside the realtime audio thread. It maps directly to style profile choices (instruments, drum pattern, and optional vocal type), creating a genre-aware foundation before audio playback begins.
+
+
+## Lyrics and on-screen typography
+
+Aurex now has a deterministic lyric engine that writes style-aware lyric lines from seed-driven templates and word banks.
+Those lyrics are converted into beat-aligned syllable timelines, then consumed by renderer typography logic.
+
+Typography styles (Neon, Pulse, Crystal, Circuit, Rune) are also selected from seed and react musically:
+
+- Kick: brief text scale bump
+- Snare: spark-like letter bursts
+- Bass: stronger glow
+- Pad: ambient glow lift
+- Lead: subtle letter motion
+
+This lyric/typography path runs outside the realtime audio callback.

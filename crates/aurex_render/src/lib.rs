@@ -1,3 +1,9 @@
+pub mod typography;
+use typography::{
+    LyricRenderEvent, TimedLyricRenderEvent, TypographyReactiveState, TypographyStyle,
+    choose_typography_style,
+};
+
 #[cfg(feature = "real_graphics")]
 use winit::{dpi::PhysicalSize, event_loop::EventLoop, window::Window};
 
@@ -940,6 +946,12 @@ pub struct MockRenderer {
     frames_rendered: u64,
     backend_ready: bool,
     reactive_visuals: MusicReactiveVisualState,
+    typography_style: TypographyStyle,
+    typography_reactive: TypographyReactiveState,
+    lyric_timeline: Vec<TimedLyricRenderEvent>,
+    lyric_cursor: usize,
+    active_lyric: Option<LyricRenderEvent>,
+    lyric_bpm: u32,
     camera_state: CameraState,
     camera_time_seconds: f32,
 }
@@ -952,6 +964,12 @@ impl MockRenderer {
             frames_rendered: 0,
             backend_ready,
             reactive_visuals: MusicReactiveVisualState::default(),
+            typography_style: choose_typography_style(0),
+            typography_reactive: TypographyReactiveState::default(),
+            lyric_timeline: Vec::new(),
+            lyric_cursor: 0,
+            active_lyric: None,
+            lyric_bpm: 120,
             camera_state: CameraState::default(),
             camera_time_seconds: 0.0,
         }
@@ -981,11 +999,23 @@ impl MockRenderer {
     pub fn run_frame(&mut self, stages: &[RenderStage]) -> RenderFrameStats {
         self.frames_rendered += 1;
         self.camera_time_seconds += 1.0 / 60.0;
+        self.typography_reactive.advance_frame();
         let pulse = (self.reactive_visuals.beat_energy.kick_energy * 0.35
             + self.reactive_visuals.beat_energy.bass_energy * 0.2)
             .clamp(0.0, 1.0);
         self.camera_state
             .update_for_frame(self.camera_time_seconds, pulse);
+
+        let beat_time = self.camera_time_seconds * self.lyric_bpm as f32 / 60.0;
+        while self.lyric_cursor < self.lyric_timeline.len()
+            && self.lyric_timeline[self.lyric_cursor].beat_time <= beat_time
+        {
+            let mut event = self.lyric_timeline[self.lyric_cursor].event.clone();
+            event.scale = (event.scale + self.typography_reactive.scale_boost).clamp(0.4, 2.5);
+            self.active_lyric = Some(event);
+            self.lyric_cursor += 1;
+        }
+
         self.reactive_visuals.advance_frame();
         RenderFrameStats {
             frame_id: self.frames_rendered,
@@ -994,6 +1024,16 @@ impl MockRenderer {
     }
 
     pub fn apply_music_events(&mut self, events: &[MusicReactiveEvent]) {
+        for event in events {
+            match event {
+                MusicReactiveEvent::Kick => self.typography_reactive.scale_boost += 0.18,
+                MusicReactiveEvent::Snare => self.typography_reactive.spark_intensity += 0.3,
+                MusicReactiveEvent::BassNote(_) => self.typography_reactive.glow_boost += 0.22,
+                MusicReactiveEvent::PadNote(_) => self.typography_reactive.ambient_boost += 0.16,
+                MusicReactiveEvent::LeadNote(_) => self.typography_reactive.letter_motion += 0.08,
+                MusicReactiveEvent::Hat => {}
+            }
+        }
         self.reactive_visuals.apply_events(events);
     }
 
@@ -1007,6 +1047,29 @@ impl MockRenderer {
 
     pub fn camera_state(&self) -> &CameraState {
         &self.camera_state
+    }
+
+    pub fn set_typography_seed(&mut self, seed: u64) {
+        self.typography_style = choose_typography_style(seed);
+    }
+
+    pub fn typography_style(&self) -> TypographyStyle {
+        self.typography_style
+    }
+
+    pub fn typography_reactive_state(&self) -> TypographyReactiveState {
+        self.typography_reactive
+    }
+
+    pub fn set_lyric_timeline(&mut self, timeline: Vec<TimedLyricRenderEvent>, bpm: u32) {
+        self.lyric_timeline = timeline;
+        self.lyric_cursor = 0;
+        self.active_lyric = None;
+        self.lyric_bpm = bpm.max(1);
+    }
+
+    pub fn active_lyric(&self) -> Option<&LyricRenderEvent> {
+        self.active_lyric.as_ref()
     }
 }
 
@@ -2010,5 +2073,56 @@ mod tests {
         renderer.run_frame(&RENDER_MAIN_STAGES);
         let after = renderer.camera_state().position;
         assert_ne!(before, after);
+    }
+
+    #[test]
+    fn typography_seed_choice_is_deterministic() {
+        let mut renderer = MockRenderer::new(RenderBootstrapConfig::default());
+        renderer.set_typography_seed(99);
+        let a = renderer.typography_style();
+        renderer.set_typography_seed(99);
+        let b = renderer.typography_style();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn lyric_events_activate_on_timeline() {
+        let mut renderer = MockRenderer::new(RenderBootstrapConfig::default());
+        renderer.set_lyric_timeline(
+            vec![TimedLyricRenderEvent {
+                beat_time: 0.0,
+                event: LyricRenderEvent {
+                    text: "Pulse".to_string(),
+                    position: [0.1, 0.8],
+                    scale: 1.0,
+                },
+            }],
+            120,
+        );
+
+        renderer.run_frame(&RENDER_MAIN_STAGES);
+        let text = renderer
+            .active_lyric()
+            .map(|e| e.text.as_str())
+            .unwrap_or("none");
+        assert_eq!(text, "Pulse");
+    }
+
+    #[test]
+    fn typography_reacts_to_music_events() {
+        let mut renderer = MockRenderer::new(RenderBootstrapConfig::default());
+        renderer.apply_music_events(&[
+            MusicReactiveEvent::Kick,
+            MusicReactiveEvent::Snare,
+            MusicReactiveEvent::BassNote(40),
+            MusicReactiveEvent::PadNote(55),
+            MusicReactiveEvent::LeadNote(70),
+        ]);
+        let state = renderer.typography_reactive_state();
+        assert!(state.scale_boost > 0.0);
+        assert!(state.spark_intensity > 0.0);
+        assert!(state.glow_boost > 0.0);
+        assert!(state.ambient_boost > 0.0);
+        assert!(state.letter_motion > 0.0);
     }
 }

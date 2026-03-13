@@ -122,3 +122,25 @@ Use `aurex_audio::song_planner` for deterministic full-song blueprints.
 - optional vocal type
 
 This system is offline/planning-stage only and must not run allocations in the realtime callback path.
+
+
+## Lyric and typography synchronization
+
+### Lyric engine (`aurex_audio::lyric_engine`)
+- `generate_lyrics(seed, style)` -> deterministic `Lyrics`
+- `build_lyric_timeline(lyrics, bpm)` -> beat-scheduled `LyricTimeline`
+- `LyricTimeline` stores `LyricSyllable { text, beat_time }`
+
+### Typography (`aurex_render::typography`)
+- `choose_typography_style(seed)` -> deterministic `TypographyStyle`
+- timeline entries map to `TimedLyricRenderEvent { beat_time, event }`
+- renderer activates lyric text when timeline beat is reached
+
+### Music-reactive text mapping
+- Kick => scale boost
+- Snare => spark intensity
+- Bass => glow boost
+- Pad => ambient boost
+- Lead => letter motion
+
+All of this is deterministic and outside the CPAL callback path.
