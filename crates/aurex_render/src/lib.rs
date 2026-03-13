@@ -607,7 +607,7 @@ fn rasterize_reveal_frame(
     width: u32,
     height: u32,
     reveal_t: f32,
-    boot: &BootTimelineFrame,
+    boot: &BootFrame,
 ) -> BootFramebuffer {
     let mut frame = BootFramebuffer {
         width,
@@ -621,7 +621,7 @@ fn rasterize_reveal_frame(
     let angle = reveal_t * 0.25;
     let x_offset = angle.sin() * 40.0;
     let scale = 1.0 + angle.cos() * 0.05;
-    let pulse = (boot.styled_glow * 0.5).clamp(0.0, 1.0);
+    let pulse = (boot.glow * 0.5).clamp(0.0, 1.0);
     let glow = 0.7 + pulse * 0.8;
 
     let base_scale = ((width as f32 / 240.0) * scale).clamp(2.0, 7.0) as i32;
