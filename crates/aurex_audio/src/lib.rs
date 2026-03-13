@@ -194,10 +194,28 @@ pub struct RuntimeAudioOutput {
     pulse: Arc<AtomicU32>,
 }
 
+#[derive(Clone)]
+pub struct RuntimePulseControl {
+    pulse: Arc<AtomicU32>,
+}
+
+impl RuntimePulseControl {
+    pub fn set_pulse(&self, pulse: f32) {
+        self.pulse
+            .store(pulse.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
+    }
+}
+
 impl RuntimeAudioOutput {
     pub fn set_pulse(&self, pulse: f32) {
         self.pulse
             .store(pulse.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
+    }
+
+    pub fn pulse_control(&self) -> RuntimePulseControl {
+        RuntimePulseControl {
+            pulse: Arc::clone(&self.pulse),
+        }
     }
 }
 
@@ -220,12 +238,12 @@ pub fn start_runtime_sine_output() -> Result<RuntimeAudioOutput, String> {
     let stream = match default_config.sample_format() {
         cpal::SampleFormat::F32 => {
             let pulse = Arc::clone(&pulse);
-            let mut phase = 0.0f32;
+            let mut synth_state = RuntimeBootSynthState::default();
             device
                 .build_output_stream(
                     &default_config.config(),
                     move |data: &mut [f32], _| {
-                        write_sine_data(data, channels, sample_rate, &mut phase, &pulse)
+                        write_boot_data(data, channels, sample_rate, &mut synth_state, &pulse)
                     },
                     err_fn,
                     None,
@@ -234,12 +252,12 @@ pub fn start_runtime_sine_output() -> Result<RuntimeAudioOutput, String> {
         }
         cpal::SampleFormat::I16 => {
             let pulse = Arc::clone(&pulse);
-            let mut phase = 0.0f32;
+            let mut synth_state = RuntimeBootSynthState::default();
             device
                 .build_output_stream(
                     &default_config.config(),
                     move |data: &mut [i16], _| {
-                        write_sine_data(data, channels, sample_rate, &mut phase, &pulse)
+                        write_boot_data(data, channels, sample_rate, &mut synth_state, &pulse)
                     },
                     err_fn,
                     None,
@@ -248,12 +266,12 @@ pub fn start_runtime_sine_output() -> Result<RuntimeAudioOutput, String> {
         }
         cpal::SampleFormat::U16 => {
             let pulse = Arc::clone(&pulse);
-            let mut phase = 0.0f32;
+            let mut synth_state = RuntimeBootSynthState::default();
             device
                 .build_output_stream(
                     &default_config.config(),
                     move |data: &mut [u16], _| {
-                        write_sine_data(data, channels, sample_rate, &mut phase, &pulse)
+                        write_boot_data(data, channels, sample_rate, &mut synth_state, &pulse)
                     },
                     err_fn,
                     None,
@@ -275,26 +293,79 @@ pub fn start_runtime_sine_output() -> Result<RuntimeAudioOutput, String> {
     })
 }
 
-fn write_sine_data<T>(
+#[derive(Debug, Default, Clone, Copy)]
+struct RuntimeBootSynthState {
+    sub_phase: f32,
+    pad_phase: f32,
+    harmonic_phase: f32,
+    width_phase: f32,
+    thump_phase: f32,
+    thump_env: f32,
+    last_pulse: f32,
+}
+
+fn write_boot_data<T>(
     output: &mut [T],
     channels: usize,
     sample_rate: f32,
-    phase: &mut f32,
+    state: &mut RuntimeBootSynthState,
     pulse: &Arc<AtomicU32>,
 ) where
     T: cpal::Sample + cpal::FromSample<f32>,
 {
-    let p = f32::from_bits(pulse.load(Ordering::Relaxed)).clamp(0.0, 1.0);
-    let freq = 220.0 + p * 90.0;
-    let amp = 0.06 + p * 0.06;
-    let phase_inc = freq / sample_rate;
+    let pulse_value = f32::from_bits(pulse.load(Ordering::Relaxed)).clamp(0.0, 1.0);
+    let sub_freq_hz = 44.0 + pulse_value * 20.0;
+    let pad_freq_hz = 92.0 + pulse_value * 46.0;
+    let harmonic_freq_hz = pad_freq_hz * (1.75 + pulse_value * 0.2);
+    let beat_hz = 0.75 + pulse_value * 1.6;
+    let master_amp = 0.05 + pulse_value * 0.03;
+
+    let sub_inc = sub_freq_hz / sample_rate;
+    let pad_inc = pad_freq_hz / sample_rate;
+    let harmonic_inc = harmonic_freq_hz / sample_rate;
+    let width_inc = (0.07 + pulse_value * 0.08) / sample_rate;
+    let beat_inc = beat_hz / sample_rate;
 
     for frame in output.chunks_mut(channels.max(1)) {
-        let sample = (*phase * std::f32::consts::TAU).sin() * amp;
-        *phase = (*phase + phase_inc).fract();
-        let v: T = T::from_sample(sample);
-        for s in frame.iter_mut() {
-            *s = v;
+        state.sub_phase = (state.sub_phase + sub_inc).fract();
+        state.pad_phase = (state.pad_phase + pad_inc).fract();
+        state.harmonic_phase = (state.harmonic_phase + harmonic_inc).fract();
+        state.width_phase = (state.width_phase + width_inc).fract();
+
+        let next_thump = (state.thump_phase + beat_inc).fract();
+        let crossed_beat = next_thump < state.thump_phase;
+        state.thump_phase = next_thump;
+
+        if crossed_beat || (pulse_value - state.last_pulse) > 0.18 {
+            state.thump_env = 1.0;
+        }
+
+        let sub_sine = (state.sub_phase * std::f32::consts::TAU).sin();
+        let sub_tri = 4.0 * (state.sub_phase - 0.5).abs() - 1.0;
+        let sub_layer = sub_sine * 0.7 + sub_tri * 0.3;
+
+        let pad = (state.pad_phase * std::f32::consts::TAU).sin() * 0.7
+            + (state.harmonic_phase * std::f32::consts::TAU).sin() * (0.12 + pulse_value * 0.16);
+
+        let thump = (state.sub_phase * std::f32::consts::TAU).sin() * state.thump_env;
+        state.thump_env *= 0.9992 - pulse_value * 0.00015;
+        state.thump_env = state.thump_env.clamp(0.0, 1.0);
+
+        let center = (sub_layer * 0.62 + pad * 0.24 + thump * 0.16) * master_amp;
+        let width = ((state.width_phase * std::f32::consts::TAU).sin() * 0.5 + 0.5)
+            * (0.008 + pulse_value * 0.012);
+        let left = (center + width).clamp(-0.18, 0.18);
+        let right = (center - width).clamp(-0.18, 0.18);
+        state.last_pulse = pulse_value;
+
+        if channels >= 2 {
+            frame[0] = T::from_sample(left);
+            frame[1] = T::from_sample(right);
+            for chan in frame.iter_mut().skip(2) {
+                *chan = T::from_sample(center);
+            }
+        } else {
+            frame[0] = T::from_sample(center);
         }
     }
 }
