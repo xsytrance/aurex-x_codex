@@ -503,30 +503,6 @@ fn rand_noise(state: &mut RuntimeSynthState) -> f32 {
     n * 2.0 - 1.0
 }
 
-fn write_sine_data<T>(
-    output: &mut [T],
-    channels: usize,
-    sample_rate: f32,
-    phase: &mut f32,
-    pulse: &Arc<AtomicU32>,
-) where
-    T: cpal::Sample + cpal::FromSample<f32>,
-{
-    let p = f32::from_bits(pulse.load(Ordering::Relaxed)).clamp(0.0, 1.0);
-    let freq = 220.0 + p * 90.0;
-    let amp = 0.06 + p * 0.06;
-    let phase_inc = freq / sample_rate;
-
-    for frame in output.chunks_mut(channels.max(1)) {
-        let sample = (*phase * std::f32::consts::TAU).sin() * amp;
-        *phase = (*phase + phase_inc).fract();
-        let v: T = T::from_sample(sample);
-        for s in frame.iter_mut() {
-            *s = v;
-        }
-    }
-}
-
 fn write_trance_data<T>(
     output: &mut [T],
     channels: usize,
@@ -660,7 +636,7 @@ mod tests {
     use super::{
         AudioBackendMode, AudioBackendReadiness, AudioTransition, MockAudioEngine,
         analyze_procedural_audio, default_demo_audio_config, synthesize_mono_sample,
-        write_sine_data, write_trance_data,
+        write_trance_data,
     };
 
     #[test]
@@ -711,17 +687,38 @@ mod tests {
         assert_eq!(fa, fb);
     }
 
+    fn write_sine_data_for_test(
+        output: &mut [f32],
+        channels: usize,
+        sample_rate: f32,
+        phase: &mut f32,
+        pulse: &Arc<AtomicU32>,
+    ) {
+        let p = f32::from_bits(pulse.load(Ordering::Relaxed)).clamp(0.0, 1.0);
+        let freq = 220.0 + p * 90.0;
+        let amp = 0.06 + p * 0.06;
+        let phase_inc = freq / sample_rate;
+
+        for frame in output.chunks_mut(channels.max(1)) {
+            let sample = (*phase * std::f32::consts::TAU).sin() * amp;
+            *phase = (*phase + phase_inc).fract();
+            for s in frame.iter_mut() {
+                *s = sample;
+            }
+        }
+    }
+
     #[test]
     fn runtime_pulse_changes_generated_waveform() {
         let pulse = Arc::new(AtomicU32::new(0.0f32.to_bits()));
         let mut low_phase = 0.0_f32;
         let mut low = vec![0.0_f32; 16];
-        write_sine_data(&mut low, 1, 48_000.0, &mut low_phase, &pulse);
+        write_sine_data_for_test(&mut low, 1, 48_000.0, &mut low_phase, &pulse);
 
         pulse.store(1.0f32.to_bits(), Ordering::Relaxed);
         let mut high_phase = 0.0_f32;
         let mut high = vec![0.0_f32; 16];
-        write_sine_data(&mut high, 1, 48_000.0, &mut high_phase, &pulse);
+        write_sine_data_for_test(&mut high, 1, 48_000.0, &mut high_phase, &pulse);
 
         let low_energy: f32 = low.iter().map(|s| s.abs()).sum();
         let high_energy: f32 = high.iter().map(|s| s.abs()).sum();
