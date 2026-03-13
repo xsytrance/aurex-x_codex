@@ -170,7 +170,8 @@ impl ResonanceProfile {
     }
 
     pub fn dominant_prime(&self) -> Option<PrimeFaction> {
-        self.top_primes(1).first().map(|(p, _)| *p)
+        let (prime, resonance) = self.top_primes(1).first().copied()?;
+        (resonance.value > f32::EPSILON).then_some(prime)
     }
 }
 
@@ -223,7 +224,7 @@ impl ResonanceTracker {
 
 #[cfg(test)]
 mod tests {
-    use super::{PrimeFaction, ResonanceTracker};
+    use super::{PrimeFaction, ResonanceProfile, ResonanceTracker, ResonanceValue};
     use crate::schema::{
         Interactivity, PulseDefinition, PulseKind, PulseMetadata, PulseSceneSource,
     };
@@ -279,6 +280,26 @@ mod tests {
         t.record_pulse_launch(PrimeFaction::Rock);
         t.record_pulse_launch(PrimeFaction::AmbientExperimental);
         assert_eq!(t.profile().dominant_prime(), Some(PrimeFaction::Rock));
+    }
+
+    #[test]
+    fn dominant_prime_is_none_for_default_profile() {
+        let profile = ResonanceProfile::default();
+        assert_eq!(profile.dominant_prime(), None);
+    }
+
+    #[test]
+    fn dominant_prime_is_reported_when_value_is_positive() {
+        let mut profile = ResonanceProfile::default();
+        profile.set_resonance(
+            PrimeFaction::Jazz,
+            ResonanceValue {
+                value: 0.1,
+                activity_score: 0.5,
+                last_update_time: 1.0,
+            },
+        );
+        assert_eq!(profile.dominant_prime(), Some(PrimeFaction::Jazz));
     }
 
     #[test]

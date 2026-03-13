@@ -110,7 +110,7 @@ mod tests {
         assert!(rhythm.bar_index <= rhythm.beat_index);
         assert!(runner.runtime_context().rhythm_field.is_some());
         assert!(runner.diagnostics.rhythm_summary.is_some());
-        assert!(runner.diagnostics.dominant_prime.is_some());
+        assert!(runner.diagnostics.dominant_prime.is_none());
         assert!(!runner.diagnostics.top_three_primes.is_empty());
         assert!(runner.scene.sdf.lighting.ambient_light >= baseline_ambient);
     }

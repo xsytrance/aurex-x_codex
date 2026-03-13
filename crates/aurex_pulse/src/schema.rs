@@ -47,7 +47,15 @@ where
     D: serde::Deserializer<'de>,
 {
     let raw: Option<String> = Option::<String>::deserialize(deserializer)?;
-    Ok(raw.and_then(|s| PrimeFaction::from_label(&s)))
+    match raw {
+        Some(label) => PrimeFaction::from_label(&label).map(Some).ok_or_else(|| {
+            serde::de::Error::custom(format!(
+                "invalid metadata.prime_affinity '{}'; expected a known PrimeFaction label",
+                label
+            ))
+        }),
+        None => Ok(None),
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -94,5 +102,52 @@ impl PulseDefinition {
             return Err("metadata.title must not be empty".to_string());
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{PrimeFaction, PulseDefinition};
+
+    #[test]
+    fn valid_prime_affinity_deserializes() {
+        let json = r#"{
+            "metadata": {
+                "title": "x",
+                "author": "x",
+                "pulse_kind": "World",
+                "interactivity": "Passive",
+                "prime_affinity": "Electronic"
+            },
+            "pulse_kind": "World",
+            "scene": { "scene_path": "examples/infinite_circuit_megacity.json" }
+        }"#;
+
+        let pulse: PulseDefinition = serde_json::from_str(json).expect("json should parse");
+        assert_eq!(
+            pulse.metadata.prime_affinity,
+            Some(PrimeFaction::Electronic)
+        );
+    }
+
+    #[test]
+    fn invalid_prime_affinity_fails_deserialization() {
+        let json = r#"{
+            "metadata": {
+                "title": "x",
+                "author": "x",
+                "pulse_kind": "World",
+                "interactivity": "Passive",
+                "prime_affinity": "NotARealPrime"
+            },
+            "pulse_kind": "World",
+            "scene": { "scene_path": "examples/infinite_circuit_megacity.json" }
+        }"#;
+
+        let err = serde_json::from_str::<PulseDefinition>(json).expect_err("invalid prime");
+        assert!(
+            err.to_string()
+                .contains("invalid metadata.prime_affinity 'NotARealPrime'")
+        );
     }
 }

@@ -59,6 +59,13 @@ impl PulseGraph {
             return Err("graph must contain at least one node".into());
         }
 
+        let mut seen = BTreeSet::new();
+        for node in &self.nodes {
+            if !seen.insert(node.id.as_str()) {
+                return Err(format!("graph contains duplicate node id '{}'", node.id));
+            }
+        }
+
         let node_ids: BTreeSet<&str> = self.nodes.iter().map(|n| n.id.as_str()).collect();
         if !node_ids.contains(self.entry_node.as_str()) {
             return Err("entry_node must reference an existing node id".into());
@@ -300,7 +307,7 @@ fn load_runner_for_node(
 
 #[cfg(test)]
 mod tests {
-    use super::{PulseGraph, electronic_journey_graph, load_pulse_graph_from_str};
+    use super::{PulseGraph, PulseNode, electronic_journey_graph, load_pulse_graph_from_str};
 
     #[test]
     fn electronic_journey_graph_is_valid() {
@@ -326,5 +333,28 @@ mod tests {
         let graph: PulseGraph = load_pulse_graph_from_str(graph_json).expect("graph parse");
         assert_eq!(graph.nodes.len(), 2);
         assert_eq!(graph.transitions.len(), 1);
+    }
+
+    #[test]
+    fn duplicate_node_ids_fail_validation() {
+        let graph = PulseGraph {
+            name: "dupe".into(),
+            seed: 0,
+            entry_node: "a".into(),
+            nodes: vec![
+                PulseNode {
+                    id: "a".into(),
+                    pulse_path: "a.pulse.json".into(),
+                },
+                PulseNode {
+                    id: "a".into(),
+                    pulse_path: "b.pulse.json".into(),
+                },
+            ],
+            transitions: vec![],
+        };
+
+        let err = graph.validate().expect_err("duplicate nodes should fail");
+        assert!(err.contains("duplicate node id 'a'"));
     }
 }
