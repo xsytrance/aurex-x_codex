@@ -66,3 +66,24 @@ Renderer drains these once per frame and updates beat/visual energy systems dete
 - `VocalVoice` combines oscillator + formant filters + envelope + optional effects
 
 Style profiles can attach a `vocal_type` so generated songs include genre-matched procedural vocals.
+
+
+## Deterministic Song Planner
+
+`crates/aurex_audio/src/song_planner.rs` provides an offline (non-callback) song blueprint generator.
+
+- `SongSection`: `Intro`, `Verse`, `Chorus`, `Bridge`, `Breakdown`, `Drop`, `Outro`
+- `SongStructure { sections }`
+- `ChordProgression { chords }` using scale-degree chords (`I`, `ii`, `iii`, `IV`, `V`, `vi`, `vii°`)
+- `SongPlan { title, bpm, scale, structure, chords, style }`
+
+`generate_song_plan(seed)` deterministically selects:
+
+1. style profile
+2. BPM in style range
+3. scale option
+4. structure template
+5. chord progression template
+6. title from deterministic word pools
+
+The planner runs outside the realtime audio callback and does not alter CPAL stream architecture.

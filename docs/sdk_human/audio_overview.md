@@ -57,3 +57,18 @@ Aurex now includes a sample-free vocal engine with several styles:
 Vocal phrases are generated deterministically from phoneme sets, then shaped by formant filters (vowel-like resonances) and synth envelopes/effects.
 
 Style profiles can optionally assign a vocal type (for example Electronic→Robot, Pop/RnB→RnbSynth, Jazz→Scat, World→Chant), so genre choice also influences vocal character.
+
+
+## Song planner (full blueprint generation)
+
+Aurex can now generate a complete song plan from a single seed.
+The plan includes:
+
+- genre/style
+- BPM
+- scale
+- section structure (intro/verse/chorus/etc.)
+- chord progression
+- procedural title
+
+This planner is deterministic and runs outside the realtime audio thread. It maps directly to style profile choices (instruments, drum pattern, and optional vocal type), creating a genre-aware foundation before audio playback begins.

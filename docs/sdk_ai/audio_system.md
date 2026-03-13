@@ -99,3 +99,26 @@ Use `aurex_audio::vocal_engine` for deterministic procedural vocals.
 
 ### Style integration
 `StyleProfile` includes optional `vocal_type`; `styled_audio_config(seed)` maps this to a `VoiceSynthConfig` for genre-aligned vocals.
+
+
+## Song planner system
+
+Use `aurex_audio::song_planner` for deterministic full-song blueprints.
+
+### Core types
+- `SongSection`
+- `SongStructure`
+- `Chord` and `ChordProgression`
+- `SongPlan`
+
+### Generation
+- `generate_chord_progression(seed, scale)` yields deterministic degree progressions.
+- `generate_song_plan(seed)` yields deterministic title/style/BPM/scale/structure/chords.
+
+### Style integration
+`SongPlan.style` is a `StyleProfile`, so the resulting plan carries:
+- bass/pad/lead instrument presets
+- drum pattern type
+- optional vocal type
+
+This system is offline/planning-stage only and must not run allocations in the realtime callback path.

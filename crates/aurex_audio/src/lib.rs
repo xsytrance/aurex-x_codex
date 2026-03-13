@@ -1,6 +1,7 @@
 pub mod analysis;
 pub mod runtime_toolkit;
 pub mod sequencer;
+pub mod song_planner;
 pub mod style_profile;
 pub mod synth;
 pub mod vocal_engine;
