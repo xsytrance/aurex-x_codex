@@ -1,20 +1,65 @@
 #[cfg(feature = "real_graphics")]
 use winit::{dpi::PhysicalSize, event_loop::EventLoop, window::Window};
 
+pub type Vec3 = [f32; 3];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CameraRig {
+    Orbit,
+    PulseOrbit,
+    Flyby,
+    ReactorDive,
+}
+
 #[derive(Debug, Clone)]
-pub struct CameraRig {
-    pub eye: [f32; 3],
-    pub target: [f32; 3],
+pub struct CameraState {
+    pub position: Vec3,
+    pub target: Vec3,
+    pub rig: CameraRig,
     pub fov_degrees: f32,
 }
 
-impl Default for CameraRig {
+impl Default for CameraState {
     fn default() -> Self {
         Self {
-            eye: [0.0, 6.0, 12.0],
+            position: [0.0, 1.5, 6.0],
             target: [0.0, 0.0, 0.0],
+            rig: CameraRig::Orbit,
             fov_degrees: 60.0,
         }
+    }
+}
+
+impl CameraState {
+    pub fn update_for_frame(&mut self, time: f32, pulse: f32) {
+        let angle = time * 0.25;
+        let base_radius = 4.0;
+
+        match self.rig {
+            CameraRig::Orbit => {
+                self.position[0] = angle.cos() * base_radius;
+                self.position[1] = 1.5;
+                self.position[2] = angle.sin() * base_radius;
+            }
+            CameraRig::PulseOrbit => {
+                let radius = base_radius + pulse * 0.5;
+                self.position[0] = angle.cos() * radius;
+                self.position[1] = 1.5;
+                self.position[2] = angle.sin() * radius;
+            }
+            CameraRig::Flyby => {
+                self.position[0] = (time * 0.5).sin() * 4.0;
+                self.position[1] = 1.5;
+                self.position[2] = -3.0 + time * 0.2;
+            }
+            CameraRig::ReactorDive => {
+                self.position[0] = 0.0;
+                self.position[1] = 1.1;
+                self.position[2] = 6.0 - time * 0.1;
+            }
+        }
+
+        self.target = [0.0, 0.0, 0.0];
     }
 }
 
@@ -895,6 +940,8 @@ pub struct MockRenderer {
     frames_rendered: u64,
     backend_ready: bool,
     reactive_visuals: MusicReactiveVisualState,
+    camera_state: CameraState,
+    camera_time_seconds: f32,
 }
 
 impl MockRenderer {
@@ -905,6 +952,8 @@ impl MockRenderer {
             frames_rendered: 0,
             backend_ready,
             reactive_visuals: MusicReactiveVisualState::default(),
+            camera_state: CameraState::default(),
+            camera_time_seconds: 0.0,
         }
     }
 
@@ -931,6 +980,12 @@ impl MockRenderer {
 
     pub fn run_frame(&mut self, stages: &[RenderStage]) -> RenderFrameStats {
         self.frames_rendered += 1;
+        self.camera_time_seconds += 1.0 / 60.0;
+        let pulse = (self.reactive_visuals.beat_energy.kick_energy * 0.35
+            + self.reactive_visuals.beat_energy.bass_energy * 0.2)
+            .clamp(0.0, 1.0);
+        self.camera_state
+            .update_for_frame(self.camera_time_seconds, pulse);
         self.reactive_visuals.advance_frame();
         RenderFrameStats {
             frame_id: self.frames_rendered,
@@ -944,6 +999,14 @@ impl MockRenderer {
 
     pub fn reactive_visuals(&self) -> &MusicReactiveVisualState {
         &self.reactive_visuals
+    }
+
+    pub fn set_camera_rig(&mut self, rig: CameraRig) {
+        self.camera_state.rig = rig;
+    }
+
+    pub fn camera_state(&self) -> &CameraState {
+        &self.camera_state
     }
 }
 
@@ -1892,5 +1955,60 @@ mod tests {
         assert!((energy.snare_energy - 0.736).abs() < 1e-6);
         assert!((energy.bass_energy - 0.47).abs() < 1e-6);
         assert!((energy.pad_energy - 0.288).abs() < 1e-6);
+    }
+
+    #[test]
+    fn camera_orbit_and_pulse_orbit_are_deterministic() {
+        let mut orbit = CameraState {
+            rig: CameraRig::Orbit,
+            ..CameraState::default()
+        };
+        orbit.update_for_frame(2.0, 0.8);
+
+        let mut pulse_orbit = CameraState {
+            rig: CameraRig::PulseOrbit,
+            ..CameraState::default()
+        };
+        pulse_orbit.update_for_frame(2.0, 0.8);
+
+        let orbit_radius =
+            (orbit.position[0] * orbit.position[0] + orbit.position[2] * orbit.position[2]).sqrt();
+        let pulse_radius = (pulse_orbit.position[0] * pulse_orbit.position[0]
+            + pulse_orbit.position[2] * pulse_orbit.position[2])
+            .sqrt();
+
+        assert!((orbit_radius - 4.0).abs() < 1e-5);
+        assert!(pulse_radius > orbit_radius);
+        assert!((pulse_orbit.position[1] - 1.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn camera_flyby_and_reactor_dive_follow_expected_axes() {
+        let mut flyby = CameraState {
+            rig: CameraRig::Flyby,
+            ..CameraState::default()
+        };
+        flyby.update_for_frame(3.0, 0.0);
+
+        let mut dive = CameraState {
+            rig: CameraRig::ReactorDive,
+            ..CameraState::default()
+        };
+        dive.update_for_frame(3.0, 0.0);
+
+        assert!((flyby.position[1] - 1.5).abs() < 1e-6);
+        assert!((flyby.position[2] - (-2.4)).abs() < 1e-5);
+        assert!((dive.position[0]).abs() < 1e-6);
+        assert!((dive.position[2] - 5.7).abs() < 1e-5);
+    }
+
+    #[test]
+    fn mock_renderer_updates_camera_each_frame() {
+        let mut renderer = MockRenderer::new(RenderBootstrapConfig::default());
+        renderer.set_camera_rig(CameraRig::Flyby);
+        let before = renderer.camera_state().position;
+        renderer.run_frame(&RENDER_MAIN_STAGES);
+        let after = renderer.camera_state().position;
+        assert_ne!(before, after);
     }
 }

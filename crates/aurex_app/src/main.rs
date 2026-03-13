@@ -7,7 +7,7 @@ use aurex_lighting::{LightDescriptor, LightKind};
 use aurex_postfx::BloomSettings;
 use aurex_render::{
     BootAnimationConfig, BootAnimator, BootPostFxTrack, BootSequenceRecipe, BootStylePreset,
-    BootStyleProfile, CameraRig, MockRenderer, MusicReactiveEvent, MusicReactiveVisualState,
+    BootStyleProfile, CameraState, MockRenderer, MusicReactiveEvent, MusicReactiveVisualState,
     RENDER_MAIN_STAGES, RenderBackendMode, RenderBackendReadiness, RenderBootstrapConfig,
     RenderBootstrapExecutor, RenderBootstrapPlan, RenderStage, attempt_real_renderer_bootstrap,
     rasterize_boot_frame, run_real_renderer_event_loop,
@@ -17,7 +17,7 @@ use std::{thread, time::Duration};
 
 fn runtime_diagnostics_report() -> String {
     let mut clock = ConductorClock::default();
-    let camera = CameraRig::default();
+    let camera = CameraState::default();
 
     let shapes = [
         ShapeDescriptor {
