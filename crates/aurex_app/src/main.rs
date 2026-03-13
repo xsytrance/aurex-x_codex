@@ -194,11 +194,8 @@ fn runtime_diagnostics_report() -> String {
         creative_directive.experience.visual_theme,
         creative_directive.experience.song_plan.style.name
     ));
-    if let Some(world) = renderer.world_blueprint() {
-        lines.push(format!(
-            "world_theme={:?} geometry_style={:?} atmosphere={:?} lighting={:?} camera_rig={:?}",
-            world.theme, world.geometry_style, world.atmosphere, world.lighting, world.camera_rig
-        ));
+    if let Some(summary) = renderer.world_debug_summary() {
+        lines.push(summary);
     }
     lines.push(format!("ecs_entity_count={}", world.entity_count()));
     lines.push(format!(
@@ -445,7 +442,7 @@ audio_probe=tick:1 pulse:0.854
 audio_m1_readiness=device_io:true stream_graph:true can_emit_sound:true
 creative_identity=Echo Conclave bias=Classical tone=Cosmic
 creative_experience_title=Echo Conclave // Crystal Frequency visual_theme=Cathedral style=Classical
-world_theme=Cathedral geometry_style=SpireField atmosphere=Mist lighting=CrystalRefraction camera_rig=Orbit
+world_theme=Cathedral geometry_style=SpireField atmosphere=Mist lighting=CrystalRefraction camera_rig=Orbit stack_terrain_freq=0.313 stack_structure_density=0.452 stack_fog=0.388 stack_light_key=0.647 stack_particle_rate=0.434
 ecs_entity_count=2
 render_bootstrap=Aurex-X 1280x720
 render_stage_count=3

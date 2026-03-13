@@ -1,5 +1,7 @@
+pub mod generator_stack;
 pub mod typography;
 pub mod world_generator;
+use generator_stack::{GeneratorStackOutput, generate_stack_output};
 use typography::{
     LyricRenderEvent, TimedLyricRenderEvent, TypographyReactiveState, TypographyStyle,
     choose_typography_style,
@@ -957,6 +959,7 @@ pub struct MockRenderer {
     camera_state: CameraState,
     camera_time_seconds: f32,
     world_blueprint: Option<WorldBlueprint>,
+    generator_stack_output: Option<GeneratorStackOutput>,
 }
 
 impl MockRenderer {
@@ -976,6 +979,7 @@ impl MockRenderer {
             camera_state: CameraState::default(),
             camera_time_seconds: 0.0,
             world_blueprint: None,
+            generator_stack_output: None,
         }
     }
 
@@ -1079,23 +1083,49 @@ impl MockRenderer {
     pub fn set_world_blueprint(&mut self, blueprint: WorldBlueprint) {
         self.set_camera_rig(blueprint.camera_rig);
         self.world_blueprint = Some(blueprint);
+        self.generator_stack_output = None;
+    }
+
+    pub fn initialize_stack_from_world_blueprint(&mut self, seed: u64) {
+        self.generator_stack_output = self
+            .world_blueprint
+            .as_ref()
+            .map(|blueprint| generate_stack_output(seed, blueprint));
     }
 
     pub fn initialize_world_from_theme(&mut self, seed: u64, theme: VisualTheme) {
         let blueprint = generate_world_blueprint(seed, theme);
         self.set_world_blueprint(blueprint);
+        self.initialize_stack_from_world_blueprint(seed ^ 0xC0DE_5001);
     }
 
     pub fn world_blueprint(&self) -> Option<&WorldBlueprint> {
         self.world_blueprint.as_ref()
     }
 
+    pub fn generator_stack_output(&self) -> Option<&GeneratorStackOutput> {
+        self.generator_stack_output.as_ref()
+    }
+
     pub fn world_debug_summary(&self) -> Option<String> {
         self.world_blueprint.as_ref().map(|world| {
-            format!(
+            let mut line = format!(
                 "world_theme={:?} geometry_style={:?} atmosphere={:?} lighting={:?} camera_rig={:?}",
                 world.theme, world.geometry_style, world.atmosphere, world.lighting, world.camera_rig
-            )
+            );
+
+            if let Some(stack) = self.generator_stack_output.as_ref() {
+                line.push_str(&format!(
+                    " stack_terrain_freq={:.3} stack_structure_density={:.3} stack_fog={:.3} stack_light_key={:.3} stack_particle_rate={:.3}",
+                    stack.terrain.spatial_frequency,
+                    stack.structures.density,
+                    stack.atmosphere.fog_density,
+                    stack.lighting.key_intensity,
+                    stack.particles.spawn_rate,
+                ));
+            }
+
+            line
         })
     }
 }
@@ -2157,6 +2187,7 @@ mod tests {
 #[cfg(test)]
 mod world_generator_integration_tests {
     use super::{MockRenderer, RenderBootstrapConfig};
+    use crate::generator_stack::generate_stack_output;
     use crate::world_generator::VisualTheme;
 
     #[test]
@@ -2175,5 +2206,41 @@ mod world_generator_integration_tests {
         assert!(summary.contains("atmosphere="));
         assert!(summary.contains("lighting="));
         assert!(summary.contains("camera_rig="));
+    }
+
+    #[test]
+    fn renderer_initializes_generator_stack_from_blueprint() {
+        let mut renderer = MockRenderer::new(RenderBootstrapConfig::default());
+        renderer.initialize_world_from_theme(99, VisualTheme::NeonCity);
+
+        let stack = renderer
+            .generator_stack_output()
+            .expect("stack output should be set");
+        assert!(stack.structures.density > 0.0);
+        assert!(stack.lighting.key_intensity > 0.0);
+
+        let summary = renderer
+            .world_debug_summary()
+            .expect("summary should exist");
+        assert!(summary.contains("stack_structure_density="));
+        assert!(summary.contains("stack_particle_rate="));
+    }
+
+    #[test]
+    fn renderer_handles_missing_stack_output_without_regression() {
+        let mut renderer = MockRenderer::new(RenderBootstrapConfig::default());
+        let blueprint = crate::world_generator::generate_world_blueprint(7, VisualTheme::Reactor);
+        renderer.set_world_blueprint(blueprint.clone());
+
+        assert!(renderer.generator_stack_output().is_none());
+        let summary = renderer
+            .world_debug_summary()
+            .expect("summary should still exist");
+        assert!(summary.contains("world_theme=Reactor"));
+        assert!(!summary.contains("stack_structure_density="));
+
+        renderer.initialize_stack_from_world_blueprint(123);
+        let expected = generate_stack_output(123, &blueprint);
+        assert_eq!(renderer.generator_stack_output(), Some(&expected));
     }
 }

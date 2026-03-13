@@ -208,3 +208,24 @@ Aurex now includes a deterministic world blueprint pass in `aurex_render::world_
 - Theme drives structure + lighting + camera defaults, while seed drives style/atmosphere/palette choices.
 - `MockRenderer` stores `world_blueprint: Option<WorldBlueprint>` and can emit a debug summary for diagnostics.
 - Generation runs outside the realtime audio callback, preserving CPAL determinism and callback allocation constraints.
+
+
+## Deterministic Generator Stack
+
+Aurex now includes a lightweight generator stack in `aurex_render::generator_stack` that transforms a `WorldBlueprint` into layered parameter outputs (not meshes/assets):
+
+- `terrain` spatial/elevation controls
+- `structures` layout density/spacing/verticality
+- `atmosphere` fog/haze/sky/volumetric controls
+- `lighting` intensity/pulse/temperature controls
+- `particles` spawn/drift/turbulence controls
+- `camera_hints` for renderer-facing motion preferences
+
+Entry point:
+- `generate_stack_output(seed, &blueprint) -> GeneratorStackOutput`
+
+Design notes:
+- deterministic by seed + blueprint
+- modular stage-by-stage rule mapping from geometry/structure/atmosphere/lighting/palette choices
+- parameter-generation only at this stage (no heavy geometry compilation)
+- prepared for future RhythmField modulation, world events, biome/city subclasses, and pulse overrides
