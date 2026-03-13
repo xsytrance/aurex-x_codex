@@ -20,6 +20,10 @@ pub struct PulseDiagnostics {
     pub rhythm_summary: Option<RhythmSummary>,
     pub dominant_prime: Option<PrimeFaction>,
     pub top_three_primes: Vec<PrimeFaction>,
+    pub idle_time_seconds: f32,
+    pub warning_issued: bool,
+    pub resonance_event_count: u32,
+    pub resonance_event_ready: bool,
     pub last_frame: Option<FrameDiagnostics>,
 }
 

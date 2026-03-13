@@ -59,6 +59,14 @@ fn main() {
         );
     }
 
+    println!(
+        "living_boot idle_time_seconds={:.3} warning_issued={} event_count={} resonance_event_ready={}",
+        runner.diagnostics.idle_time_seconds,
+        runner.diagnostics.warning_issued,
+        runner.diagnostics.resonance_event_count,
+        runner.diagnostics.resonance_event_ready
+    );
+
     if let Some(diag) = &runner.diagnostics.last_frame {
         println!(
             "renderer stages={:?} total_ms={:.3}",

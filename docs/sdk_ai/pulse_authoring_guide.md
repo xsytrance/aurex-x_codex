@@ -79,3 +79,11 @@ Tracked Prime factions:
 - Kazoom
 
 Boot World district entries and portal launches can further update resonance profile metrics.
+
+## Living Boot Screen behavior
+Living Boot state is derived from the runtime resonance profile and currently exposes:
+- dominant/top-three prime presentation
+- visual/audio bias weights
+- deterministic idle warning + resonance-event-ready state
+
+This is an extensible framework for future boot-screen personalization and boot-world evolution.

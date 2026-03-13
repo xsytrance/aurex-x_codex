@@ -30,3 +30,9 @@ Boot World is a special pulse that acts as a hub. Its districts (Electronic, Jaz
 Pulses also contribute to a **Resonance Tracker** profile that measures your affinity with Prime factions over time. District exploration and portal launches in Boot World can increase those affinities.
 
 This profile is planned to power Living Boot Screen personalization and pulse recommendations.
+
+The Living Boot Screen reacts to your top resonance primes and idle behavior:
+- first long idle period gives a warning
+- later long idle periods prepare resonance events
+
+These events are currently state-only (no major world mutation yet), so behavior stays predictable while future systems are added.

@@ -82,3 +82,15 @@ Sources:
 - Boot World portal launches
 
 Diagnostics expose `dominant_prime` and `top_three_primes` snapshots without affecting renderer diagnostics payloads.
+
+## Living Boot Screen
+Boot World includes optional Living Boot state derived from resonance profile.
+
+- presentation updates: dominant/top-three + visual/audio bias weights
+- idle updates: deterministic warning/event-ready state machine
+
+Idle event rules are intentionally minimal:
+- first long-idle threshold => warning only
+- later long-idle thresholds => `resonance_event_ready = true`
+
+No world mutation is performed yet; this only exposes deterministic state for future systems.

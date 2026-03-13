@@ -9,6 +9,7 @@ use aurex_scene::{Scene, load_scene_from_json_path};
 
 use crate::boot_world::{BootWorldGenerator, BootWorldState};
 use crate::diagnostics::{PulseDiagnostics, RhythmSummary};
+use crate::living_boot::LivingBootState;
 use crate::resonance::ResonanceTracker;
 use crate::schema::{PulseDefinition, PulseSceneSource};
 
@@ -83,7 +84,11 @@ impl PulseRunner {
         }
         if let Some(boot_world) = self.definition.boot_world.clone() {
             self.boot_world = Some(boot_world);
-            self.boot_world_state = Some(BootWorldState::new());
+            let mut state = BootWorldState::new();
+            if let Some(tracker) = &self.resonance_tracker {
+                state.living_boot_state = Some(LivingBootState::from_profile(tracker.profile()));
+            }
+            self.boot_world_state = Some(state);
         }
         if let (Some(tracker), Some(prime)) = (
             &mut self.resonance_tracker,
@@ -106,6 +111,7 @@ impl PulseRunner {
         }
 
         if let (Some(cfg), Some(state)) = (&self.boot_world, &mut self.boot_world_state) {
+            let prev_pos = state.player_position;
             let prev_district = state.active_district.clone();
             state.update_player_position(cfg, self.scene.sdf.camera.position);
             if prev_district != state.active_district
@@ -113,6 +119,25 @@ impl PulseRunner {
                     (&mut self.resonance_tracker, state.active_prime(cfg))
             {
                 tracker.record_district_visit(active_prime);
+            }
+
+            if let (Some(tracker), Some(living)) =
+                (&self.resonance_tracker, &mut state.living_boot_state)
+            {
+                living.refresh_presentation(tracker.profile());
+                let moved = {
+                    let dx = prev_pos.x - state.player_position.x;
+                    let dy = prev_pos.y - state.player_position.y;
+                    let dz = prev_pos.z - state.player_position.z;
+                    (dx * dx + dy * dy + dz * dz).sqrt() > 0.001
+                };
+                let meaningful_interaction = moved || prev_district != state.active_district;
+                living.update_idle(delta_seconds, meaningful_interaction, self.runtime_seconds);
+
+                self.diagnostics.idle_time_seconds = living.idle_state.idle_time_seconds;
+                self.diagnostics.warning_issued = living.idle_state.warning_issued;
+                self.diagnostics.resonance_event_count = living.idle_state.event_count;
+                self.diagnostics.resonance_event_ready = living.idle_state.resonance_event_ready;
             }
         }
 

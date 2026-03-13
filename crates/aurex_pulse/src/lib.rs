@@ -1,5 +1,6 @@
 pub mod boot_world;
 pub mod diagnostics;
+pub mod living_boot;
 pub mod loader;
 pub mod pulse_graph;
 pub mod resonance;
