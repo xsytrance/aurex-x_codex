@@ -1,0 +1,23 @@
+{
+  "sdf": {
+    "seed": 919,
+    "camera": {"position": {"x": 0.0, "y": 2.2, "z": -7.5}, "target": {"x": 0.0, "y": 1.0, "z": 0.0}, "fov_degrees": 60.0, "aspect_ratio": 1.7777778},
+    "lighting": {
+      "ambient_light": 0.16,
+      "key_lights": [{"direction": {"x": -0.6, "y": -1.0, "z": -0.1}, "intensity": 1.05, "color": {"x": 0.9, "y": 0.7, "z": 1.0}}],
+      "fog_color": {"x": 0.03, "y": 0.02, "z": 0.08},
+      "fog_density": 0.055,
+      "fog_height_falloff": 0.16
+    },
+    "root": {"Primitive": {"object": {
+      "primitive": {"Torus": {"major_radius": 2.0, "minor_radius": 0.22}},
+      "bounds_radius": 4.0,
+      "modifiers": [
+        {"RepeatAxis": {"spacing": 2.8, "axis": "z"}},
+        "FoldSpace",
+        {"Twist": {"strength": 0.14}}
+      ],
+      "material": {"material_type": "Holographic", "base_color": {"x": 0.9, "y": 0.8, "z": 1.0}, "emissive_strength": 0.5, "roughness": 0.2, "pattern": "Bands", "parameters": {"shift_speed": 2.6}}
+    }}}
+  }
+}

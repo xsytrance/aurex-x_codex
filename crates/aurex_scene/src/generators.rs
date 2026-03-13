@@ -4,6 +4,230 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
+pub struct RhythmFieldContext {
+    #[serde(default)]
+    pub beat_phase: f32,
+    #[serde(default)]
+    pub beat_strength: f32,
+    #[serde(default)]
+    pub bass_energy: f32,
+    #[serde(default)]
+    pub harmonic_energy: f32,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
+pub struct RuntimeModulationContext {
+    #[serde(default)]
+    pub rhythm_field: Option<RhythmFieldContext>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct GeneratorStack {
+    #[serde(default)]
+    pub layers: Vec<SceneGeneratorLayerSpec>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum SceneGeneratorLayerSpec {
+    BaseGenerator(BaseGeneratorLayer),
+    StructureLayer(StructureLayer),
+    DetailLayer(DetailLayer),
+    ParticleLayer(ParticleLayer),
+    RhythmModulationLayer(RhythmModulationLayer),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct BaseGeneratorLayer {
+    pub generator: SceneGenerator,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct StructureLayer {
+    pub generator: SceneGenerator,
+    #[serde(default = "default_layer_strength")]
+    pub strength: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DetailLayer {
+    pub generator: SceneGenerator,
+    #[serde(default = "default_layer_strength")]
+    pub strength: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ParticleLayer {
+    pub generator: SceneGenerator,
+    #[serde(default = "default_layer_strength")]
+    pub strength: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RhythmModulationLayer {
+    pub generator: SceneGenerator,
+    #[serde(default = "default_layer_strength")]
+    pub beat_influence: f32,
+    #[serde(default = "default_layer_strength")]
+    pub bass_influence: f32,
+    #[serde(default = "default_layer_strength")]
+    pub harmonic_influence: f32,
+}
+
+fn default_layer_strength() -> f32 {
+    1.0
+}
+
+pub trait SceneGeneratorLayer {
+    fn expand_layer(
+        &self,
+        scene_seed: u32,
+        time: f32,
+        scene_fields: &[crate::fields::SceneField],
+        runtime_context: RuntimeModulationContext,
+    ) -> SdfNode;
+}
+
+impl SceneGeneratorLayer for BaseGeneratorLayer {
+    fn expand_layer(
+        &self,
+        scene_seed: u32,
+        time: f32,
+        scene_fields: &[crate::fields::SceneField],
+        _runtime_context: RuntimeModulationContext,
+    ) -> SdfNode {
+        expand_generator(&self.generator, scene_seed, time, scene_fields)
+    }
+}
+
+impl SceneGeneratorLayer for StructureLayer {
+    fn expand_layer(
+        &self,
+        scene_seed: u32,
+        time: f32,
+        scene_fields: &[crate::fields::SceneField],
+        _runtime_context: RuntimeModulationContext,
+    ) -> SdfNode {
+        layer_node_with_strength(
+            expand_generator(&self.generator, scene_seed, time, scene_fields),
+            self.strength,
+        )
+    }
+}
+
+impl SceneGeneratorLayer for DetailLayer {
+    fn expand_layer(
+        &self,
+        scene_seed: u32,
+        time: f32,
+        scene_fields: &[crate::fields::SceneField],
+        _runtime_context: RuntimeModulationContext,
+    ) -> SdfNode {
+        layer_node_with_strength(
+            expand_generator(&self.generator, scene_seed, time, scene_fields),
+            self.strength * 0.6,
+        )
+    }
+}
+
+impl SceneGeneratorLayer for ParticleLayer {
+    fn expand_layer(
+        &self,
+        scene_seed: u32,
+        time: f32,
+        scene_fields: &[crate::fields::SceneField],
+        _runtime_context: RuntimeModulationContext,
+    ) -> SdfNode {
+        layer_node_with_strength(
+            expand_generator(&self.generator, scene_seed, time, scene_fields),
+            self.strength * 0.35,
+        )
+    }
+}
+
+impl SceneGeneratorLayer for RhythmModulationLayer {
+    fn expand_layer(
+        &self,
+        scene_seed: u32,
+        time: f32,
+        scene_fields: &[crate::fields::SceneField],
+        runtime_context: RuntimeModulationContext,
+    ) -> SdfNode {
+        let rf = runtime_context.rhythm_field.unwrap_or_default();
+        let rhythm_strength = (rf.beat_strength * self.beat_influence
+            + rf.bass_energy * self.bass_influence
+            + rf.harmonic_energy * self.harmonic_influence)
+            .clamp(0.0, 3.0);
+        layer_node_with_strength(
+            expand_generator(
+                &self.generator,
+                scene_seed,
+                time + rf.beat_phase * 0.1,
+                scene_fields,
+            ),
+            1.0 + rhythm_strength * 0.2,
+        )
+    }
+}
+
+impl SceneGeneratorLayer for SceneGeneratorLayerSpec {
+    fn expand_layer(
+        &self,
+        scene_seed: u32,
+        time: f32,
+        scene_fields: &[crate::fields::SceneField],
+        runtime_context: RuntimeModulationContext,
+    ) -> SdfNode {
+        match self {
+            SceneGeneratorLayerSpec::BaseGenerator(layer) => {
+                layer.expand_layer(scene_seed, time, scene_fields, runtime_context)
+            }
+            SceneGeneratorLayerSpec::StructureLayer(layer) => {
+                layer.expand_layer(scene_seed, time, scene_fields, runtime_context)
+            }
+            SceneGeneratorLayerSpec::DetailLayer(layer) => {
+                layer.expand_layer(scene_seed, time, scene_fields, runtime_context)
+            }
+            SceneGeneratorLayerSpec::ParticleLayer(layer) => {
+                layer.expand_layer(scene_seed, time, scene_fields, runtime_context)
+            }
+            SceneGeneratorLayerSpec::RhythmModulationLayer(layer) => {
+                layer.expand_layer(scene_seed, time, scene_fields, runtime_context)
+            }
+        }
+    }
+}
+
+pub fn expand_generator_stack(
+    stack: &GeneratorStack,
+    scene_seed: u32,
+    time: f32,
+    scene_fields: &[crate::fields::SceneField],
+    runtime_context: RuntimeModulationContext,
+) -> SdfNode {
+    let mut children = Vec::new();
+    for layer in &stack.layers {
+        let expanded = layer.expand_layer(scene_seed, time, scene_fields, runtime_context);
+        if !matches!(expanded, SdfNode::Empty) {
+            children.push(expanded);
+        }
+    }
+    if children.is_empty() {
+        SdfNode::Empty
+    } else {
+        SdfNode::Group { children }
+    }
+}
+
+fn layer_node_with_strength(node: SdfNode, strength: f32) -> SdfNode {
+    let s = strength.clamp(0.1, 4.0);
+    SdfNode::Transform {
+        modifiers: vec![SdfModifier::Scale { factor: s }],
+        bounds_radius: None,
+        child: Box::new(node),
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum SceneGenerator {
     Tunnel(TunnelGenerator),
@@ -11,6 +235,11 @@ pub enum SceneGenerator {
     CircuitBoard(CircuitBoardGenerator),
     ParticleGalaxy(ParticleGalaxyGenerator),
     HarmonicParticleField(HarmonicParticleFieldGenerator),
+    ElectronicCity(ElectronicCityGenerator),
+    JazzImprovisation(JazzImprovisationGenerator),
+    RockAmpMountain(RockAmpMountainGenerator),
+    PopStageWorld(PopStageWorldGenerator),
+    ReggaeIsland(ReggaeIslandGenerator),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -53,11 +282,138 @@ pub enum HarmonicParticleMode {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ElectronicCityGenerator {
+    pub block_count: u32,
+    pub tower_height: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct JazzImprovisationGenerator {
+    pub ribbon_count: u32,
+    pub swing: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RockAmpMountainGenerator {
+    pub peak_count: u32,
+    pub amp_height: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PopStageWorldGenerator {
+    pub stage_count: u32,
+    pub spotlight_radius: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ReggaeIslandGenerator {
+    pub island_count: u32,
+    pub wave_scale: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct HarmonicParticleFieldGenerator {
     pub particle_count: u32,
     pub radius: f32,
     pub thickness: f32,
     pub mode: HarmonicParticleMode,
+}
+
+pub fn electronic_city_stack() -> GeneratorStack {
+    GeneratorStack {
+        layers: vec![
+            SceneGeneratorLayerSpec::BaseGenerator(BaseGeneratorLayer {
+                generator: SceneGenerator::ElectronicCity(ElectronicCityGenerator {
+                    block_count: 48,
+                    tower_height: 2.8,
+                }),
+            }),
+            SceneGeneratorLayerSpec::StructureLayer(StructureLayer {
+                generator: SceneGenerator::CircuitBoard(CircuitBoardGenerator {
+                    grid_resolution: 24,
+                    component_density: 0.45,
+                    trace_width: 0.05,
+                    height_variation: 0.8,
+                }),
+                strength: 0.85,
+            }),
+            SceneGeneratorLayerSpec::RhythmModulationLayer(RhythmModulationLayer {
+                generator: SceneGenerator::ParticleGalaxy(ParticleGalaxyGenerator {
+                    particle_count: 96,
+                    radius: 6.5,
+                    noise_spread: 0.35,
+                    rotation_speed: 0.9,
+                }),
+                beat_influence: 1.0,
+                bass_influence: 1.2,
+                harmonic_influence: 0.7,
+            }),
+        ],
+    }
+}
+
+pub fn jazz_improvisation_stack() -> GeneratorStack {
+    GeneratorStack {
+        layers: vec![
+            SceneGeneratorLayerSpec::BaseGenerator(BaseGeneratorLayer {
+                generator: SceneGenerator::JazzImprovisation(JazzImprovisationGenerator {
+                    ribbon_count: 28,
+                    swing: 0.82,
+                }),
+            }),
+            SceneGeneratorLayerSpec::DetailLayer(DetailLayer {
+                generator: SceneGenerator::FractalTemple(FractalTempleGenerator {
+                    grid_size: 5,
+                    pillar_height: 1.0,
+                    pillar_spacing: 2.1,
+                    fractal_scale: 0.8,
+                }),
+                strength: 0.55,
+            }),
+            SceneGeneratorLayerSpec::RhythmModulationLayer(RhythmModulationLayer {
+                generator: SceneGenerator::HarmonicParticleField(HarmonicParticleFieldGenerator {
+                    particle_count: 72,
+                    radius: 3.5,
+                    thickness: 0.2,
+                    mode: HarmonicParticleMode::MelodySpirals,
+                }),
+                beat_influence: 0.7,
+                bass_influence: 0.5,
+                harmonic_influence: 1.3,
+            }),
+        ],
+    }
+}
+
+pub fn rock_mountain_stack() -> GeneratorStack {
+    GeneratorStack {
+        layers: vec![
+            SceneGeneratorLayerSpec::BaseGenerator(BaseGeneratorLayer {
+                generator: SceneGenerator::RockAmpMountain(RockAmpMountainGenerator {
+                    peak_count: 12,
+                    amp_height: 4.0,
+                }),
+            }),
+            SceneGeneratorLayerSpec::StructureLayer(StructureLayer {
+                generator: SceneGenerator::Tunnel(TunnelGenerator {
+                    radius: 2.0,
+                    segment_count: 10,
+                    twist: 0.08,
+                    repeat_distance: 2.6,
+                }),
+                strength: 0.65,
+            }),
+            SceneGeneratorLayerSpec::ParticleLayer(ParticleLayer {
+                generator: SceneGenerator::HarmonicParticleField(HarmonicParticleFieldGenerator {
+                    particle_count: 44,
+                    radius: 4.2,
+                    thickness: 0.25,
+                    mode: HarmonicParticleMode::BassBursts,
+                }),
+                strength: 0.7,
+            }),
+        ],
+    }
 }
 
 pub fn expand_generator(
@@ -74,6 +430,11 @@ pub fn expand_generator(
         SceneGenerator::HarmonicParticleField(g) => {
             expand_harmonic_particle_field(g, scene_seed, time, scene_fields)
         }
+        SceneGenerator::ElectronicCity(g) => expand_electronic_city(g, scene_seed, time),
+        SceneGenerator::JazzImprovisation(g) => expand_jazz_improv(g, scene_seed, time),
+        SceneGenerator::RockAmpMountain(g) => expand_rock_amp_mountain(g, scene_seed, time),
+        SceneGenerator::PopStageWorld(g) => expand_pop_stage_world(g, scene_seed, time),
+        SceneGenerator::ReggaeIsland(g) => expand_reggae_island(g, scene_seed, time),
     }
 }
 
@@ -403,12 +764,121 @@ fn hash01(seed: u32, x: i32, y: i32) -> f32 {
     ((n & 0x7fff_ffff) as f32) / 2_147_483_647.0
 }
 
+fn expand_electronic_city(g: &ElectronicCityGenerator, seed: u32, time: f32) -> SdfNode {
+    let mut children = Vec::new();
+    for i in 0..g.block_count.max(1) {
+        let x = (i as f32 - g.block_count as f32 * 0.5) * 1.6;
+        let h = g.tower_height * (0.5 + ((seed as f32 * 0.01 + i as f32 + time).sin().abs()));
+        children.push(SdfNode::Primitive {
+            object: SdfObject {
+                primitive: SdfPrimitive::Box {
+                    size: Vec3::new(0.35, h, 0.35),
+                },
+                modifiers: vec![SdfModifier::Translate {
+                    offset: Vec3::new(x, h, 0.0),
+                }],
+                material: SdfMaterial::default(),
+                bounds_radius: Some(h + 1.0),
+            },
+        });
+    }
+    SdfNode::Group { children }
+}
+
+fn expand_jazz_improv(g: &JazzImprovisationGenerator, seed: u32, time: f32) -> SdfNode {
+    let mut children = Vec::new();
+    for i in 0..g.ribbon_count.max(1) {
+        let z = i as f32 * 1.2;
+        children.push(SdfNode::Primitive {
+            object: SdfObject {
+                primitive: SdfPrimitive::Torus {
+                    major_radius: 1.0 + (i as f32 * 0.05),
+                    minor_radius: 0.08 + g.swing.abs() * 0.04,
+                },
+                modifiers: vec![SdfModifier::Translate {
+                    offset: Vec3::new(
+                        (time * g.swing + i as f32 + seed as f32 * 0.001).sin(),
+                        0.0,
+                        z,
+                    ),
+                }],
+                material: SdfMaterial::default(),
+                bounds_radius: Some(2.0),
+            },
+        });
+    }
+    SdfNode::Group { children }
+}
+
+fn expand_rock_amp_mountain(g: &RockAmpMountainGenerator, _seed: u32, _time: f32) -> SdfNode {
+    let mut children = Vec::new();
+    for i in 0..g.peak_count.max(1) {
+        let x = (i as f32 - g.peak_count as f32 * 0.5) * 2.5;
+        children.push(SdfNode::Primitive {
+            object: SdfObject {
+                primitive: SdfPrimitive::Capsule {
+                    a: Vec3::new(x, 0.0, 0.0),
+                    b: Vec3::new(x, g.amp_height, 0.0),
+                    radius: 0.9,
+                },
+                modifiers: vec![],
+                material: SdfMaterial::default(),
+                bounds_radius: Some(g.amp_height + 1.5),
+            },
+        });
+    }
+    SdfNode::Group { children }
+}
+
+fn expand_pop_stage_world(g: &PopStageWorldGenerator, _seed: u32, _time: f32) -> SdfNode {
+    let mut children = Vec::new();
+    for i in 0..g.stage_count.max(1) {
+        let z = i as f32 * 2.2;
+        children.push(SdfNode::Primitive {
+            object: SdfObject {
+                primitive: SdfPrimitive::Cylinder {
+                    radius: g.spotlight_radius.max(0.2),
+                    half_height: 0.12,
+                },
+                modifiers: vec![SdfModifier::Translate {
+                    offset: Vec3::new(0.0, 0.0, z),
+                }],
+                material: SdfMaterial::default(),
+                bounds_radius: Some(2.0),
+            },
+        });
+    }
+    SdfNode::Group { children }
+}
+
+fn expand_reggae_island(g: &ReggaeIslandGenerator, seed: u32, time: f32) -> SdfNode {
+    let mut children = Vec::new();
+    for i in 0..g.island_count.max(1) {
+        let x = (i as f32 - g.island_count as f32 * 0.5) * 3.0;
+        let y = (time * 0.5 + i as f32 + seed as f32 * 0.002).sin() * g.wave_scale;
+        children.push(SdfNode::Primitive {
+            object: SdfObject {
+                primitive: SdfPrimitive::Sphere {
+                    radius: 1.0 + g.wave_scale * 0.4,
+                },
+                modifiers: vec![SdfModifier::Translate {
+                    offset: Vec3::new(x, y, 0.0),
+                }],
+                material: SdfMaterial::default(),
+                bounds_radius: Some(2.0),
+            },
+        });
+    }
+    SdfNode::Group { children }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         CircuitBoardGenerator, FractalTempleGenerator, HarmonicParticleFieldGenerator,
-        HarmonicParticleMode, ParticleGalaxyGenerator, SceneGenerator, TunnelGenerator,
-        expand_generator,
+        HarmonicParticleMode, ParticleGalaxyGenerator, RuntimeModulationContext, SceneGenerator,
+        TunnelGenerator, electronic_city_stack, expand_generator, expand_generator_stack,
+        jazz_improvisation_stack, rock_mountain_stack,
     };
 
     #[test]
@@ -460,6 +930,29 @@ mod tests {
         ];
         for g in gs {
             let node = expand_generator(&g, 7, 0.5, &[]);
+            assert!(!matches!(node, crate::SdfNode::Empty));
+        }
+    }
+
+    #[test]
+    fn stack_expansion_is_deterministic() {
+        let stack = electronic_city_stack();
+        let ctx = RuntimeModulationContext::default();
+        let a = expand_generator_stack(&stack, 101, 1.5, &[], ctx);
+        let b = expand_generator_stack(&stack, 101, 1.5, &[], ctx);
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn example_stacks_expand() {
+        let stacks = vec![
+            electronic_city_stack(),
+            jazz_improvisation_stack(),
+            rock_mountain_stack(),
+        ];
+        for stack in stacks {
+            let node =
+                expand_generator_stack(&stack, 13, 0.25, &[], RuntimeModulationContext::default());
             assert!(!matches!(node, crate::SdfNode::Empty));
         }
     }
