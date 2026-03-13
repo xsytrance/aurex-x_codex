@@ -1,0 +1,19 @@
+{
+  "bpm": 84.0,
+  "ppq": 16,
+  "seed": 99,
+  "tracks": [
+    {
+      "name": "ambient_pad",
+      "instrument": "NoiseSynth",
+      "pattern": {
+        "steps": 8,
+        "events": [
+          {"Note": {"step": 0, "pitch": 48, "duration_beats": 2.0, "velocity": 0.45}},
+          {"Note": {"step": 4, "pitch": 55, "duration_beats": 2.0, "velocity": 0.42}}
+        ]
+      },
+      "volume": 0.6
+    }
+  ]
+}
