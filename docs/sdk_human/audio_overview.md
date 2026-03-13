@@ -88,3 +88,18 @@ Typography styles (Neon, Pulse, Crystal, Circuit, Rune) are also selected from s
 - Lead: subtle letter motion
 
 This lyric/typography path runs outside the realtime audio callback.
+
+
+## Experience planner
+
+Aurex can now create a complete short-form procedural experience (about 30–90 seconds) from a single seed.
+
+The generated plan includes:
+
+- a title
+- an exact duration
+- a full song blueprint (style/BPM/scale/structure/chords)
+- a typography style for on-screen lyrics
+- a visual theme for scene mood
+
+Because generation is deterministic, the same seed always produces the same audiovisual plan.

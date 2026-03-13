@@ -107,3 +107,20 @@ Generated timelines are intended for UI/renderer consumption and are not execute
 - `LyricRenderEvent` + `TimedLyricRenderEvent`
 
 `MockRenderer` can ingest lyric timelines and expose currently active lyric text while applying BeatEnergy/music-event-driven typography reactions.
+
+
+## Experience planner (30–90s procedural AV blueprint)
+
+`crates/aurex_app/src/experience_planner.rs` adds deterministic high-level planning outside realtime threads.
+
+- `ExperiencePlan { title, duration_seconds, song_plan, typography_style, visual_theme }`
+- `VisualTheme`: `Reactor`, `Cathedral`, `DesertMonolith`, `StormField`, `NeonCity`
+- `generate_experience_title(seed)` uses deterministic word pools
+- `generate_experience(seed)` deterministically selects:
+  - title
+  - duration in `[30.0, 90.0]`
+  - song plan (`SongPlan`)
+  - typography style (`TypographyStyle`)
+  - visual theme
+
+No CPAL stream/callback architecture changes are involved.

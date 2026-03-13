@@ -144,3 +144,24 @@ This system is offline/planning-stage only and must not run allocations in the r
 - Lead => letter motion
 
 All of this is deterministic and outside the CPAL callback path.
+
+
+## Experience planner integration
+
+Use `aurex_app::experience_planner` for top-level deterministic AV planning.
+
+### Core types
+- `ExperiencePlan`
+- `VisualTheme`
+
+### Deterministic API
+- `generate_experience_title(seed)`
+- `generate_experience(seed)`
+
+`generate_experience(seed)` composes:
+- `SongPlan` from `aurex_audio::song_planner`
+- `TypographyStyle` from `aurex_render::typography`
+- a seed-selected visual theme
+- duration clamped to 30–90 seconds
+
+This planner is intentionally outside realtime audio callback execution.

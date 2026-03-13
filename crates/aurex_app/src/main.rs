@@ -1,3 +1,4 @@
+mod experience_planner;
 use aurex_audio::{
     AudioBackendMode, AudioBackendReadiness, AudioEvent, MockAudioEngine, start_runtime_sine_output,
 };
