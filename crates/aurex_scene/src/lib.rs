@@ -1,7 +1,14 @@
+pub mod automation;
+pub mod camera;
+pub mod demo;
+pub mod director;
+pub mod director_rules;
+pub mod effect_graph;
 pub mod fields;
 pub mod generators;
 pub mod harmonics;
 pub mod patterns;
+pub mod transition;
 
 use aurex_audio::ProceduralAudioConfig;
 use serde::{Deserialize, Serialize};
@@ -12,6 +19,12 @@ pub struct Vec3 {
     pub x: f32,
     pub y: f32,
     pub z: f32,
+}
+
+impl Default for Vec3 {
+    fn default() -> Self {
+        Self::new(0.0, 0.0, 0.0)
+    }
 }
 
 impl Vec3 {
@@ -48,6 +61,8 @@ pub struct SdfScene {
     #[serde(default)]
     pub generator: Option<generators::SceneGenerator>,
     #[serde(default)]
+    pub generator_stack: Option<generators::GeneratorStack>,
+    #[serde(default)]
     pub fields: Vec<fields::SceneField>,
     #[serde(default)]
     pub patterns: Vec<patterns::PatternNetwork>,
@@ -57,6 +72,46 @@ pub struct SdfScene {
     pub rhythm: Option<RhythmSpaceConfig>,
     #[serde(default)]
     pub audio: Option<ProceduralAudioConfig>,
+    #[serde(default)]
+    pub effect_graph: Option<effect_graph::EffectGraph>,
+    #[serde(default)]
+    pub automation_tracks: Vec<automation::AutomationBinding>,
+    #[serde(default)]
+    pub demo_sequence: Option<demo::Demo>,
+    #[serde(default)]
+    pub temporal_effects: Vec<TemporalEffect>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_modulation: Option<generators::RuntimeModulationContext>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum TemporalBlendMode {
+    AdditiveTrail,
+    DecayTrail,
+    MotionEcho,
+    BeatEcho,
+    ColorSmear,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TemporalEffect {
+    pub blend_mode: TemporalBlendMode,
+    #[serde(default = "default_temporal_decay_rate")]
+    pub decay_rate: f32,
+    #[serde(default = "default_temporal_feedback_strength")]
+    pub feedback_strength: f32,
+    #[serde(default)]
+    pub beat_sync: f32,
+    #[serde(default)]
+    pub color_shift: Vec3,
+}
+
+fn default_temporal_decay_rate() -> f32 {
+    0.92
+}
+
+fn default_temporal_feedback_strength() -> f32 {
+    0.35
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -116,6 +171,10 @@ pub struct SceneTimeline {
     pub events: Vec<TimelineEvent>,
     #[serde(default)]
     pub camera_path: Option<CameraPath>,
+    #[serde(default)]
+    pub cinematic_camera: Option<camera::CameraRig>,
+    #[serde(default)]
+    pub shot_sequence: Option<director::ShotSequence>,
 }
 
 impl SceneTimeline {
@@ -433,6 +492,24 @@ pub enum SdfModifier {
     Repeat {
         cell: Vec3,
     },
+    RepeatGrid {
+        cell_size: Vec3,
+    },
+    RepeatAxis {
+        spacing: f32,
+        axis: String,
+    },
+    RepeatPolar {
+        sectors: u32,
+    },
+    RepeatSphere {
+        radius: f32,
+    },
+    FoldSpace,
+    MirrorFold,
+    KaleidoscopeFold {
+        segments: u32,
+    },
     Twist {
         strength: f32,
     },
@@ -469,6 +546,33 @@ pub struct SdfCamera {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct VolumetricLighting {
+    #[serde(default = "default_volumetric_steps")]
+    pub scattering_steps: u32,
+    #[serde(default)]
+    pub beam_falloff: f32,
+    #[serde(default)]
+    pub beam_density: f32,
+    #[serde(default)]
+    pub shaft_intensity: f32,
+}
+
+fn default_volumetric_steps() -> u32 {
+    8
+}
+
+impl Default for VolumetricLighting {
+    fn default() -> Self {
+        Self {
+            scattering_steps: default_volumetric_steps(),
+            beam_falloff: 0.7,
+            beam_density: 0.12,
+            shaft_intensity: 0.5,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SdfLighting {
     pub ambient_light: f32,
     #[serde(default)]
@@ -479,6 +583,8 @@ pub struct SdfLighting {
     pub fog_density: f32,
     #[serde(default)]
     pub fog_height_falloff: f32,
+    #[serde(default)]
+    pub volumetric: VolumetricLighting,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -717,6 +823,8 @@ mod tests {
                 parameters: BTreeMap::new(),
             }],
             camera_path: None,
+            cinematic_camera: None,
+            shot_sequence: None,
         };
 
         let v = timeline

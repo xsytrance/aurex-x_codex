@@ -121,3 +121,6 @@ For pattern-rich visual authoring alongside audio:
 - `docs/sdk_ai/harmonic_scene_generation.md`
 - `docs/sdk_ai/rhythm_scene_generation.md`
 
+
+## Scene cinematics schema
+- Camera/director/post/volumetric schema guide: `docs/sdk_ai/cinematic_scene_authoring.md`
