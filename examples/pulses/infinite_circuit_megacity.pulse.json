@@ -1,0 +1,73 @@
+{
+  "metadata": {
+    "title": "Infinite Circuit Megacity Pulse",
+    "author": "Aurex Team",
+    "description": "Explorable electronic city pulse.",
+    "tags": [
+      "world",
+      "electronic",
+      "city"
+    ],
+    "seed": 9001,
+    "pulse_kind": "World",
+    "duration_hint": 300.0,
+    "interactivity": "Hybrid",
+    "prime_affinity": "Electronic"
+  },
+  "pulse_kind": "World",
+  "scene": {
+    "scene_path": "../infinite_circuit_megacity.json"
+  },
+  "parameters": {
+    "exploration_speed": 1.0
+  },
+  "music": {
+    "bpm": 138.0,
+    "ppq": 16,
+    "seed": 9001,
+    "tracks": [
+      {
+        "name": "electro_bass",
+        "instrument": "PulseSynth",
+        "pattern": {
+          "steps": 16,
+          "events": [
+            {
+              "Note": {
+                "step": 0,
+                "pitch": 36,
+                "duration_beats": 0.5,
+                "velocity": 0.9
+              }
+            },
+            {
+              "Note": {
+                "step": 4,
+                "pitch": 38,
+                "duration_beats": 0.5,
+                "velocity": 0.85
+              }
+            },
+            {
+              "Note": {
+                "step": 8,
+                "pitch": 43,
+                "duration_beats": 0.5,
+                "velocity": 0.88
+              }
+            },
+            {
+              "Note": {
+                "step": 12,
+                "pitch": 38,
+                "duration_beats": 0.5,
+                "velocity": 0.8
+              }
+            }
+          ]
+        },
+        "volume": 0.9
+      }
+    ]
+  }
+}

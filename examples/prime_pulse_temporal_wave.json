@@ -1,0 +1,12 @@
+{
+  "sdf": {
+    "seed": 4455,
+    "camera": {"position": {"x": 0.0, "y": 1.6, "z": -7.0}, "target": {"x": 0.0, "y": 0.6, "z": 0.0}, "fov_degrees": 60.0, "aspect_ratio": 1.7777778},
+    "lighting": {"ambient_light": 0.14, "key_lights": [{"direction": {"x": -0.2, "y": -1.0, "z": -0.3}, "intensity": 1.1, "color": {"x": 1.0, "y": 0.8, "z": 0.9}}], "fog_color": {"x": 0.03, "y": 0.03, "z": 0.08}, "fog_density": 0.06, "fog_height_falloff": 0.14},
+    "temporal_effects": [
+      {"blend_mode": "DecayTrail", "decay_rate": 0.9, "feedback_strength": 0.45, "beat_sync": 0.7, "color_shift": {"x": 0.01, "y": 0.03, "z": 0.06}},
+      {"blend_mode": "BeatEcho", "decay_rate": 0.87, "feedback_strength": 0.58, "beat_sync": 1.0, "color_shift": {"x": 0.03, "y": 0.0, "z": 0.04}}
+    ],
+    "root": {"Primitive": {"object": {"primitive": {"Mandelbulb": {"power": 8.0, "iterations": 9, "bailout": 4.0}}, "modifiers": [{"RepeatPolar": {"sectors": 8}}, {"KaleidoscopeFold": {"segments": 6}}], "material": {"material_type": "FractalMetal", "base_color": {"x": 0.8, "y": 0.7, "z": 1.0}, "emissive_strength": 0.24, "roughness": 0.22, "pattern": "Rings", "parameters": {}}}}}
+  }
+}

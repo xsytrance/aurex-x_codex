@@ -1,0 +1,12 @@
+{
+  "sdf": {
+    "seed": 2233,
+    "camera": {"position": {"x": 0.0, "y": 2.6, "z": -8.0}, "target": {"x": 0.0, "y": 1.2, "z": 0.0}, "fov_degrees": 60.0, "aspect_ratio": 1.7777778},
+    "lighting": {"ambient_light": 0.15, "key_lights": [{"direction": {"x": -0.5, "y": -1.0, "z": -0.2}, "intensity": 1.0, "color": {"x": 0.8, "y": 0.8, "z": 1.0}}], "fog_color": {"x": 0.02, "y": 0.05, "z": 0.1}, "fog_density": 0.06, "fog_height_falloff": 0.1},
+    "temporal_effects": [
+      {"blend_mode": "BeatEcho", "decay_rate": 0.88, "feedback_strength": 0.55, "beat_sync": 0.9, "color_shift": {"x": 0.02, "y": 0.02, "z": 0.05}},
+      {"blend_mode": "MotionEcho", "decay_rate": 0.9, "feedback_strength": 0.4, "beat_sync": 0.4, "color_shift": {"x": 0.0, "y": 0.0, "z": 0.0}}
+    ],
+    "root": {"Primitive": {"object": {"primitive": {"Box": {"size": {"x": 0.6, "y": 1.4, "z": 0.6}}}, "modifiers": [{"RepeatGrid": {"cell_size": {"x": 3.0, "y": 0.0, "z": 3.0}}}, "MirrorFold"], "material": {"material_type": "Holographic", "base_color": {"x": 0.7, "y": 0.8, "z": 1.0}, "emissive_strength": 0.42, "roughness": 0.2, "pattern": "Checker", "parameters": {}}}}}
+  }
+}

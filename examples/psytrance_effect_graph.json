@@ -1,0 +1,29 @@
+{
+  "sdf": {
+    "seed": 5101,
+    "camera": {"position": {"x": 0.0, "y": 0.3, "z": -8.0}, "target": {"x": 0.0, "y": 0.0, "z": 0.0}, "fov_degrees": 60.0, "aspect_ratio": 1.7777},
+    "lighting": {
+      "ambient_light": 0.15,
+      "key_lights": [{"direction": {"x": -0.2, "y": -1.0, "z": 0.3}, "intensity": 2.1, "color": {"x": 0.7, "y": 0.9, "z": 1.0}}],
+      "fog_density": 0.04,
+      "fog_height_falloff": 0.06,
+      "volumetric": {"scattering_steps": 12, "beam_falloff": 0.8, "beam_density": 0.13, "shaft_intensity": 0.8}
+    },
+    "objects": [{"primitive": {"Torus": {"major_radius": 2.2, "minor_radius": 0.45}}, "material": {"material_type": "Plasma", "emissive_strength": 0.8, "pattern": "Bands"}}],
+    "effect_graph": {
+      "nodes": [
+        {"id": 1, "name": "generator", "node": "TunnelGenerator", "inputs": [], "outputs": ["geo"], "parameters": {}},
+        {"id": 2, "name": "twist", "node": "TwistModifier", "inputs": ["geo"], "outputs": ["mod"], "parameters": {"strength": 0.85}},
+        {"id": 3, "name": "pattern", "node": "PatternPresetNode", "inputs": ["mod"], "outputs": ["pat"], "parameters": {}},
+        {"id": 4, "name": "light", "node": "VolumetricLightingNode", "inputs": ["pat"], "outputs": ["lit"], "parameters": {"beam_density": 0.14, "shaft_intensity": 0.9}},
+        {"id": 5, "name": "post", "node": "BloomNode", "inputs": ["lit"], "outputs": ["out"], "parameters": {"bloom_boost": 0.2}}
+      ],
+      "connections": [
+        {"from": 1, "to": 2},
+        {"from": 2, "to": 3},
+        {"from": 3, "to": 4},
+        {"from": 4, "to": 5}
+      ]
+    }
+  }
+}
