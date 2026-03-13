@@ -11,6 +11,10 @@ WorldBlueprint
   ↓
 GeneratorStack
   ↓
+RhythmField
+  ↓
+Modulation Pass
+  ↓
 Renderer Pipeline
 ```
 
@@ -19,6 +23,8 @@ Renderer Pipeline
 - **Experience Planner**: maps pulse intent to visual direction (`RenderTheme`) and world intent.
 - **WorldBlueprint**: high-level world descriptor (what should exist and how it should feel), without low-level render execution details.
 - **GeneratorStack**: deterministic parameter and structure generator that expands layered generator specs into concrete scene data.
+- **RhythmField**: deterministic music-state snapshot that produces normalized modulation signals.
+- **Modulation Pass**: applies bounded deltas to GeneratorStack output parameters.
 - **Renderer Pipeline**: executes scene evaluation and image synthesis in fixed stage order.
 
 ## Current renderer pipeline stages

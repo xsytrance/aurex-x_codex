@@ -38,3 +38,11 @@ Frame diagnostics include:
 
 ## Recursive micro/macro guidance
 Use nested repetition + generator layering to compose multi-scale worlds (macro structures + micro motifs) while preserving determinism.
+
+## RhythmField modulation pass
+RhythmField is the deterministic music-to-world modulation layer between generator output and renderer execution:
+
+Music Sequencer -> RhythmField -> Modulation Pass -> GeneratorStackOutput (modulated) -> Renderer Pipeline
+
+The modulation pass applies bounded deltas to generator output parameters (terrain, structures, atmosphere, lighting, particles, camera hints). Base world identity remains intact.
+
