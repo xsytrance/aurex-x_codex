@@ -1,0 +1,20 @@
+{
+  "metadata": {
+    "title": "Rock Amplifier Mountain Pulse",
+    "author": "Aurex Team",
+    "description": "Interactive mountain-scale rock world.",
+    "tags": ["game", "rock", "mountain"],
+    "seed": 9003,
+    "pulse_kind": "Game",
+    "duration_hint": 240.0,
+    "interactivity": "Interactive",
+    "prime_affinity": "Rock"
+  },
+  "pulse_kind": "Game",
+  "scene": {
+    "scene_path": "../rock_amp_mountains.json"
+  },
+  "parameters": {
+    "player_spawn": "ridge"
+  }
+}
