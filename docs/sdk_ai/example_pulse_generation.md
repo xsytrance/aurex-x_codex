@@ -20,6 +20,7 @@ Builder output must remain deterministic and reuse existing systems:
 - `create_electronic_megacity_pulse(seed)`
 - `create_jazz_atmosphere_pulse(seed)`
 - `create_ambient_dreamscape_pulse(seed)`
+- `create_aurielle_intro_pulse(seed)`
 
 Do not introduce new renderer stages or alter stage order.
 
@@ -27,3 +28,12 @@ Do not introduce new renderer stages or alter stage order.
 Generated pulses may include a phase sequence for narrative progression.
 Keep phases deterministic and use bounded overrides only.
 Current interface is phase-level (track-level sequencing is future work).
+
+
+## CLI selection
+Run a specific pulse from the app crate:
+- `cargo run -p aurex_app -- megacity`
+- `cargo run -p aurex_app -- jazz`
+- `cargo run -p aurex_app -- ambient`
+- `cargo run -p aurex_app -- aurielle_intro`
+- optional deterministic seed: `cargo run -p aurex_app -- megacity --seed 42`

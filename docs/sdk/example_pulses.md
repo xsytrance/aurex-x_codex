@@ -40,9 +40,19 @@ Implemented in `crates/aurex_app/src/pulses/`:
 - `electronic_megacity`
 - `jazz_atmosphere`
 - `ambient_dreamscape`
+- `aurielle_intro`
 
 All are deterministic for the same pulse type + seed.
 
 ## Phase-based evolution
 Example pulses can optionally attach a `PulseSequence` of named phases.
 Phase overrides are deterministic bounded adjustments applied through PulseBuilder before RhythmField modulation.
+
+
+## CLI selection
+Run a specific pulse from the app crate:
+- `cargo run -p aurex_app -- megacity`
+- `cargo run -p aurex_app -- jazz`
+- `cargo run -p aurex_app -- ambient`
+- `cargo run -p aurex_app -- aurielle_intro`
+- optional deterministic seed: `cargo run -p aurex_app -- megacity --seed 42`

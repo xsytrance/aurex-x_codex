@@ -1,9 +1,10 @@
 # Visual Music Examples
 
-Aurex ships three visual-music showcase pulses:
+Aurex ships four visual-music showcase pulses:
 - **Electronic Megacity**
 - **Jazz Atmosphere**
 - **Ambient Dreamscape**
+- **Aurielle Intro**
 
 They are built with `PulseBuilder`, which lets developers (and future tools) define pulse intent with simple hints, then map them to the existing world + rhythm systems.
 
@@ -17,3 +18,12 @@ Same pulse type + same seed gives the same output.
 
 ## Time-based phases
 Some showcase pulses also use a phase sequence so scenes evolve in clear chapters while staying deterministic.
+
+
+## CLI selection
+Run a specific pulse from the app crate:
+- `cargo run -p aurex_app -- megacity`
+- `cargo run -p aurex_app -- jazz`
+- `cargo run -p aurex_app -- ambient`
+- `cargo run -p aurex_app -- aurielle_intro`
+- optional deterministic seed: `cargo run -p aurex_app -- megacity --seed 42`

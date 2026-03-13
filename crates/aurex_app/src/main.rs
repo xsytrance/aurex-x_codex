@@ -18,12 +18,80 @@ use aurex_render::{
 };
 use aurex_shape_synth::{PrimitiveType, ShapeDescriptor};
 use pulses::{
-    ambient_dreamscape::create_ambient_dreamscape_pulse,
+    ExamplePulseConfig, ambient_dreamscape::create_ambient_dreamscape_pulse,
+    aurielle_intro::create_aurielle_intro_pulse,
     electronic_megacity::create_electronic_megacity_pulse,
     jazz_atmosphere::create_jazz_atmosphere_pulse,
 };
 
-fn runtime_diagnostics_report() -> String {
+const DEFAULT_PULSE_NAME: &str = "megacity";
+const DEFAULT_SEED: u64 = 2026;
+const AVAILABLE_PULSE_NAMES: [&str; 4] = ["megacity", "jazz", "ambient", "aurielle_intro"];
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RuntimeOptions {
+    pulse_name: String,
+    seed: u64,
+}
+
+fn available_pulse_names() -> &'static [&'static str] {
+    &AVAILABLE_PULSE_NAMES
+}
+
+fn parse_runtime_options(args: impl IntoIterator<Item = String>) -> Result<RuntimeOptions, String> {
+    let mut pulse_name: Option<String> = None;
+    let mut seed = DEFAULT_SEED;
+
+    let mut iter = args.into_iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--seed" => {
+                let value = iter.next().ok_or_else(|| {
+                    "Missing value for --seed. Example: cargo run -- megacity --seed 42".to_string()
+                })?;
+                seed = value.parse::<u64>().map_err(|_| {
+                    format!("Invalid --seed value '{value}'. Expected unsigned integer (u64).")
+                })?;
+            }
+            value if value.starts_with("--") => {
+                return Err(format!(
+                    "Unknown option '{value}'. Supported option: --seed <u64>"
+                ));
+            }
+            value => {
+                if pulse_name.is_some() {
+                    return Err(
+                        "Too many positional arguments. Usage: cargo run -- [pulse] [--seed <u64>]"
+                            .to_string(),
+                    );
+                }
+                pulse_name = Some(value.to_string());
+            }
+        }
+    }
+
+    let pulse_name = pulse_name.unwrap_or_else(|| DEFAULT_PULSE_NAME.to_string());
+    if !available_pulse_names().contains(&pulse_name.as_str()) {
+        return Err(format!(
+            "Unknown pulse '{pulse_name}'. Available pulses: {}",
+            available_pulse_names().join(", ")
+        ));
+    }
+
+    Ok(RuntimeOptions { pulse_name, seed })
+}
+
+fn create_pulse(pulse_name: &str, seed: u64) -> ExamplePulseConfig {
+    match pulse_name {
+        "megacity" => create_electronic_megacity_pulse(seed),
+        "jazz" => create_jazz_atmosphere_pulse(seed),
+        "ambient" => create_ambient_dreamscape_pulse(seed),
+        "aurielle_intro" => create_aurielle_intro_pulse(seed),
+        _ => unreachable!("unsupported pulse should be rejected by parse_runtime_options"),
+    }
+}
+
+fn runtime_diagnostics_report(selected_pulse: &ExamplePulseConfig) -> String {
     let mut clock = ConductorClock::default();
     let camera = CameraRig::default();
 
@@ -77,11 +145,7 @@ fn runtime_diagnostics_report() -> String {
     let mut renderer = MockRenderer::new(RenderBootstrapConfig::default());
     let render_stats = renderer.run_frame(&RENDER_MAIN_STAGES);
 
-    let pulse_electronic = create_electronic_megacity_pulse(2026);
-    let pulse_jazz = create_jazz_atmosphere_pulse(2026);
-    let pulse_ambient = create_ambient_dreamscape_pulse(2026);
-
-    renderer.set_rhythm_snapshot(pulse_electronic.rhythm_snapshot);
+    renderer.set_rhythm_snapshot(selected_pulse.rhythm_snapshot);
     let renderer_world_debug = renderer.world_debug_summary();
 
     let mut visited = Vec::new();
@@ -246,44 +310,40 @@ fn runtime_diagnostics_report() -> String {
         real_renderer_bootstrap.result, real_renderer_bootstrap.detail
     ));
 
-    lines.push(format!("pulse_showcase_count={}", 3));
-    lines.push(format!("Pulse: {}", pulse_electronic.pulse_name));
     lines.push(format!(
-        "Theme: {:?}",
-        pulse_electronic.world_blueprint.theme
+        "pulse_showcase_count={}",
+        available_pulse_names().len()
     ));
+    lines.push(format!("Pulse: {}", selected_pulse.pulse_name));
+    lines.push(format!("Theme: {:?}", selected_pulse.world_blueprint.theme));
     lines.push(format!(
         "Geometry: {:?}",
-        pulse_electronic.pulse_config.geometry_style
+        selected_pulse.pulse_config.geometry_style
     ));
     lines.push(format!(
         "Structures: {:?}",
-        pulse_electronic.pulse_config.structure_set
+        selected_pulse.pulse_config.structure_set
     ));
     lines.push(format!(
         "Geometry: structures_density={:.3}",
-        pulse_electronic.modulated_output.structures.density
+        selected_pulse.modulated_output.structures.density
     ));
     lines.push(format!(
         "Atmosphere: fog_density={:.3}",
-        pulse_electronic.modulated_output.atmosphere.fog_density
+        selected_pulse.modulated_output.atmosphere.fog_density
     ));
     lines.push(format!(
         "Rhythm snapshot: pulse={:.2} bass={:.2} intensity={:.2}",
-        pulse_electronic.rhythm_snapshot.pulse,
-        pulse_electronic.rhythm_snapshot.bass_energy,
-        pulse_electronic.rhythm_snapshot.intensity
+        selected_pulse.rhythm_snapshot.pulse,
+        selected_pulse.rhythm_snapshot.bass_energy,
+        selected_pulse.rhythm_snapshot.intensity
     ));
-    if let Some(duration) = pulse_electronic.sequence_duration_seconds {
+    if let Some(duration) = selected_pulse.sequence_duration_seconds {
         lines.push(format!("Sequence Duration: {:.1}s", duration));
     }
-    if let Some(phase) = pulse_electronic.current_phase_name.as_deref() {
+    if let Some(phase) = selected_pulse.current_phase_name.as_deref() {
         lines.push(format!("Current Phase: {}", phase));
     }
-    lines.push(format!("Pulse: {}", pulse_jazz.pulse_name));
-    lines.push(format!("Theme: {:?}", pulse_jazz.world_blueprint.theme));
-    lines.push(format!("Pulse: {}", pulse_ambient.pulse_name));
-    lines.push(format!("Theme: {:?}", pulse_ambient.world_blueprint.theme));
     lines.push(format!(
         "renderer_world_debug_lines={}",
         renderer_world_debug.lines().count()
@@ -369,7 +429,25 @@ fn runtime_diagnostics_report() -> String {
 }
 
 fn main() {
-    println!("{}", runtime_diagnostics_report());
+    let options = match parse_runtime_options(std::env::args().skip(1)) {
+        Ok(options) => options,
+        Err(err) => {
+            eprintln!("{err}");
+            return;
+        }
+    };
+
+    let pulse = create_pulse(&options.pulse_name, options.seed);
+
+    println!("Launching Pulse: {}", pulse.pulse_name);
+    if let Some(duration) = pulse.sequence_duration_seconds {
+        println!("Sequence Duration: {:.1}s", duration);
+    }
+    if let Some(phase) = pulse.current_phase_name.as_deref() {
+        println!("Current Phase: {}", phase);
+    }
+
+    println!("{}", runtime_diagnostics_report(&pulse));
 
     let runtime_audio = match start_runtime_sine_output() {
         Ok(audio) => {
@@ -396,18 +474,52 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::runtime_diagnostics_report;
+    use super::{
+        DEFAULT_SEED, available_pulse_names, create_pulse, parse_runtime_options,
+        runtime_diagnostics_report,
+    };
 
     #[test]
     fn diagnostics_report_matches_expected_snapshot() {
-        let report = runtime_diagnostics_report();
+        let pulse = create_pulse("megacity", DEFAULT_SEED);
+        let report = runtime_diagnostics_report(&pulse);
         assert!(report.contains("Aurex runtime scaffold initialized."));
         assert!(report.contains("render_stages=RenderPrepare/Render/Present"));
-        assert!(report.contains("pulse_showcase_count=3"));
+        assert!(report.contains(&format!(
+            "pulse_showcase_count={}",
+            available_pulse_names().len()
+        )));
         assert!(report.contains("Pulse: Electronic Megacity"));
         assert!(report.contains("Theme: Electronic"));
         assert!(report.contains("Rhythm snapshot: pulse="));
         assert!(report.contains("Sequence Duration:"));
         assert!(report.contains("Current Phase:"));
+    }
+
+    #[test]
+    fn runtime_options_support_known_pulse_names() {
+        let options = parse_runtime_options(vec![
+            "aurielle_intro".to_string(),
+            "--seed".to_string(),
+            "42".to_string(),
+        ])
+        .expect("aurielle_intro should be accepted");
+        assert_eq!(options.pulse_name, "aurielle_intro");
+        assert_eq!(options.seed, 42);
+    }
+
+    #[test]
+    fn runtime_options_default_to_megacity() {
+        let options =
+            parse_runtime_options(Vec::<String>::new()).expect("default options should parse");
+        assert_eq!(options.pulse_name, "megacity");
+        assert_eq!(options.seed, DEFAULT_SEED);
+    }
+
+    #[test]
+    fn runtime_options_reject_unknown_pulse_name() {
+        let err = parse_runtime_options(vec!["unknown".to_string()]).unwrap_err();
+        assert!(err.contains("Unknown pulse 'unknown'"));
+        assert!(err.contains("aurielle_intro"));
     }
 }

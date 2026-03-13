@@ -1,4 +1,5 @@
 pub mod ambient_dreamscape;
+pub mod aurielle_intro;
 pub mod electronic_megacity;
 pub mod jazz_atmosphere;
 
@@ -8,6 +9,7 @@ pub use crate::pulse_builder::ExamplePulseConfig;
 mod tests {
     use super::{
         ambient_dreamscape::create_ambient_dreamscape_pulse,
+        aurielle_intro::create_aurielle_intro_pulse,
         electronic_megacity::create_electronic_megacity_pulse,
         jazz_atmosphere::create_jazz_atmosphere_pulse,
     };
@@ -25,5 +27,9 @@ mod tests {
         let aa = create_ambient_dreamscape_pulse(77);
         let ab = create_ambient_dreamscape_pulse(77);
         assert_eq!(aa, ab);
+
+        let ia = create_aurielle_intro_pulse(77);
+        let ib = create_aurielle_intro_pulse(77);
+        assert_eq!(ia, ib);
     }
 }
