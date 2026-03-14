@@ -484,10 +484,9 @@ fn bypass_procedural_setup_from_env() -> bool {
 #[cfg(feature = "real_graphics")]
 fn should_short_circuit_procedural_setup(
     procedural_renderer_active: bool,
-    diagnostic_gpu_triangle: bool,
     bypass_procedural_setup: bool,
 ) -> bool {
-    procedural_renderer_active && (diagnostic_gpu_triangle || bypass_procedural_setup)
+    procedural_renderer_active && bypass_procedural_setup
 }
 
 #[cfg(feature = "real_graphics")]
@@ -529,13 +528,25 @@ fn preflight_real_scene(debug_state: &RuntimeRenderDebugState, elapsed: f32) -> 
     if !debug_state_has_safe_ranges(debug_state) {
         return false;
     }
-    let scene = build_runtime_sdf_scene(debug_state, elapsed);
+    let scene = build_runtime_sdf_scene(
+        debug_state,
+        elapsed,
+        ProceduralSetupControls {
+            stop_after: None,
+            skip_root_tree_build: false,
+            skip_procedural_camera: false,
+        },
+    );
     let (validated, _, _) = validate_runtime_scene(scene, debug_state);
     scene_camera_is_valid(&validated)
 }
 
 #[cfg(feature = "real_graphics")]
-fn build_runtime_sdf_scene(debug_state: &RuntimeRenderDebugState, elapsed: f32) -> Scene {
+fn build_runtime_sdf_scene(
+    debug_state: &RuntimeRenderDebugState,
+    elapsed: f32,
+    controls: ProceduralSetupControls,
+) -> Scene {
     let stack: GeneratorStack = match debug_state.scene_name.as_str() {
         "rings" => generators::electronic_city_stack(),
         "particle_swirl" => generators::jazz_improvisation_stack(),
@@ -556,24 +567,31 @@ fn build_runtime_sdf_scene(debug_state: &RuntimeRenderDebugState, elapsed: f32) 
         harmonic_energy: debug_state.profile_geometry_density,
     };
 
-    let camera = SdfCamera {
-        position: Vec3::new(0.0, 4.0 + debug_state.profile_structure_height * 5.0, -22.0),
-        target: Vec3::new(0.0, 2.5, 0.0),
-        fov_degrees: 58.0,
-        aspect_ratio: 16.0 / 9.0,
+    let camera = if controls.skip_procedural_camera {
+        SdfCamera {
+            position: Vec3::new(0.0, 2.5, -9.0),
+            target: Vec3::new(0.0, 0.8, 0.0),
+            fov_degrees: 60.0,
+            aspect_ratio: 16.0 / 9.0,
+        }
+    } else {
+        SdfCamera {
+            position: Vec3::new(0.0, 4.0 + debug_state.profile_structure_height * 5.0, -22.0),
+            target: Vec3::new(0.0, 2.5, 0.0),
+            fov_degrees: 58.0,
+            aspect_ratio: 16.0 / 9.0,
+        }
     };
 
     let scene_fields = vec![];
     let runtime_modulation = RuntimeModulationContext {
         rhythm_field: Some(rhythm),
     };
-    let root = generators::expand_generator_stack(
-        &stack,
-        2026,
-        elapsed,
-        &scene_fields,
-        runtime_modulation,
-    );
+    let root = if controls.skip_root_tree_build {
+        fallback_runtime_scene(debug_state).sdf.root
+    } else {
+        generators::expand_generator_stack(&stack, 2026, elapsed, &scene_fields, runtime_modulation)
+    };
 
     Scene {
         sdf: aurex_scene::SdfScene {
@@ -663,14 +681,190 @@ struct ProceduralFrameDiagnostics {
 }
 
 #[cfg(feature = "real_graphics")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProceduralSetupStage {
+    ResolveScene,
+    ApplyProfile,
+    BuildWorld,
+    BuildGenerator,
+    BuildCamera,
+    BuildRootTree,
+    ValidateScene,
+}
+
+#[cfg(feature = "real_graphics")]
+impl ProceduralSetupStage {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::ResolveScene => "resolve_scene",
+            Self::ApplyProfile => "apply_profile",
+            Self::BuildWorld => "build_world",
+            Self::BuildGenerator => "build_generator",
+            Self::BuildCamera => "build_camera",
+            Self::BuildRootTree => "build_root_tree",
+            Self::ValidateScene => "validate_scene",
+        }
+    }
+
+    fn from_env(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "resolve_scene" => Some(Self::ResolveScene),
+            "apply_profile" => Some(Self::ApplyProfile),
+            "build_world" => Some(Self::BuildWorld),
+            "build_generator" => Some(Self::BuildGenerator),
+            "build_camera" => Some(Self::BuildCamera),
+            "build_root_tree" => Some(Self::BuildRootTree),
+            "validate_scene" => Some(Self::ValidateScene),
+            _ => None,
+        }
+    }
+}
+
+#[cfg(feature = "real_graphics")]
+#[derive(Debug, Clone, Copy)]
+struct ProceduralSetupControls {
+    stop_after: Option<ProceduralSetupStage>,
+    skip_root_tree_build: bool,
+    skip_procedural_camera: bool,
+}
+
+#[cfg(feature = "real_graphics")]
+fn procedural_setup_controls_from_env() -> ProceduralSetupControls {
+    let stop_after = std::env::var("AUREX_STOP_AFTER_PROCEDURAL_STAGE")
+        .ok()
+        .and_then(|value| ProceduralSetupStage::from_env(&value));
+
+    let skip_root_tree_build = std::env::var("AUREX_SKIP_ROOT_TREE_BUILD")
+        .ok()
+        .map(|value| {
+            let lowered = value.to_ascii_lowercase();
+            matches!(lowered.as_str(), "1" | "true" | "yes" | "on")
+        })
+        .unwrap_or(false);
+
+    let skip_procedural_camera = std::env::var("AUREX_SKIP_PROCEDURAL_CAMERA")
+        .ok()
+        .map(|value| {
+            let lowered = value.to_ascii_lowercase();
+            matches!(lowered.as_str(), "1" | "true" | "yes" | "on")
+        })
+        .unwrap_or(false);
+
+    ProceduralSetupControls {
+        stop_after,
+        skip_root_tree_build,
+        skip_procedural_camera,
+    }
+}
+
+#[cfg(feature = "real_graphics")]
+fn should_stop_after_stage(controls: ProceduralSetupControls, stage: ProceduralSetupStage) -> bool {
+    controls.stop_after == Some(stage)
+}
+
+#[cfg(feature = "real_graphics")]
 fn rasterize_procedural_scene(
     width: u32,
     height: u32,
     elapsed: f32,
     debug_state: &RuntimeRenderDebugState,
 ) -> (BootFramebuffer, ProceduralFrameDiagnostics) {
-    let scene = build_runtime_sdf_scene(debug_state, elapsed);
+    let controls = procedural_setup_controls_from_env();
+    let expected_len = (width as usize) * (height as usize) * 4;
+    let stop_with_empty = |stage: ProceduralSetupStage| {
+        (
+            BootFramebuffer {
+                width,
+                height,
+                rgba: vec![0; expected_len],
+            },
+            ProceduralFrameDiagnostics {
+                shape_count: 0,
+                used_fallback: false,
+                camera_position: Vec3::new(0.0, 2.5, -9.0),
+                camera_target: Vec3::new(0.0, 0.8, 0.0),
+                scene_name: format!("{}:stopped@{}", debug_state.scene_name, stage.as_str()),
+            },
+        )
+    };
+
+    eprintln!("setup_stage_begin scene={}", debug_state.scene_name);
+    eprintln!("resolve active scene scene={}", debug_state.scene_name);
+    if should_stop_after_stage(controls, ProceduralSetupStage::ResolveScene) {
+        eprintln!(
+            "stop_after_stage reached={} procedural setup complete (stopped)",
+            ProceduralSetupStage::ResolveScene.as_str()
+        );
+        return stop_with_empty(ProceduralSetupStage::ResolveScene);
+    }
+
+    eprintln!(
+        "apply scene profile geom={:.2} particles={:.2} height={:.2} glow={:.2}",
+        debug_state.profile_geometry_density,
+        debug_state.profile_particle_density,
+        debug_state.profile_structure_height,
+        debug_state.profile_glow_intensity,
+    );
+    if should_stop_after_stage(controls, ProceduralSetupStage::ApplyProfile) {
+        eprintln!(
+            "stop_after_stage reached={} procedural setup complete (stopped)",
+            ProceduralSetupStage::ApplyProfile.as_str()
+        );
+        return stop_with_empty(ProceduralSetupStage::ApplyProfile);
+    }
+
+    eprintln!("build world blueprint pulse={}", debug_state.pulse_name);
+    if should_stop_after_stage(controls, ProceduralSetupStage::BuildWorld) {
+        eprintln!(
+            "stop_after_stage reached={} procedural setup complete (stopped)",
+            ProceduralSetupStage::BuildWorld.as_str()
+        );
+        return stop_with_empty(ProceduralSetupStage::BuildWorld);
+    }
+
+    eprintln!("build generator stack output");
+    if should_stop_after_stage(controls, ProceduralSetupStage::BuildGenerator) {
+        eprintln!(
+            "stop_after_stage reached={} procedural setup complete (stopped)",
+            ProceduralSetupStage::BuildGenerator.as_str()
+        );
+        return stop_with_empty(ProceduralSetupStage::BuildGenerator);
+    }
+
+    eprintln!(
+        "build/modulate pulse output skip_camera={} skip_root_tree={}",
+        controls.skip_procedural_camera, controls.skip_root_tree_build
+    );
+    eprintln!("build camera");
+    if should_stop_after_stage(controls, ProceduralSetupStage::BuildCamera) {
+        eprintln!(
+            "stop_after_stage reached={} procedural setup complete (stopped)",
+            ProceduralSetupStage::BuildCamera.as_str()
+        );
+        return stop_with_empty(ProceduralSetupStage::BuildCamera);
+    }
+
+    eprintln!("build scene/root tree");
+    if should_stop_after_stage(controls, ProceduralSetupStage::BuildRootTree) {
+        eprintln!(
+            "stop_after_stage reached={} procedural setup complete (stopped)",
+            ProceduralSetupStage::BuildRootTree.as_str()
+        );
+        return stop_with_empty(ProceduralSetupStage::BuildRootTree);
+    }
+
+    let scene = build_runtime_sdf_scene(debug_state, elapsed, controls);
+    eprintln!("validate scene");
+    if should_stop_after_stage(controls, ProceduralSetupStage::ValidateScene) {
+        eprintln!(
+            "stop_after_stage reached={} procedural setup complete (stopped)",
+            ProceduralSetupStage::ValidateScene.as_str()
+        );
+        return stop_with_empty(ProceduralSetupStage::ValidateScene);
+    }
+
     let (scene, used_fallback, shape_count) = validate_runtime_scene(scene, debug_state);
+    eprintln!("procedural setup complete");
 
     let _ = sdf_renderer_state_cell();
     let (frame, diagnostics) = render_sdf_scene_with_diagnostics(
@@ -684,7 +878,6 @@ fn rasterize_procedural_scene(
         },
     );
 
-    let expected_len = (width as usize) * (height as usize) * 4;
     let mut rgba = Vec::with_capacity(expected_len);
     for p in frame.pixels {
         rgba.extend_from_slice(&[p.r, p.g, p.b, p.a]);
@@ -1101,11 +1294,11 @@ fn fs_main() -> @location(0) vec4<f32> {
 
                         on_frame(start_time.elapsed().as_secs_f32());
 
-                        let triangle_render_active = should_short_circuit_procedural_setup(
-                            procedural_renderer_active,
-                            diagnostic_gpu_triangle,
-                            bypass_procedural_setup,
-                        );
+                        let stage_controls = procedural_setup_controls_from_env();
+                        let triangle_render_active = procedural_renderer_active
+                            && (diagnostic_gpu_triangle
+                                || bypass_procedural_setup
+                                || stage_controls.stop_after.is_some());
                         eprintln!(
                             "swapchain_acquire_start mode={} diag_triangle={} bypass_setup={} triangle_render_active={} size={}x{}",
                             if procedural_renderer_active {
@@ -1221,19 +1414,13 @@ fn fs_main() -> @location(0) vec4<f32> {
                             let short_circuit_procedural_setup =
                                 should_short_circuit_procedural_setup(
                                     procedural_renderer_active,
-                                    diagnostic_gpu_triangle,
                                     bypass_procedural_setup,
                                 );
 
                             if short_circuit_procedural_setup {
-                                let reason = if diagnostic_gpu_triangle {
-                                    "diagnostic_triangle"
-                                } else {
-                                    "bypass_procedural_setup"
-                                };
                                 eprintln!(
                                     "diagnostic triangle short-circuit active reason={} bypass_flag={}",
-                                    reason,
+                                    "bypass_procedural_setup",
                                     bypass_procedural_setup,
                                 );
                                 eprintln!(
@@ -1437,57 +1624,6 @@ fn fs_main() -> @location(0) vec4<f32> {
                             bytes_per_row,
                             expected_bytes,
                         );
-                        assert_eq!(
-                            cpu_frame.rgba.len(), expected_bytes,
-                            "cpu framebuffer byte length mismatch"
-                        );
-                        assert_eq!(
-                            bytes_per_row % 4,
-                            0,
-                            "bytes_per_row must align with RGBA8 block size"
-                        );
-                        assert!(config.width > 0 && config.height > 0);
-                        eprintln!(
-                            "framebuffer_diag width={} height={} bytes_per_row={} expected_bytes={} format=Rgba8UnormSrgb",
-                            config.width,
-                            config.height,
-                            bytes_per_row,
-                            expected_bytes,
-                        );
-
-                        let capture_gpu_errors =
-                            procedural_renderer_active && !first_procedural_submission_captured;
-                        if capture_gpu_errors {
-                            device.push_error_scope(wgpu::ErrorFilter::Validation);
-                            device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
-                            eprintln!("gpu_error_scope_push first_procedural_submission");
-                        }
-
-                        if !diagnostic_gpu_triangle {
-                            queue.write_texture(
-                                wgpu::TexelCopyTextureInfo {
-                                    texture: &boot_texture,
-                                    mip_level: 0,
-                                    origin: wgpu::Origin3d::ZERO,
-                                    aspect: wgpu::TextureAspect::All,
-                                },
-                                &cpu_frame.rgba,
-                                wgpu::TexelCopyBufferLayout {
-                                    offset: 0,
-                                    bytes_per_row: Some(bytes_per_row),
-                                    rows_per_image: Some(config.height),
-                                },
-                                wgpu::Extent3d {
-                                    width: config.width,
-                                    height: config.height,
-                                    depth_or_array_layers: 1,
-                                },
-                            );
-                        } else {
-                            eprintln!(
-                                "diagnostic_gpu_triangle_active=true skipping_cpu_texture_upload"
-                            );
-                        }
 
                         let capture_gpu_errors =
                             procedural_renderer_active && !first_procedural_submission_captured;
@@ -3719,22 +3855,39 @@ mod tests {
     #[test]
     #[cfg(feature = "real_graphics")]
     fn diagnostic_short_circuit_requires_procedural_mode() {
-        assert!(!should_short_circuit_procedural_setup(false, true, false));
-        assert!(!should_short_circuit_procedural_setup(false, false, true));
-        assert!(should_short_circuit_procedural_setup(true, true, false));
+        assert!(!should_short_circuit_procedural_setup(false, false));
+        assert!(!should_short_circuit_procedural_setup(false, true));
+        assert!(should_short_circuit_procedural_setup(true, true));
     }
 
     #[test]
     #[cfg(feature = "real_graphics")]
     fn bypass_flag_short_circuits_procedural_setup() {
-        assert!(should_short_circuit_procedural_setup(true, false, true));
-        assert!(should_short_circuit_procedural_setup(true, true, true));
+        assert!(should_short_circuit_procedural_setup(true, true));
     }
 
     #[test]
     #[cfg(feature = "real_graphics")]
     fn procedural_setup_runs_normally_without_toggles() {
-        assert!(!should_short_circuit_procedural_setup(true, false, false));
+        assert!(!should_short_circuit_procedural_setup(true, false));
+    }
+
+    #[test]
+    #[cfg(feature = "real_graphics")]
+    fn stop_after_stage_is_honored() {
+        let controls = ProceduralSetupControls {
+            stop_after: Some(ProceduralSetupStage::BuildGenerator),
+            skip_root_tree_build: false,
+            skip_procedural_camera: false,
+        };
+        assert!(should_stop_after_stage(
+            controls,
+            ProceduralSetupStage::BuildGenerator
+        ));
+        assert!(!should_stop_after_stage(
+            controls,
+            ProceduralSetupStage::BuildCamera
+        ));
     }
     #[cfg(feature = "real_graphics")]
     #[test]
