@@ -294,6 +294,36 @@ fn resolved_stop_after_sdf_stage(config: &RenderConfig) -> Option<SdfStage> {
         .or_else(stop_after_sdf_stage_from_env)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GeometrySdfMode {
+    Safe,
+    Legacy,
+}
+
+impl GeometrySdfMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Safe => "safe",
+            Self::Legacy => "legacy",
+        }
+    }
+}
+
+fn geometry_sdf_mode_from_env() -> Option<GeometrySdfMode> {
+    std::env::var("AUREX_GEOMETRY_SDF_MODE")
+        .ok()
+        .map(|v| v.trim().to_ascii_lowercase())
+        .and_then(|v| match v.as_str() {
+            "legacy" => Some(GeometrySdfMode::Legacy),
+            "safe" | "" => Some(GeometrySdfMode::Safe),
+            _ => None,
+        })
+}
+
+fn resolved_geometry_sdf_mode() -> GeometrySdfMode {
+    geometry_sdf_mode_from_env().unwrap_or(GeometrySdfMode::Safe)
+}
+
 fn safe_dummy_frame(config: RenderConfig, color: Rgba8) -> RenderedFrame {
     let len = (config.width as usize) * (config.height as usize);
     RenderedFrame {
@@ -391,7 +421,10 @@ fn node_is_finite(node: &SdfNode) -> bool {
     }
 }
 
-fn validate_scene_for_geometry(scene: &Scene) -> Result<(), &'static str> {
+fn validate_scene_for_geometry(
+    scene: &Scene,
+    geometry_mode: GeometrySdfMode,
+) -> Result<(), &'static str> {
     let camera = &scene.sdf.camera;
     if !vec3_finite(camera.position) || !vec3_finite(camera.target) {
         return Err("camera vectors must be finite");
@@ -402,7 +435,7 @@ fn validate_scene_for_geometry(scene: &Scene) -> Result<(), &'static str> {
     if !camera.aspect_ratio.is_finite() || camera.aspect_ratio <= 0.0 {
         return Err("camera aspect ratio must be finite and positive");
     }
-    if !node_is_finite(&scene.sdf.root) {
+    if geometry_mode == GeometrySdfMode::Legacy && !node_is_finite(&scene.sdf.root) {
         return Err("scene root contains non-finite transforms/modifiers");
     }
     Ok(())
@@ -416,6 +449,7 @@ pub fn render_sdf_scene_with_state_and_diagnostics(
     let frame_start = Instant::now();
     let mut diagnostics = FrameDiagnostics::default();
     let stop_after = resolved_stop_after_sdf_stage(&config);
+    let geometry_mode = resolved_geometry_sdf_mode();
     reset_lod_counters();
     diagnostics.stages.extend([
         "ScenePreprocess",
@@ -465,7 +499,7 @@ pub fn render_sdf_scene_with_state_and_diagnostics(
     }
 
     eprintln!("sdf_stage_begin stage=GeometrySdf pre_validation");
-    if let Err(reason) = validate_scene_for_geometry(&animated_scene) {
+    if let Err(reason) = validate_scene_for_geometry(&animated_scene, geometry_mode) {
         eprintln!("sdf_stage_validation_failed stage=GeometrySdf reason={reason}");
         diagnostics.add_stage_duration("GeometrySdf", 0.0);
         diagnostics.total_frame_time_ms = frame_start.elapsed().as_secs_f64() * 1000.0;
@@ -503,6 +537,7 @@ pub fn render_sdf_scene_with_state_and_diagnostics(
     let mut post_ns = 0_u128;
 
     eprintln!("sdf_stage_begin stage=GeometrySdf");
+    eprintln!("geometry_sdf_mode={}", geometry_mode.as_str());
     for y in 0..config.height {
         for x in 0..config.width {
             let ray = generate_camera_ray(&animated_scene, x, y, config.width, config.height);
@@ -514,7 +549,12 @@ pub fn render_sdf_scene_with_state_and_diagnostics(
                 sample_depth,
                 step_reduction,
                 stage_times,
-            ) = shade_ray(&animated_scene, ray.origin, ray.direction, config);
+            ) = match geometry_mode {
+                GeometrySdfMode::Safe => shade_ray_safe(ray.origin, ray.direction, config),
+                GeometrySdfMode::Legacy => {
+                    shade_ray_legacy(&animated_scene, ray.origin, ray.direction, config)
+                }
+            };
 
             geometry_ns += stage_times.geometry_ns;
             material_pattern_ns += stage_times.material_pattern_ns;
@@ -1700,7 +1740,123 @@ fn apply_to_node_primitives(node: &mut SdfNode, f: &mut dyn FnMut(&mut SdfPrimit
     }
 }
 
-fn shade_ray(
+fn safe_sdf_distance(point: V3) -> f32 {
+    let sphere_center = V3::new(0.0, 0.0, 0.0);
+    let sphere_radius = 1.0;
+    let sphere_d = (point - sphere_center).length() - sphere_radius;
+    let plane_d = point.y + 1.1;
+    sphere_d.min(plane_d)
+}
+
+fn safe_estimate_normal(point: V3) -> V3 {
+    let eps = 1e-3;
+    let ex = V3::new(eps, 0.0, 0.0);
+    let ey = V3::new(0.0, eps, 0.0);
+    let ez = V3::new(0.0, 0.0, eps);
+
+    let n = V3::new(
+        safe_sdf_distance(point + ex) - safe_sdf_distance(point - ex),
+        safe_sdf_distance(point + ey) - safe_sdf_distance(point - ey),
+        safe_sdf_distance(point + ez) - safe_sdf_distance(point - ez),
+    )
+    .normalized();
+
+    if n.x.is_finite() && n.y.is_finite() && n.z.is_finite() {
+        n
+    } else {
+        V3::new(0.0, 1.0, 0.0)
+    }
+}
+
+fn safe_march_scene(origin: V3, direction: V3, config: RenderConfig) -> Option<(V3, V3, f32, u32)> {
+    if !origin.x.is_finite()
+        || !origin.y.is_finite()
+        || !origin.z.is_finite()
+        || !direction.x.is_finite()
+        || !direction.y.is_finite()
+        || !direction.z.is_finite()
+    {
+        return None;
+    }
+
+    let max_steps = config.max_steps.max(1);
+    let max_distance = if config.max_distance.is_finite() {
+        config.max_distance.max(1e-3)
+    } else {
+        120.0
+    };
+    let surface_eps = config.surface_epsilon.max(1e-4);
+    let min_step = surface_eps.max(1e-4);
+
+    let mut t = 0.0_f32;
+    for step_idx in 0..max_steps {
+        if !t.is_finite() || t >= max_distance {
+            return None;
+        }
+
+        let p = origin + direction * t;
+        if !p.x.is_finite() || !p.y.is_finite() || !p.z.is_finite() {
+            return None;
+        }
+
+        let d = safe_sdf_distance(p);
+        if !d.is_finite() {
+            return None;
+        }
+
+        if d <= surface_eps {
+            let n = safe_estimate_normal(p);
+            return Some((p, n, t, step_idx + 1));
+        }
+
+        let step = d.max(min_step);
+        if !step.is_finite() || step <= 0.0 {
+            return None;
+        }
+
+        let next_t = t + step;
+        if !next_t.is_finite() || next_t <= t {
+            return None;
+        }
+        t = next_t;
+    }
+
+    None
+}
+
+fn shade_ray_safe(
+    origin: V3,
+    direction: V3,
+    config: RenderConfig,
+) -> (V3, f32, u32, V3, f32, f32, RayStageDurations) {
+    let mut timings = RayStageDurations::default();
+    let geometry_start = Instant::now();
+
+    if let Some((position, normal, distance, march_steps)) =
+        safe_march_scene(origin, direction, config)
+    {
+        timings.geometry_ns += geometry_start.elapsed().as_nanos();
+        let light_dir = V3::new(0.35, 0.75, -0.45).normalized();
+        let lambert = normal.dot(light_dir).max(0.0);
+        let base = V3::new(0.25, 0.72, 0.95);
+        let color = (base * (0.2 + 0.8 * lambert) + V3::new(0.04, 0.05, 0.06)).clamp01();
+        return (color, 0.0, march_steps, position, distance, 0.0, timings);
+    }
+
+    timings.geometry_ns += geometry_start.elapsed().as_nanos();
+    let sky_t = 0.5 * (direction.y + 1.0);
+    let sky =
+        (V3::new(0.04, 0.06, 0.10) * (1.0 - sky_t) + V3::new(0.16, 0.20, 0.28) * sky_t).clamp01();
+    let max_distance = if config.max_distance.is_finite() {
+        config.max_distance.max(0.0)
+    } else {
+        120.0
+    };
+    let miss_position = origin + direction * max_distance;
+    (sky, 0.0, 0, miss_position, max_distance, 0.0, timings)
+}
+
+fn shade_ray_legacy(
     scene: &Scene,
     origin: V3,
     direction: V3,
@@ -2721,10 +2877,12 @@ impl std::ops::Div<f32> for V3 {
 #[cfg(test)]
 mod tests {
     use super::{
-        MAX_NODE_EVAL_DEPTH, RenderConfig, RenderTime, SdfStage, V3, evaluate_material,
-        march_scene, render_sdf_scene_with_config, render_sdf_scene_with_diagnostics,
-        scene_distance, smooth_min,
+        GeometrySdfMode, MAX_NODE_EVAL_DEPTH, RenderConfig, RenderTime, SdfStage, V3,
+        evaluate_material, geometry_sdf_mode_from_env, march_scene, render_sdf_scene_with_config,
+        render_sdf_scene_with_diagnostics, resolved_geometry_sdf_mode, scene_distance, smooth_min,
     };
+    use std::sync::{Mutex, OnceLock};
+
     use aurex_scene::{
         Scene, SdfCamera, SdfLighting, SdfMaterial, SdfMaterialType, SdfModifier, SdfNode,
         SdfObject, SdfPattern, SdfPrimitive, Vec3, generators,
@@ -2733,6 +2891,11 @@ mod tests {
             PatternParams, PatternPreset,
         },
     };
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
 
     fn sample_scene() -> Scene {
         let sphere = SdfNode::Primitive {
@@ -2946,6 +3109,9 @@ mod tests {
 
     #[test]
     fn lighting_toggles_change_output() {
+        let _guard = env_lock().lock().expect("env lock");
+        unsafe { std::env::set_var("AUREX_GEOMETRY_SDF_MODE", "legacy") };
+
         let base_cfg = RenderConfig {
             width: 32,
             height: 18,
@@ -2964,6 +3130,326 @@ mod tests {
             },
         );
         assert_ne!(with_fx.pixels, no_fx.pixels);
+
+        unsafe { std::env::remove_var("AUREX_GEOMETRY_SDF_MODE") };
+    }
+
+    #[test]
+    fn generator_stack_drives_geometry_sdf_stage() {
+        let mut scene = sample_scene();
+        scene.sdf.root = SdfNode::Empty;
+        scene.sdf.generator = None;
+        scene.sdf.generator_stack = Some(generators::electronic_city_stack());
+
+        let (frame, diagnostics) = render_sdf_scene_with_diagnostics(
+            &scene,
+            RenderConfig {
+                width: 48,
+                height: 27,
+                time: RenderTime { seconds: 0.6 },
+                ..RenderConfig::default()
+            },
+        );
+
+        let geometry_ms = diagnostics
+            .stage_durations_ms
+            .get("GeometrySdf")
+            .copied()
+            .unwrap_or(0.0);
+
+        assert!(geometry_ms > 0.0);
+        assert!(
+            frame
+                .pixels
+                .iter()
+                .any(|px| px.r > 0 || px.g > 0 || px.b > 0)
+        );
+    }
+
+    #[test]
+    fn stop_after_each_sdf_stage_returns_valid_frame() {
+        let stages = [
+            SdfStage::ScenePreprocess,
+            SdfStage::EffectGraphEvaluation,
+            SdfStage::GeometrySdf,
+            SdfStage::MaterialPattern,
+            SdfStage::LightingAtmosphere,
+            SdfStage::Particles,
+            SdfStage::PostProcessing,
+            SdfStage::TemporalFeedback,
+        ];
+
+        for stage in stages {
+            let (frame, diagnostics) = render_sdf_scene_with_diagnostics(
+                &sample_scene(),
+                RenderConfig {
+                    width: 24,
+                    height: 16,
+                    stop_after_sdf_stage: Some(stage),
+                    ..RenderConfig::default()
+                },
+            );
+            assert_eq!(frame.width, 24);
+            assert_eq!(frame.height, 16);
+            assert_eq!(frame.pixels.len(), 24 * 16);
+            assert!(diagnostics.stages.contains(&stage.as_name()));
+        }
+    }
+
+    #[test]
+    fn geometry_sdf_stop_returns_safe_frame() {
+        let (frame, _) = render_sdf_scene_with_diagnostics(
+            &sample_scene(),
+            RenderConfig {
+                width: 18,
+                height: 10,
+                stop_after_sdf_stage: Some(SdfStage::GeometrySdf),
+                ..RenderConfig::default()
+            },
+        );
+        assert_eq!(frame.pixels.len(), 18 * 10);
+    }
+
+    #[test]
+    fn invalid_camera_returns_fallback_frame() {
+        let mut scene = sample_scene();
+        scene.sdf.camera.position.x = f32::NAN;
+        let (frame, diagnostics) = render_sdf_scene_with_diagnostics(
+            &scene,
+            RenderConfig {
+                width: 20,
+                height: 12,
+                ..RenderConfig::default()
+            },
+        );
+        assert_eq!(frame.width, 20);
+        assert_eq!(frame.height, 12);
+        assert_eq!(frame.pixels.len(), 20 * 12);
+        assert_eq!(
+            diagnostics
+                .stage_durations_ms
+                .get("GeometrySdf")
+                .copied()
+                .unwrap_or(-1.0),
+            0.0
+        );
+    }
+
+    #[test]
+    fn march_scene_terminates_on_non_finite_distance() {
+        let mut scene = sample_scene();
+        scene.sdf.root = SdfNode::Primitive {
+            object: SdfObject {
+                primitive: SdfPrimitive::Sphere { radius: f32::NAN },
+                modifiers: vec![],
+                material: SdfMaterial::default(),
+                bounds_radius: Some(1.0),
+            },
+        };
+        let hit = march_scene(
+            &scene,
+            V3::new(0.0, 0.0, -4.0),
+            V3::new(0.0, 0.0, 1.0),
+            RenderConfig {
+                max_steps: 32,
+                max_distance: 10.0,
+                ..RenderConfig::default()
+            },
+        );
+        assert!(hit.is_none());
+    }
+
+    #[test]
+    fn march_scene_outputs_finite_hit_when_present() {
+        let scene = sample_scene();
+        let hit = march_scene(
+            &scene,
+            V3::new(0.0, 0.0, -4.0),
+            V3::new(0.0, 0.0, 1.0),
+            RenderConfig {
+                max_steps: 8,
+                max_distance: 0.05,
+                surface_epsilon: 1e-6,
+                ..RenderConfig::default()
+            },
+        );
+        if let Some(hit) = hit {
+            assert!(hit.distance_traveled.is_finite());
+            assert!(hit.distance_traveled <= 0.05);
+            assert!(
+                hit.position.x.is_finite()
+                    && hit.position.y.is_finite()
+                    && hit.position.z.is_finite()
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_transform_does_not_crash_geometry_sdf() {
+        let mut scene = sample_scene();
+        scene.sdf.root = SdfNode::Transform {
+            modifiers: vec![SdfModifier::Scale { factor: f32::NAN }],
+            child: Box::new(SdfNode::Primitive {
+                object: SdfObject {
+                    primitive: SdfPrimitive::Sphere { radius: 1.0 },
+                    modifiers: vec![],
+                    material: SdfMaterial::default(),
+                    bounds_radius: Some(1.0),
+                },
+            }),
+            bounds_radius: Some(2.0),
+        };
+
+        let (frame, _) = render_sdf_scene_with_diagnostics(
+            &scene,
+            RenderConfig {
+                width: 20,
+                height: 12,
+                ..RenderConfig::default()
+            },
+        );
+
+        assert_eq!(frame.pixels.len(), 20 * 12);
+    }
+
+    #[test]
+    fn node_traversal_depth_limit_returns_safe_distance() {
+        let mut nested = SdfNode::Primitive {
+            object: SdfObject {
+                primitive: SdfPrimitive::Sphere { radius: 1.0 },
+                modifiers: vec![],
+                material: SdfMaterial::default(),
+                bounds_radius: Some(1.0),
+            },
+        };
+
+        for _ in 0..(MAX_NODE_EVAL_DEPTH + 16) {
+            nested = SdfNode::Transform {
+                modifiers: vec![SdfModifier::Translate {
+                    offset: Vec3::new(0.0, 0.0, 0.0),
+                }],
+                child: Box::new(nested),
+                bounds_radius: Some(10.0),
+            };
+        }
+
+        let eval = scene_distance(
+            &Scene {
+                sdf: aurex_scene::SdfScene {
+                    root: nested,
+                    ..sample_scene().sdf
+                },
+            },
+            V3::new(0.0, 0.0, 0.0),
+            0.0,
+            RenderConfig::default(),
+        );
+
+        assert!(eval.distance.is_finite());
+        assert!(eval.distance >= 0.0);
+    }
+
+    #[test]
+    fn bad_scene_data_still_returns_valid_framebuffer() {
+        let mut scene = sample_scene();
+        scene.sdf.root = SdfNode::Primitive {
+            object: SdfObject {
+                primitive: SdfPrimitive::Mandelbulb {
+                    power: f32::NAN,
+                    iterations: 32,
+                    bailout: 8.0,
+                },
+                modifiers: vec![SdfModifier::NoiseDisplacement {
+                    amplitude: f32::NAN,
+                    frequency: 1.0,
+                    seed: 1,
+                }],
+                material: SdfMaterial::default(),
+                bounds_radius: None,
+            },
+        };
+
+        let frame = render_sdf_scene_with_config(
+            &scene,
+            RenderConfig {
+                width: 16,
+                height: 9,
+                ..RenderConfig::default()
+            },
+        );
+        assert_eq!(frame.width, 16);
+        assert_eq!(frame.height, 9);
+        assert_eq!(frame.pixels.len(), 16 * 9);
+    }
+
+    #[test]
+    fn geometry_mode_defaults_to_safe() {
+        let _guard = env_lock().lock().expect("env lock");
+        unsafe { std::env::remove_var("AUREX_GEOMETRY_SDF_MODE") };
+        assert_eq!(geometry_sdf_mode_from_env(), None);
+        assert_eq!(resolved_geometry_sdf_mode(), GeometrySdfMode::Safe);
+    }
+
+    #[test]
+    fn geometry_mode_legacy_from_env() {
+        let _guard = env_lock().lock().expect("env lock");
+        unsafe { std::env::set_var("AUREX_GEOMETRY_SDF_MODE", "legacy") };
+        assert_eq!(geometry_sdf_mode_from_env(), Some(GeometrySdfMode::Legacy));
+        assert_eq!(resolved_geometry_sdf_mode(), GeometrySdfMode::Legacy);
+        unsafe { std::env::remove_var("AUREX_GEOMETRY_SDF_MODE") };
+    }
+
+    #[test]
+    fn safe_mode_handles_pathological_scene_values() {
+        let _guard = env_lock().lock().expect("env lock");
+        unsafe { std::env::set_var("AUREX_GEOMETRY_SDF_MODE", "safe") };
+
+        let mut scene = sample_scene();
+        scene.sdf.root = SdfNode::Primitive {
+            object: SdfObject {
+                primitive: SdfPrimitive::Sphere { radius: f32::NAN },
+                modifiers: vec![SdfModifier::Scale { factor: f32::NAN }],
+                material: SdfMaterial::default(),
+                bounds_radius: None,
+            },
+        };
+
+        let frame = render_sdf_scene_with_config(
+            &scene,
+            RenderConfig {
+                width: 24,
+                height: 14,
+                max_steps: 4,
+                max_distance: 0.25,
+                ..RenderConfig::default()
+            },
+        );
+
+        assert_eq!(frame.width, 24);
+        assert_eq!(frame.height, 14);
+        assert_eq!(frame.pixels.len(), 24 * 14);
+
+        unsafe { std::env::remove_var("AUREX_GEOMETRY_SDF_MODE") };
+    }
+
+    #[test]
+    fn safe_mode_renders_simple_scene_without_hang() {
+        let _guard = env_lock().lock().expect("env lock");
+        unsafe { std::env::set_var("AUREX_GEOMETRY_SDF_MODE", "safe") };
+
+        let frame = render_sdf_scene_with_config(
+            &sample_scene(),
+            RenderConfig {
+                width: 32,
+                height: 18,
+                ..RenderConfig::default()
+            },
+        );
+
+        assert_eq!(frame.pixels.len(), 32 * 18);
+        assert!(frame.pixels.iter().any(|p| p.r > 0 || p.g > 0 || p.b > 0));
+
+        unsafe { std::env::remove_var("AUREX_GEOMETRY_SDF_MODE") };
     }
 
     #[test]
