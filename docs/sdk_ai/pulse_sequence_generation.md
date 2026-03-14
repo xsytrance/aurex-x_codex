@@ -15,3 +15,8 @@ Use `PulseSequence` for deterministic phase-level evolution.
 ## Current capability
 Phase-level authoring only.
 Design is intentionally compatible with future track-based sequencing.
+
+## Runtime advancement expectation
+Generated sequences are evaluated against runtime elapsed time.
+The runtime will automatically progress phases and emit phase change diagnostics when phase boundaries are crossed.
+Keep phase definitions deterministic so the same elapsed time resolves to the same phase.

@@ -18,6 +18,7 @@ Same pulse type + same seed gives the same output.
 
 ## Time-based phases
 Some showcase pulses also use a phase sequence so scenes evolve in clear chapters while staying deterministic.
+`aurielle_intro` is now a cinematic pulse that automatically advances through its sequence during runtime.
 
 
 ## CLI selection

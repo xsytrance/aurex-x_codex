@@ -48,6 +48,9 @@ All are deterministic for the same pulse type + seed.
 Example pulses can optionally attach a `PulseSequence` of named phases.
 Phase overrides are deterministic bounded adjustments applied through PulseBuilder before RhythmField modulation.
 
+`aurex_app` runtime now advances sequence phases over elapsed runtime time.
+For sequence pulses (like `aurielle_intro`), the active phase updates automatically and phase transitions are logged.
+
 
 ## CLI selection
 Run a specific pulse from the app crate:

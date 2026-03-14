@@ -29,6 +29,18 @@ Design intentionally leaves room for future track-based sequencing.
 `PulseBuilder::sequence(sequence)` optionally applies phase overrides before base world parameter generation and RhythmField modulation.
 If no sequence is set, builder behavior is unchanged.
 
+`PulseBuilder::build_at_time(time_seconds)` allows runtime systems to resolve a deterministic phase for a specific elapsed time.
+`build()` remains available for fixed deterministic samples.
+
+## Runtime time loop behavior
+`aurex_app` now runs a lightweight runtime pulse loop:
+- tracks elapsed time from runtime callback
+- resolves sequence phase using deterministic `phase_at_time(time)` mapping
+- refreshes pulse state for that elapsed time
+- prints `Phase Change: ...` when the active phase changes
+
+This keeps architecture intact while enabling phase progression during runtime playback.
+
 ## Architecture placement
 Pulse Runtime
 → PulseBuilder

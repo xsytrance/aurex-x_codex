@@ -101,10 +101,14 @@ impl PulseBuilder {
     }
 
     pub fn build(self) -> ExamplePulseConfig {
+        let theme = self.config.theme;
+        self.build_at_time(sample_time_for_theme(theme))
+    }
+
+    pub fn build_at_time(self, time_seconds: f32) -> ExamplePulseConfig {
         let mut config = self.config;
         let sequence = self.sequence;
-
-        let base_time = sample_time_for_theme(config.theme);
+        let base_time = time_seconds.max(0.0);
         let mut current_phase_name = None;
         let mut sequence_duration_seconds = None;
 

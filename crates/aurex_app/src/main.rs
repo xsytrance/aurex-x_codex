@@ -18,9 +18,12 @@ use aurex_render::{
 };
 use aurex_shape_synth::{PrimitiveType, ShapeDescriptor};
 use pulses::{
-    ExamplePulseConfig, ambient_dreamscape::create_ambient_dreamscape_pulse,
-    aurielle_intro::create_aurielle_intro_pulse,
-    electronic_megacity::create_electronic_megacity_pulse,
+    ExamplePulseConfig,
+    ambient_dreamscape::create_ambient_dreamscape_pulse,
+    aurielle_intro::{create_aurielle_intro_pulse, create_aurielle_intro_pulse_at_time},
+    electronic_megacity::{
+        create_electronic_megacity_pulse, create_electronic_megacity_pulse_at_time,
+    },
     jazz_atmosphere::create_jazz_atmosphere_pulse,
 };
 
@@ -81,13 +84,54 @@ fn parse_runtime_options(args: impl IntoIterator<Item = String>) -> Result<Runti
     Ok(RuntimeOptions { pulse_name, seed })
 }
 
-fn create_pulse(pulse_name: &str, seed: u64) -> ExamplePulseConfig {
+fn create_initial_pulse(pulse_name: &str, seed: u64) -> ExamplePulseConfig {
     match pulse_name {
         "megacity" => create_electronic_megacity_pulse(seed),
         "jazz" => create_jazz_atmosphere_pulse(seed),
         "ambient" => create_ambient_dreamscape_pulse(seed),
         "aurielle_intro" => create_aurielle_intro_pulse(seed),
         _ => unreachable!("unsupported pulse should be rejected by parse_runtime_options"),
+    }
+}
+
+fn create_pulse_at_time(pulse_name: &str, seed: u64, elapsed_seconds: f32) -> ExamplePulseConfig {
+    match pulse_name {
+        "megacity" => create_electronic_megacity_pulse_at_time(seed, elapsed_seconds),
+        "jazz" => create_jazz_atmosphere_pulse(seed),
+        "ambient" => create_ambient_dreamscape_pulse(seed),
+        "aurielle_intro" => create_aurielle_intro_pulse_at_time(seed, elapsed_seconds),
+        _ => unreachable!("unsupported pulse should be rejected by parse_runtime_options"),
+    }
+}
+
+#[derive(Debug)]
+struct RuntimePulseLoop {
+    pulse_name: String,
+    seed: u64,
+    pulse: ExamplePulseConfig,
+    last_phase_name: Option<String>,
+}
+
+impl RuntimePulseLoop {
+    fn new(pulse_name: &str, seed: u64) -> Self {
+        let pulse = create_initial_pulse(pulse_name, seed);
+        let last_phase_name = pulse.current_phase_name.clone();
+        Self {
+            pulse_name: pulse_name.to_string(),
+            seed,
+            pulse,
+            last_phase_name,
+        }
+    }
+
+    fn update(&mut self, elapsed_seconds: f32) -> Option<String> {
+        self.pulse = create_pulse_at_time(&self.pulse_name, self.seed, elapsed_seconds.max(0.0));
+        let next_phase = self.pulse.current_phase_name.clone();
+        if next_phase != self.last_phase_name {
+            self.last_phase_name = next_phase.clone();
+            return next_phase;
+        }
+        None
     }
 }
 
@@ -437,7 +481,8 @@ fn main() {
         }
     };
 
-    let pulse = create_pulse(&options.pulse_name, options.seed);
+    let mut pulse_loop = RuntimePulseLoop::new(&options.pulse_name, options.seed);
+    let pulse = pulse_loop.pulse.clone();
 
     println!("Launching Pulse: {}", pulse.pulse_name);
     if let Some(duration) = pulse.sequence_duration_seconds {
@@ -462,6 +507,10 @@ fn main() {
 
     let runtime_audio = runtime_audio;
     if let Err(err) = run_real_renderer_event_loop_with_frame_hook(move |t| {
+        if let Some(phase_name) = pulse_loop.update(t) {
+            println!("Phase Change: {}", phase_name);
+            println!("{}", runtime_diagnostics_report(&pulse_loop.pulse));
+        }
         if let Some(audio) = runtime_audio.as_ref() {
             let pulse = (t * std::f32::consts::TAU * 0.6).sin() * 0.5 + 0.5;
             audio.set_pulse(pulse);
@@ -475,13 +524,13 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::{
-        DEFAULT_SEED, available_pulse_names, create_pulse, parse_runtime_options,
-        runtime_diagnostics_report,
+        DEFAULT_SEED, RuntimePulseLoop, available_pulse_names, create_pulse_at_time,
+        parse_runtime_options, runtime_diagnostics_report,
     };
 
     #[test]
     fn diagnostics_report_matches_expected_snapshot() {
-        let pulse = create_pulse("megacity", DEFAULT_SEED);
+        let pulse = create_pulse_at_time("megacity", DEFAULT_SEED, 0.0);
         let report = runtime_diagnostics_report(&pulse);
         assert!(report.contains("Aurex runtime scaffold initialized."));
         assert!(report.contains("render_stages=RenderPrepare/Render/Present"));
@@ -521,5 +570,40 @@ mod tests {
         let err = parse_runtime_options(vec!["unknown".to_string()]).unwrap_err();
         assert!(err.contains("Unknown pulse 'unknown'"));
         assert!(err.contains("aurielle_intro"));
+    }
+
+    #[test]
+    fn phase_changes_over_simulated_elapsed_time() {
+        let mut pulse_loop = RuntimePulseLoop::new("aurielle_intro", DEFAULT_SEED);
+        let mut seen_transitions = Vec::new();
+        for t in [2.1, 6.2, 10.3, 13.5] {
+            if let Some(name) = pulse_loop.update(t) {
+                seen_transitions.push(name);
+            }
+        }
+
+        assert_eq!(
+            seen_transitions,
+            vec![
+                "Aurielle Appears".to_string(),
+                "Maestros Reveal".to_string(),
+                "Logo Formation".to_string(),
+                "Menu Transition".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn phase_clamps_to_final_phase_after_total_duration() {
+        let pulse = create_pulse_at_time("aurielle_intro", DEFAULT_SEED, 999.0);
+        assert_eq!(pulse.current_phase_name.as_deref(), Some("Menu Transition"));
+    }
+
+    #[test]
+    fn phase_mapping_is_deterministic_for_fixed_times() {
+        let first = create_pulse_at_time("aurielle_intro", DEFAULT_SEED, 6.2);
+        let second = create_pulse_at_time("aurielle_intro", DEFAULT_SEED, 6.2);
+        assert_eq!(first.current_phase_name, second.current_phase_name);
+        assert_eq!(first.modulated_output, second.modulated_output);
     }
 }

@@ -6,6 +6,10 @@ use crate::pulse_sequence::{PulsePhaseOverrides, PulseSequence};
 use aurex_render::rhythm_field::VisualTheme;
 
 pub fn create_aurielle_intro_pulse(seed: u64) -> ExamplePulseConfig {
+    create_aurielle_intro_pulse_at_time(seed, 0.0)
+}
+
+pub fn create_aurielle_intro_pulse_at_time(seed: u64, elapsed_seconds: f32) -> ExamplePulseConfig {
     let sequence = PulseSequence::new()
         .add_phase("Silence", 2.0)
         .add_phase_with_overrides(
@@ -36,5 +40,5 @@ pub fn create_aurielle_intro_pulse(seed: u64) -> ExamplePulseConfig {
         .rhythm_intensity(0.9)
         .particle_density_multiplier(0.7)
         .sequence(sequence)
-        .build()
+        .build_at_time(elapsed_seconds)
 }
