@@ -59,3 +59,7 @@ Run a specific pulse from the app crate:
 - `cargo run -p aurex_app -- ambient`
 - `cargo run -p aurex_app -- aurielle_intro`
 - optional deterministic seed: `cargo run -p aurex_app -- megacity --seed 42`
+
+
+## Aurielle scripted timeline
+`aurielle_intro` runs on a scripted pulse timeline with timed scene activation, transitions, and audio cues (boot pulse, logo fade, rings, swirl, starfield, reveal).

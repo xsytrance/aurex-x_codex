@@ -22,3 +22,6 @@ Try:
 You will see launch diagnostics followed by `Phase Change: ...` logs as the intro evolves.
 
 Current authoring is phase-based. Future versions can build track-style sequencing on top of this model.
+
+
+The intro runtime also uses a deterministic `TimelineClock` + event scheduler so scene transitions and audio cues can be synchronized instead of hard cuts.

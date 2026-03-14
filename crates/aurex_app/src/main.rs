@@ -1,6 +1,7 @@
 mod pulse_builder;
 mod pulse_sequence;
 mod pulses;
+mod timeline;
 
 use aurex_audio::{
     AudioBackendMode, AudioBackendReadiness, MockAudioEngine, start_runtime_sine_output,
@@ -26,6 +27,11 @@ use pulses::{
     },
     jazz_atmosphere::create_jazz_atmosphere_pulse,
 };
+use timeline::{
+    AudioAction, AudioCue, AudioTransport, EventScheduler, PulseTimeline, SceneManager,
+    TimelineClock, TimelineEvent, TimelineEventKind,
+    scripts::aurielle_intro::aurielle_intro_timeline,
+};
 
 const DEFAULT_PULSE_NAME: &str = "megacity";
 const DEFAULT_SEED: u64 = 2026;
@@ -35,6 +41,13 @@ const AVAILABLE_PULSE_NAMES: [&str; 4] = ["megacity", "jazz", "ambient", "auriel
 struct RuntimeOptions {
     pulse_name: String,
     seed: u64,
+}
+
+#[derive(Debug, Clone)]
+struct RuntimeTickReport {
+    phase_change: Option<String>,
+    triggered_events: Vec<String>,
+    active_scenes: Vec<String>,
 }
 
 fn available_pulse_names() -> &'static [&'static str] {
@@ -110,29 +123,136 @@ struct RuntimePulseLoop {
     seed: u64,
     pulse: ExamplePulseConfig,
     last_phase_name: Option<String>,
+    clock: TimelineClock,
+    timeline: PulseTimeline,
+    scheduler: EventScheduler,
+    scene_manager: SceneManager,
+    audio_transport: AudioTransport,
 }
 
 impl RuntimePulseLoop {
     fn new(pulse_name: &str, seed: u64) -> Self {
         let pulse = create_initial_pulse(pulse_name, seed);
         let last_phase_name = pulse.current_phase_name.clone();
+        let timeline = select_timeline(pulse_name);
         Self {
             pulse_name: pulse_name.to_string(),
             seed,
             pulse,
             last_phase_name,
+            clock: TimelineClock::new(1.0 / 60.0),
+            timeline,
+            scheduler: EventScheduler::new(),
+            scene_manager: SceneManager::default(),
+            audio_transport: AudioTransport::default(),
         }
     }
 
-    fn update(&mut self, elapsed_seconds: f32) -> Option<String> {
-        self.pulse = create_pulse_at_time(&self.pulse_name, self.seed, elapsed_seconds.max(0.0));
+    fn update(&mut self, wall_time_seconds: f32) -> RuntimeTickReport {
+        let _steps = self.clock.advance_to(wall_time_seconds.max(0.0));
+        let elapsed_seconds = self.clock.time_seconds;
+
+        self.pulse = create_pulse_at_time(&self.pulse_name, self.seed, elapsed_seconds);
         let next_phase = self.pulse.current_phase_name.clone();
-        if next_phase != self.last_phase_name {
+
+        let phase_change = if next_phase != self.last_phase_name {
             self.last_phase_name = next_phase.clone();
-            return next_phase;
+            next_phase
+        } else {
+            None
+        };
+
+        let due = self
+            .scheduler
+            .collect_due_events(&self.timeline, elapsed_seconds);
+
+        let mut triggered_events = Vec::new();
+        for event in due {
+            match &event.kind {
+                TimelineEventKind::ActivateScene { scene_id, layer } => {
+                    self.scene_manager.activate_scene(scene_id.clone(), *layer);
+                    triggered_events.push(format!("scene:{}", scene_id));
+                }
+                TimelineEventKind::StartTransition {
+                    from_scene,
+                    to_scene,
+                    layer,
+                    spec,
+                } => {
+                    self.scene_manager.start_transition(
+                        from_scene.clone(),
+                        to_scene.clone(),
+                        *layer,
+                        *spec,
+                        elapsed_seconds,
+                    );
+                    triggered_events.push(format!("transition:{}->{}", from_scene, to_scene));
+                }
+                TimelineEventKind::AudioCue { cue_id, action } => {
+                    self.audio_transport.apply_cue(AudioCue {
+                        cue_id: cue_id.clone(),
+                        action: *action,
+                    });
+                    triggered_events.push(format!("audio:{cue_id}:{action:?}"));
+                }
+                TimelineEventKind::Trigger { key } => {
+                    triggered_events.push(format!("trigger:{key}"));
+                }
+            }
         }
-        None
+
+        self.scene_manager.update(elapsed_seconds);
+
+        let active_scenes = self
+            .scene_manager
+            .layers
+            .iter()
+            .map(|layer| format!("{}@{}:{:.2}", layer.scene_id, layer.layer, layer.weight))
+            .collect();
+
+        RuntimeTickReport {
+            phase_change,
+            triggered_events,
+            active_scenes,
+        }
     }
+}
+
+fn select_timeline(pulse_name: &str) -> PulseTimeline {
+    if pulse_name == "aurielle_intro" {
+        aurielle_intro_timeline()
+    } else {
+        PulseTimeline::new(
+            format!("{}_timeline", pulse_name),
+            0.0,
+            vec![TimelineEvent {
+                id: 1,
+                at_seconds: 0.0,
+                priority: 0,
+                kind: TimelineEventKind::AudioCue {
+                    cue_id: "default_loop".to_string(),
+                    action: AudioAction::Play,
+                },
+            }],
+        )
+    }
+}
+
+fn timeline_summary_lines(pulse_loop: &RuntimePulseLoop) -> Vec<String> {
+    vec![
+        format!(
+            "Timeline: {} t={:.2}s frame={}",
+            pulse_loop.timeline.name, pulse_loop.clock.time_seconds, pulse_loop.clock.frame_index
+        ),
+        format!(
+            "Timeline Active Scenes: {}",
+            pulse_loop.scene_manager.layers.len()
+        ),
+        format!(
+            "Timeline Active Audio Tracks: {}",
+            pulse_loop.audio_transport.active_tracks.join(",")
+        ),
+    ]
 }
 
 fn runtime_diagnostics_report(selected_pulse: &ExamplePulseConfig) -> String {
@@ -493,6 +613,9 @@ fn main() {
     }
 
     println!("{}", runtime_diagnostics_report(&pulse));
+    for line in timeline_summary_lines(&pulse_loop) {
+        println!("{line}");
+    }
 
     let runtime_audio = match start_runtime_sine_output() {
         Ok(audio) => {
@@ -507,12 +630,21 @@ fn main() {
 
     let runtime_audio = runtime_audio;
     if let Err(err) = run_real_renderer_event_loop_with_frame_hook(move |t| {
-        if let Some(phase_name) = pulse_loop.update(t) {
+        let tick = pulse_loop.update(t);
+        if let Some(phase_name) = tick.phase_change {
             println!("Phase Change: {}", phase_name);
             println!("{}", runtime_diagnostics_report(&pulse_loop.pulse));
         }
+        for event in tick.triggered_events {
+            println!("Timeline Event: {event}");
+        }
+        if !tick.active_scenes.is_empty() {
+            println!("Timeline Scenes: {}", tick.active_scenes.join(" | "));
+        }
+
         if let Some(audio) = runtime_audio.as_ref() {
-            let pulse = (t * std::f32::consts::TAU * 0.6).sin() * 0.5 + 0.5;
+            let pulse =
+                (pulse_loop.clock.time_seconds * std::f32::consts::TAU * 0.6).sin() * 0.5 + 0.5;
             audio.set_pulse(pulse);
         }
     }) && !err.contains("real_graphics feature is disabled")
@@ -577,7 +709,8 @@ mod tests {
         let mut pulse_loop = RuntimePulseLoop::new("aurielle_intro", DEFAULT_SEED);
         let mut seen_transitions = Vec::new();
         for t in [2.1, 6.2, 10.3, 13.5] {
-            if let Some(name) = pulse_loop.update(t) {
+            let tick = pulse_loop.update(t);
+            if let Some(name) = tick.phase_change {
                 seen_transitions.push(name);
             }
         }
@@ -605,5 +738,29 @@ mod tests {
         let second = create_pulse_at_time("aurielle_intro", DEFAULT_SEED, 6.2);
         assert_eq!(first.current_phase_name, second.current_phase_name);
         assert_eq!(first.modulated_output, second.modulated_output);
+    }
+
+    #[test]
+    fn timeline_scheduler_triggers_aurielle_reveal_event() {
+        let mut pulse_loop = RuntimePulseLoop::new("aurielle_intro", DEFAULT_SEED);
+        let tick = pulse_loop.update(16.1);
+        assert!(
+            tick.triggered_events
+                .iter()
+                .any(|event| event.contains("trigger:aurielle_reveal"))
+        );
+    }
+
+    #[test]
+    fn timeline_scene_layers_progress_with_events() {
+        let mut pulse_loop = RuntimePulseLoop::new("aurielle_intro", DEFAULT_SEED);
+        let _ = pulse_loop.update(9.2);
+        assert!(
+            pulse_loop
+                .scene_manager
+                .layers
+                .iter()
+                .any(|layer| layer.scene_id == "particle_swirl" || layer.scene_id == "rings")
+        );
     }
 }
