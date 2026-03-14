@@ -1885,17 +1885,31 @@ fn march_scene(scene: &Scene, origin: V3, direction: V3, config: RenderConfig) -
     let mut glow = 0.0;
     let mut march_steps = 0;
     let mut reduction_acc = 0.0_f32;
-    for _ in 0..config.max_steps {
+    let max_steps = config.max_steps.max(1);
+    let max_distance = if config.max_distance.is_finite() {
+        config.max_distance.max(config.surface_epsilon.max(1e-4))
+    } else {
+        120.0
+    };
+    let min_advance = (config.surface_epsilon.max(1e-4)) * 0.25;
+
+    for _ in 0..max_steps {
         march_steps += 1;
         let p = origin + direction * t;
         let eval = scene_distance(scene, p, config.time.seconds, config);
+
+        if !eval.distance.is_finite() {
+            eprintln!("raymarch_guard break=non_finite_distance t={:.6}", t);
+            return None;
+        }
+
         let attenuation = (-t * 0.08).exp();
         glow += eval.material.emissive_strength.max(0.0) * attenuation * 0.01;
-        if eval.distance < config.surface_epsilon {
+        if eval.distance <= config.surface_epsilon.max(min_advance) {
             let normal = estimate_normal(
                 scene,
                 p,
-                config.surface_epsilon * 2.0,
+                config.surface_epsilon.max(min_advance) * 2.0,
                 config.time.seconds,
                 config,
             );
@@ -1914,11 +1928,10 @@ fn march_scene(scene: &Scene, origin: V3, direction: V3, config: RenderConfig) -
             });
         }
 
-        let base_step = eval
-            .distance
-            .max(config.surface_epsilon * config.min_step_scale.max(0.05));
+        let clamped_distance = eval.distance.max(config.surface_epsilon.max(min_advance));
+        let base_step = clamped_distance.max(config.surface_epsilon * config.min_step_scale.max(0.05));
         let far_factor = if config.adaptive_raymarch {
-            (1.0 + (t / config.max_distance.max(1.0)) * config.far_field_boost).clamp(
+            (1.0 + (t / max_distance.max(1.0)) * config.far_field_boost).clamp(
                 config.min_step_scale.max(0.05),
                 config.max_step_scale.max(config.min_step_scale.max(0.05)),
             )
@@ -1926,19 +1939,30 @@ fn march_scene(scene: &Scene, origin: V3, direction: V3, config: RenderConfig) -
             1.0
         };
         let adaptive_step = (base_step * far_factor * config.quality.raymarch_quality.max(0.25))
-            .max(config.surface_epsilon * 0.25);
+            .max(min_advance);
         let cone_cfg = ConeMarchConfig {
             cone_step_multiplier: config.cone_step_multiplier,
             cone_shadow_factor: config.cone_shadow_factor,
             surface_thickness_estimation: config.surface_thickness_estimation,
             adaptive_step_scale: config.adaptive_step_scale,
         };
-        let stepped = cone_step(eval.distance, t, cone_cfg).max(adaptive_step);
+        let stepped = cone_step(clamped_distance, t, cone_cfg).max(adaptive_step);
+        if !stepped.is_finite() {
+            eprintln!("raymarch_guard break=non_finite_step t={:.6}", t);
+            return None;
+        }
+
         reduction_acc += ((stepped - adaptive_step) / adaptive_step.max(1e-4))
             .abs()
             .clamp(0.0, 1.0);
-        t += stepped;
-        if t > config.max_distance {
+
+        let next_t = (t + stepped).max(t + min_advance);
+        if !next_t.is_finite() || next_t <= t {
+            eprintln!("raymarch_guard break=non_advancing_ray t={:.6} next_t={:.6}", t, next_t);
+            return None;
+        }
+        t = next_t;
+        if t >= max_distance {
             return None;
         }
     }
@@ -2895,6 +2919,51 @@ mod tests {
                 .unwrap_or(-1.0),
             0.0
         );
+    }
+
+    #[test]
+    fn march_scene_terminates_on_non_finite_distance() {
+        let mut scene = sample_scene();
+        scene.sdf.root = SdfNode::Primitive {
+            object: SdfObject {
+                primitive: SdfPrimitive::Sphere { radius: f32::NAN },
+                modifiers: vec![],
+                material: SdfMaterial::default(),
+                bounds_radius: Some(1.0),
+            },
+        };
+        let hit = march_scene(
+            &scene,
+            V3::new(0.0, 0.0, -4.0),
+            V3::new(0.0, 0.0, 1.0),
+            RenderConfig {
+                max_steps: 32,
+                max_distance: 10.0,
+                ..RenderConfig::default()
+            },
+        );
+        assert!(hit.is_none());
+    }
+
+    #[test]
+    fn march_scene_outputs_finite_hit_when_present() {
+        let scene = sample_scene();
+        let hit = march_scene(
+            &scene,
+            V3::new(0.0, 0.0, -4.0),
+            V3::new(0.0, 0.0, 1.0),
+            RenderConfig {
+                max_steps: 8,
+                max_distance: 0.05,
+                surface_epsilon: 1e-6,
+                ..RenderConfig::default()
+            },
+        );
+        if let Some(hit) = hit {
+            assert!(hit.distance_traveled.is_finite());
+            assert!(hit.distance_traveled <= 0.05);
+            assert!(hit.position.x.is_finite() && hit.position.y.is_finite() && hit.position.z.is_finite());
+        }
     }
 
     #[test]
