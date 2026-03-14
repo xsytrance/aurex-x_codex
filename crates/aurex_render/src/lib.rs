@@ -460,6 +460,17 @@ fn isolate_starfield_expansion_from_env() -> bool {
 }
 
 #[cfg(feature = "real_graphics")]
+fn diagnostic_gpu_triangle_from_env() -> bool {
+    std::env::var("AUREX_DIAGNOSTIC_GPU_TRIANGLE")
+        .ok()
+        .map(|v| {
+            let lowered = v.to_ascii_lowercase();
+            matches!(lowered.as_str(), "1" | "true" | "yes" | "on")
+        })
+        .unwrap_or(false)
+}
+
+#[cfg(feature = "real_graphics")]
 fn debug_state_has_safe_ranges(state: &RuntimeRenderDebugState) -> bool {
     let ranges = [
         state.profile_geometry_density,
@@ -810,6 +821,8 @@ where
     let mut safe_warmup_complete_logged = false;
     let mut post_handoff_procedural_frames = 0usize;
     let mut first_real_scene_frame_seen = false;
+    let diagnostic_gpu_triangle = diagnostic_gpu_triangle_from_env();
+    let mut first_procedural_submission_captured = false;
     let mut last_boot_log_second: i32 = -1;
     let _scene_particles = vec![Particle::default(); 220];
     let _particle_cursor = 0usize;
@@ -900,6 +913,68 @@ fn fs_main(inf: VsOut) -> @location(0) vec4<f32> {
             targets: &[Some(wgpu::ColorTargetState {
                 format: config.format,
                 blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        }),
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        multiview: None,
+        cache: None,
+    });
+
+    let diagnostic_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("Aurex-X Diagnostic Triangle Shader"),
+        source: wgpu::ShaderSource::Wgsl(
+            r#"
+struct VsOut {
+    @builtin(position) position: vec4<f32>,
+};
+
+@vertex
+fn vs_main(@builtin(vertex_index) vid: u32) -> VsOut {
+    var positions = array<vec2<f32>, 3>(
+        vec2<f32>(-1.0, -1.0),
+        vec2<f32>(3.0, -1.0),
+        vec2<f32>(-1.0, 3.0),
+    );
+    var out: VsOut;
+    out.position = vec4<f32>(positions[vid], 0.0, 1.0);
+    return out;
+}
+
+@fragment
+fn fs_main() -> @location(0) vec4<f32> {
+    return vec4<f32>(0.08, 0.22, 0.38, 1.0);
+}
+"#
+            .into(),
+        ),
+    });
+
+    let diagnostic_pipeline_layout =
+        device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Aurex-X Diagnostic Triangle Pipeline Layout"),
+            bind_group_layouts: &[],
+            push_constant_ranges: &[],
+        });
+
+    let diagnostic_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("Aurex-X Diagnostic Triangle Pipeline"),
+        layout: Some(&diagnostic_pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &diagnostic_shader,
+            entry_point: Some("vs_main"),
+            buffers: &[],
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &diagnostic_shader,
+            entry_point: Some("fs_main"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: config.format,
+                blend: Some(wgpu::BlendState::REPLACE),
                 write_mask: wgpu::ColorWrites::ALL,
             })],
             compilation_options: wgpu::PipelineCompilationOptions::default(),
@@ -1005,6 +1080,17 @@ fn fs_main(inf: VsOut) -> @location(0) vec4<f32> {
 
                         on_frame(start_time.elapsed().as_secs_f32());
 
+                        eprintln!(
+                            "swapchain_acquire_start mode={} diag_triangle={} size={}x{}",
+                            if procedural_renderer_active {
+                                "PROCEDURAL"
+                            } else {
+                                "BOOT"
+                            },
+                            diagnostic_gpu_triangle,
+                            config.width,
+                            config.height,
+                        );
                         let frame = match surface.get_current_texture() {
                             Ok(frame) => frame,
                             Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
@@ -1018,6 +1104,7 @@ fn fs_main(inf: VsOut) -> @location(0) vec4<f32> {
                             Err(wgpu::SurfaceError::Timeout) => return,
                             Err(wgpu::SurfaceError::Other) => return,
                         };
+                        eprintln!("swapchain_acquire_ok");
 
                         let now = std::time::Instant::now();
                         let elapsed = start_time.elapsed().as_secs_f32();
@@ -1258,33 +1345,78 @@ fn fs_main(inf: VsOut) -> @location(0) vec4<f32> {
                             };
                         }
 
-                        queue.write_texture(
-                            wgpu::TexelCopyTextureInfo {
-                                texture: &boot_texture,
-                                mip_level: 0,
-                                origin: wgpu::Origin3d::ZERO,
-                                aspect: wgpu::TextureAspect::All,
-                            },
-                            &cpu_frame.rgba,
-                            wgpu::TexelCopyBufferLayout {
-                                offset: 0,
-                                bytes_per_row: Some(config.width * 4),
-                                rows_per_image: Some(config.height),
-                            },
-                            wgpu::Extent3d {
-                                width: config.width,
-                                height: config.height,
-                                depth_or_array_layers: 1,
-                            },
+                        let bytes_per_row = config.width * 4;
+                        let expected_bytes =
+                            (config.width as usize) * (config.height as usize) * 4usize;
+                        assert_eq!(
+                            cpu_frame.width, config.width,
+                            "cpu framebuffer width mismatch"
                         );
+                        assert_eq!(
+                            cpu_frame.height, config.height,
+                            "cpu framebuffer height mismatch"
+                        );
+                        assert_eq!(
+                            cpu_frame.rgba.len(), expected_bytes,
+                            "cpu framebuffer byte length mismatch"
+                        );
+                        assert_eq!(
+                            bytes_per_row % 4,
+                            0,
+                            "bytes_per_row must align with RGBA8 block size"
+                        );
+                        assert!(config.width > 0 && config.height > 0);
+                        eprintln!(
+                            "framebuffer_diag width={} height={} bytes_per_row={} expected_bytes={} format=Rgba8UnormSrgb",
+                            config.width,
+                            config.height,
+                            bytes_per_row,
+                            expected_bytes,
+                        );
+
+                        let capture_gpu_errors =
+                            procedural_renderer_active && !first_procedural_submission_captured;
+                        if capture_gpu_errors {
+                            device.push_error_scope(wgpu::ErrorFilter::Validation);
+                            device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
+                            eprintln!("gpu_error_scope_push first_procedural_submission");
+                        }
+
+                        if !diagnostic_gpu_triangle {
+                            queue.write_texture(
+                                wgpu::TexelCopyTextureInfo {
+                                    texture: &boot_texture,
+                                    mip_level: 0,
+                                    origin: wgpu::Origin3d::ZERO,
+                                    aspect: wgpu::TextureAspect::All,
+                                },
+                                &cpu_frame.rgba,
+                                wgpu::TexelCopyBufferLayout {
+                                    offset: 0,
+                                    bytes_per_row: Some(bytes_per_row),
+                                    rows_per_image: Some(config.height),
+                                },
+                                wgpu::Extent3d {
+                                    width: config.width,
+                                    height: config.height,
+                                    depth_or_array_layers: 1,
+                                },
+                            );
+                        } else {
+                            eprintln!(
+                                "diagnostic_gpu_triangle_active=true skipping_cpu_texture_upload"
+                            );
+                        }
 
                         let swap_view = frame
                             .texture
                             .create_view(&wgpu::TextureViewDescriptor::default());
+                        eprintln!("command_encoder_create_start");
                         let mut encoder =
                             device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                                 label: Some("Aurex-X Boot Loop Encoder"),
                             });
+                        eprintln!("command_encoder_create_ok");
 
                         {
                             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1306,13 +1438,34 @@ fn fs_main(inf: VsOut) -> @location(0) vec4<f32> {
                                 occlusion_query_set: None,
                                 timestamp_writes: None,
                             });
-                            pass.set_pipeline(&pipeline);
-                            pass.set_bind_group(0, &boot_bind_group, &[]);
+                            if diagnostic_gpu_triangle {
+                                pass.set_pipeline(&diagnostic_pipeline);
+                            } else {
+                                pass.set_pipeline(&pipeline);
+                                pass.set_bind_group(0, &boot_bind_group, &[]);
+                            }
                             pass.draw(0..3, 0..1);
                         }
 
+                        eprintln!("queue_submit_start");
                         queue.submit([encoder.finish()]);
+                        eprintln!("queue_submit_ok");
+
+                        if capture_gpu_errors {
+                            let oom = pollster::block_on(device.pop_error_scope());
+                            let validation = pollster::block_on(device.pop_error_scope());
+                            if let Some(err) = oom {
+                                eprintln!("gpu_error_scope_oom={err}");
+                            }
+                            if let Some(err) = validation {
+                                eprintln!("gpu_error_scope_validation={err}");
+                            }
+                            first_procedural_submission_captured = true;
+                        }
+
+                        eprintln!("surface_present_start");
                         frame.present();
+                        eprintln!("surface_present_ok");
                     }
                     _ => {}
                 },
