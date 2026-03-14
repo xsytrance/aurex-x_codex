@@ -1,3 +1,18 @@
+pub mod rhythm_field;
+
+use std::sync::{Mutex, OnceLock};
+
+#[cfg(feature = "real_graphics")]
+use aurex_render_sdf::{
+    RenderConfig as SdfRenderConfig, RenderTime as SdfRenderTime,
+    RendererState as SdfRendererState, render_sdf_scene_with_diagnostics,
+};
+#[cfg(feature = "real_graphics")]
+use aurex_scene::{
+    Scene, SdfCamera, SdfLighting, SdfNode, Vec3,
+    generators::{self, GeneratorStack, RhythmFieldContext, RuntimeModulationContext},
+};
+
 #[cfg(feature = "real_graphics")]
 use winit::{dpi::PhysicalSize, event_loop::EventLoop, window::Window};
 
@@ -207,6 +222,162 @@ pub struct RealRendererBootstrapStatus {
 #[cfg(feature = "real_graphics")]
 pub fn run_real_renderer_event_loop() -> Result<(), String> {
     run_real_renderer_event_loop_with_frame_hook(|_| {})
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RuntimeRenderDebugState {
+    pub pulse_name: String,
+    pub scene_name: String,
+    pub theme_name: String,
+    pub profile_name: String,
+    pub profile_geometry_density: f32,
+    pub profile_structure_height: f32,
+    pub profile_particle_density: f32,
+    pub profile_fog_density: f32,
+    pub profile_glow_intensity: f32,
+    pub starfield_enabled: bool,
+    pub logo_enabled: bool,
+    pub boot_active: bool,
+}
+
+impl Default for RuntimeRenderDebugState {
+    fn default() -> Self {
+        Self {
+            pulse_name: "unbound".to_string(),
+            scene_name: "unbound".to_string(),
+            theme_name: "unbound".to_string(),
+            profile_name: "default".to_string(),
+            profile_geometry_density: 0.5,
+            profile_structure_height: 0.5,
+            profile_particle_density: 0.5,
+            profile_fog_density: 0.4,
+            profile_glow_intensity: 0.5,
+            starfield_enabled: false,
+            logo_enabled: true,
+            boot_active: true,
+        }
+    }
+}
+
+fn runtime_render_state_cell() -> &'static Mutex<RuntimeRenderDebugState> {
+    static CELL: OnceLock<Mutex<RuntimeRenderDebugState>> = OnceLock::new();
+    CELL.get_or_init(|| Mutex::new(RuntimeRenderDebugState::default()))
+}
+
+pub fn set_runtime_render_debug_state(state: RuntimeRenderDebugState) {
+    if let Ok(mut lock) = runtime_render_state_cell().lock() {
+        *lock = state;
+    }
+}
+
+pub fn runtime_render_debug_state() -> RuntimeRenderDebugState {
+    runtime_render_state_cell()
+        .lock()
+        .map(|lock| lock.clone())
+        .unwrap_or_default()
+}
+
+#[cfg(feature = "real_graphics")]
+fn sdf_renderer_state_cell() -> &'static Mutex<SdfRendererState> {
+    static CELL: OnceLock<Mutex<SdfRendererState>> = OnceLock::new();
+    CELL.get_or_init(|| Mutex::new(SdfRendererState::default()))
+}
+
+#[cfg(feature = "real_graphics")]
+fn build_runtime_sdf_scene(debug_state: &RuntimeRenderDebugState) -> Scene {
+    let stack: GeneratorStack = match debug_state.pulse_name.as_str() {
+        "megacity" => generators::electronic_city_stack(),
+        "jazz" => generators::jazz_improvisation_stack(),
+        "ambient" => generators::rock_mountain_stack(),
+        _ => generators::electronic_city_stack(),
+    };
+
+    let fog_density = (0.012 + debug_state.profile_fog_density * 0.08).clamp(0.0, 0.25);
+    let rhythm = RhythmFieldContext {
+        beat_phase: debug_state.profile_particle_density,
+        beat_strength: debug_state.profile_glow_intensity,
+        bass_energy: debug_state.profile_structure_height,
+        harmonic_energy: debug_state.profile_geometry_density,
+    };
+
+    Scene {
+        sdf: aurex_scene::SdfScene {
+            camera: SdfCamera {
+                position: Vec3::new(0.0, 4.0 + debug_state.profile_structure_height * 5.0, -22.0),
+                target: Vec3::new(0.0, 2.5, 0.0),
+                fov_degrees: 58.0,
+                aspect_ratio: 16.0 / 9.0,
+            },
+            lighting: SdfLighting {
+                ambient_light: 0.10 + debug_state.profile_glow_intensity * 0.25,
+                key_lights: vec![aurex_scene::KeyLight {
+                    direction: Vec3::new(-0.35, -1.0, -0.45),
+                    intensity: 0.85 + debug_state.profile_glow_intensity * 0.8,
+                    color: Vec3::new(0.95, 0.98, 1.0),
+                }],
+                fog_color: Vec3::new(0.05, 0.09, 0.16),
+                fog_density,
+                fog_height_falloff: 0.07,
+                volumetric: Default::default(),
+            },
+            seed: 2026,
+            objects: vec![],
+            root: SdfNode::Empty,
+            timeline: None,
+            generator: None,
+            generator_stack: Some(stack),
+            fields: vec![],
+            patterns: vec![],
+            harmonics: None,
+            rhythm: None,
+            audio: Some(aurex_audio::default_demo_audio_config(2026)),
+            effect_graph: None,
+            automation_tracks: vec![],
+            demo_sequence: None,
+            temporal_effects: vec![],
+            runtime_modulation: Some(RuntimeModulationContext {
+                rhythm_field: Some(rhythm),
+            }),
+        },
+    }
+}
+
+#[cfg(feature = "real_graphics")]
+fn rasterize_procedural_scene(
+    width: u32,
+    height: u32,
+    elapsed: f32,
+    debug_state: &RuntimeRenderDebugState,
+) -> BootFramebuffer {
+    let scene = build_runtime_sdf_scene(debug_state);
+    let _ = sdf_renderer_state_cell();
+    let (frame, diagnostics) = render_sdf_scene_with_diagnostics(
+        &scene,
+        SdfRenderConfig {
+            width,
+            height,
+            time: SdfRenderTime { seconds: elapsed },
+            output_diagnostics: true,
+            ..SdfRenderConfig::default()
+        },
+    );
+
+    let mut rgba = Vec::with_capacity((width as usize) * (height as usize) * 4);
+    for p in frame.pixels {
+        rgba.extend_from_slice(&[p.r, p.g, p.b, p.a]);
+    }
+
+    if let Some(geom_ms) = diagnostics.stage_durations_ms.get("GeometrySdf") {
+        if *geom_ms <= 0.0 {
+            eprintln!("render_stage_warning=GeometrySdf duration was zero");
+        }
+    }
+
+    BootFramebuffer {
+        width,
+        height,
+        rgba,
+    }
 }
 
 #[cfg(feature = "real_graphics")]
@@ -504,13 +675,15 @@ fn fs_main(inf: VsOut) -> @location(0) vec4<f32> {
                         let elapsed = start_time.elapsed().as_secs_f32();
                         let dt = (now - last_frame_time).as_secs_f32().clamp(0.0, 0.05);
                         last_frame_time = now;
+                        let debug_state = runtime_render_debug_state();
                         let runtime_pulse =
                             (elapsed * std::f32::consts::TAU * 0.6).sin() * 0.5 + 0.5;
                         let timeline_idx = ((elapsed * 24.0) as usize) % timeline_frames.len();
                         let boot = &timeline_frames[timeline_idx];
                         let screen = &boot_screen.frames[timeline_idx % boot_screen.frames.len()];
 
-                        let cpu_frame = if elapsed < 5.0 {
+                        let boot_active = debug_state.boot_active && elapsed < 6.0;
+                        let mut cpu_frame = if boot_active && elapsed < 5.0 {
                             let mut frame = rasterize_boot_frame(boot, config.width, config.height);
                             overlay_boot_caption(
                                 &mut frame.rgba,
@@ -530,24 +703,45 @@ fn fs_main(inf: VsOut) -> @location(0) vec4<f32> {
                             let fade = (1.0 - (elapsed - 5.0)).clamp(0.0, 1.0);
                             apply_fade_to_black(&mut frame.rgba, fade);
                             frame
-                        } else if elapsed < 12.0 {
+                        } else if debug_state.boot_active && elapsed < 12.0 {
                             rasterize_reveal_frame(config.width, config.height, elapsed - 6.0, boot)
                         } else {
-                            let scene_time = elapsed - 12.0;
-                            let scene = select_demo_scene(scene_time);
+                            let scene_time = if debug_state.boot_active {
+                                elapsed - 12.0
+                            } else {
+                                elapsed
+                            };
+                            let scene = select_runtime_scene(scene_time, &debug_state);
                             let local_t = local_scene_time(scene_time);
-                            rasterize_demo_scene(
+                            let procedural = rasterize_procedural_scene(
                                 config.width,
                                 config.height,
-                                scene,
-                                local_t,
-                                dt,
-                                runtime_pulse,
-                                &mut scene_particles,
-                                &mut particle_cursor,
-                                &starfield,
-                            )
+                                scene_time,
+                                &debug_state,
+                            );
+                            if procedural.rgba.iter().any(|v| *v != 0) {
+                                procedural
+                            } else {
+                                rasterize_demo_scene(
+                                    config.width,
+                                    config.height,
+                                    scene,
+                                    local_t,
+                                    dt,
+                                    runtime_pulse,
+                                    &mut scene_particles,
+                                    &mut particle_cursor,
+                                    &starfield,
+                                )
+                            }
                         };
+
+                        overlay_runtime_debug(
+                            &mut cpu_frame.rgba,
+                            config.width,
+                            config.height,
+                            &debug_state,
+                        );
 
                         queue.write_texture(
                             wgpu::TexelCopyTextureInfo {
@@ -753,6 +947,34 @@ fn select_demo_scene(t: f32) -> DemoScene {
 }
 
 #[cfg(feature = "real_graphics")]
+fn select_runtime_scene(t: f32, debug_state: &RuntimeRenderDebugState) -> DemoScene {
+    match debug_state.scene_name.as_str() {
+        "boot_pulse" => DemoScene::Visualizer,
+        "aurex_logo" => DemoScene::ReturnToTitle,
+        "rings" => DemoScene::PulseReactorChamber,
+        "particle_swirl" => DemoScene::ParticleStorm,
+        "starfield_expansion" => DemoScene::StarfieldWarp,
+        "aurielle_reveal" | "aurielle_reveal_scene" => DemoScene::PulseReactorChamber,
+        "megacity_skyline" => DemoScene::PulseReactorChamber,
+        "jazz_lounge" => DemoScene::ReturnToTitle,
+        "ambient_mist" => DemoScene::StarfieldWarp,
+        _ => {
+            if debug_state.pulse_name == "megacity" {
+                DemoScene::PulseReactorChamber
+            } else if debug_state.pulse_name == "ambient" {
+                DemoScene::StarfieldWarp
+            } else if debug_state.pulse_name == "jazz" {
+                DemoScene::ReturnToTitle
+            } else if debug_state.pulse_name == "aurielle_intro" {
+                DemoScene::ParticleStorm
+            } else {
+                select_demo_scene(t)
+            }
+        }
+    }
+}
+
+#[cfg(feature = "real_graphics")]
 fn local_scene_time(t: f32) -> f32 {
     let cycle = t.rem_euclid(63.0);
     if cycle < 10.0 {
@@ -792,6 +1014,7 @@ fn rasterize_demo_scene(
     cursor: &mut usize,
     stars: &[Star],
 ) -> BootFramebuffer {
+    let debug_state = runtime_render_debug_state();
     let mut frame = BootFramebuffer {
         width,
         height,
@@ -801,7 +1024,15 @@ fn rasterize_demo_scene(
         px[3] = 255;
     }
 
-    paint_scene_background(&mut frame.rgba, width, height, t, scene, pulse);
+    paint_scene_background(
+        &mut frame.rgba,
+        width,
+        height,
+        t,
+        scene,
+        pulse,
+        &debug_state,
+    );
     match scene {
         DemoScene::Visualizer => {
             draw_reactor_rings(&mut frame.rgba, width, height, t, pulse, 2);
@@ -821,18 +1052,31 @@ fn rasterize_demo_scene(
                 width,
                 height,
                 particles,
-                [255, 210, 145],
+                pulse_particle_color(&debug_state),
                 1.0,
             );
-            draw_title_centered(&mut frame.rgba, width, height, "AUREX-X", 4, pulse, t);
+            if debug_state.logo_enabled {
+                draw_title_centered(&mut frame.rgba, width, height, "AUREX-X", 4, pulse, t);
+            }
         }
         DemoScene::StarfieldWarp => {
-            draw_starfield(&mut frame.rgba, width, height, stars, t, pulse);
-            draw_title_centered(&mut frame.rgba, width, height, "AUREX-X", 3, pulse * 0.7, t);
+            if debug_state.starfield_enabled || debug_state.pulse_name == "ambient" {
+                draw_starfield(&mut frame.rgba, width, height, stars, t, pulse);
+            }
+            if debug_state.logo_enabled {
+                draw_title_centered(&mut frame.rgba, width, height, "AUREX-X", 3, pulse * 0.7, t);
+            }
         }
         DemoScene::PulseReactorChamber => {
-            draw_reactor_rings(&mut frame.rgba, width, height, t * 0.7, pulse, 4);
-            draw_title_centered(&mut frame.rgba, width, height, "AUREX-X", 5, pulse, t);
+            let ring_count = if debug_state.pulse_name == "megacity" {
+                6
+            } else {
+                4
+            };
+            draw_reactor_rings(&mut frame.rgba, width, height, t * 0.7, pulse, ring_count);
+            if debug_state.logo_enabled {
+                draw_title_centered(&mut frame.rgba, width, height, "AUREX-X", 5, pulse, t);
+            }
         }
         DemoScene::ParticleStorm => {
             update_particles(
@@ -852,10 +1096,12 @@ fn rasterize_demo_scene(
                 width,
                 height,
                 particles,
-                [180, 225, 255],
-                1.3,
+                pulse_particle_color(&debug_state),
+                1.0 + debug_state.profile_particle_density * 0.8,
             );
-            draw_title_centered(&mut frame.rgba, width, height, "AUREX-X", 3, pulse * 0.6, t);
+            if debug_state.logo_enabled {
+                draw_title_centered(&mut frame.rgba, width, height, "AUREX-X", 3, pulse * 0.6, t);
+            }
         }
         DemoScene::ReturnToTitle => {
             let fade = (1.0 - (t / 10.0)).clamp(0.0, 1.0);
@@ -875,10 +1121,12 @@ fn rasterize_demo_scene(
                 width,
                 height,
                 particles,
-                [120, 190, 255],
+                pulse_particle_color(&debug_state),
                 fade,
             );
-            draw_title_centered(&mut frame.rgba, width, height, "AUREX-X", 6, pulse, t * 0.6);
+            if debug_state.logo_enabled {
+                draw_title_centered(&mut frame.rgba, width, height, "AUREX-X", 6, pulse, t * 0.6);
+            }
         }
     }
 
@@ -893,6 +1141,7 @@ fn paint_scene_background(
     t: f32,
     scene: DemoScene,
     pulse: f32,
+    debug_state: &RuntimeRenderDebugState,
 ) {
     let (base_r, base_g, base_b) = match scene {
         DemoScene::Visualizer => (8.0, 16.0, 32.0),
@@ -901,18 +1150,48 @@ fn paint_scene_background(
         DemoScene::ParticleStorm => (7.0, 10.0, 22.0),
         DemoScene::ReturnToTitle => (4.0, 9.0, 18.0),
     };
+    let tint = pulse_tint(debug_state);
+
     for y in 0..height {
         for x in 0..width {
             let idx = ((y * width + x) * 4) as usize;
             let nx = x as f32 / width as f32;
             let ny = y as f32 / height as f32;
             let vignette = (1.0 - ((nx - 0.5).powi(2) + (ny - 0.5).powi(2)) * 1.8).clamp(0.0, 1.0);
+            let depth = (1.0 - ny).powf(1.0 + debug_state.profile_geometry_density * 1.5);
             let drift = ((nx * 5.0 + ny * 3.0 + t * 0.35).sin() * 0.5 + 0.5) * 8.0;
-            let glow = 1.0 + pulse * 0.25;
-            rgba[idx] = ((base_r + drift) * vignette * glow).clamp(0.0, 255.0) as u8;
-            rgba[idx + 1] = ((base_g + drift * 1.2) * vignette * glow).clamp(0.0, 255.0) as u8;
-            rgba[idx + 2] = ((base_b + drift * 1.4) * vignette * glow).clamp(0.0, 255.0) as u8;
+            let glow = 1.0 + pulse * (0.12 + debug_state.profile_glow_intensity * 0.28);
+            rgba[idx] = ((base_r + drift + tint[0]) * vignette * glow * (0.7 + depth * 0.3))
+                .clamp(0.0, 255.0) as u8;
+            rgba[idx + 1] =
+                ((base_g + drift * 1.2 + tint[1]) * vignette * glow * (0.7 + depth * 0.3))
+                    .clamp(0.0, 255.0) as u8;
+            rgba[idx + 2] =
+                ((base_b + drift * 1.4 + tint[2]) * vignette * glow * (0.7 + depth * 0.3))
+                    .clamp(0.0, 255.0) as u8;
         }
+    }
+}
+
+#[cfg(feature = "real_graphics")]
+fn pulse_tint(debug_state: &RuntimeRenderDebugState) -> [f32; 3] {
+    match debug_state.pulse_name.as_str() {
+        "aurielle_intro" => [28.0, 6.0, 34.0],
+        "megacity" => [0.0, 20.0, 38.0],
+        "jazz" => [45.0, 24.0, 8.0],
+        "ambient" => [8.0, 28.0, 22.0],
+        _ => [0.0, 0.0, 0.0],
+    }
+}
+
+#[cfg(feature = "real_graphics")]
+fn pulse_particle_color(debug_state: &RuntimeRenderDebugState) -> [u8; 3] {
+    match debug_state.pulse_name.as_str() {
+        "aurielle_intro" => [255, 120, 250],
+        "megacity" => [90, 220, 255],
+        "jazz" => [255, 210, 140],
+        "ambient" => [130, 220, 180],
+        _ => [180, 225, 255],
     }
 }
 
@@ -1201,6 +1480,47 @@ fn overlay_boot_caption(rgba: &mut [u8], width: u32, height: u32, frame: &BootSc
 }
 
 #[cfg(feature = "real_graphics")]
+fn overlay_runtime_debug(
+    rgba: &mut [u8],
+    width: u32,
+    height: u32,
+    state: &RuntimeRenderDebugState,
+) {
+    if width < 200 || height < 100 {
+        return;
+    }
+
+    let scale = 1;
+    let mut y = 10;
+    for line in [
+        format!("PULSE: {}", state.pulse_name),
+        format!("SCENE: {}", state.scene_name),
+        format!("THEME: {}", state.theme_name),
+        format!("PROFILE: {}", state.profile_name),
+        format!(
+            "GEOM_DENSITY: {:.2} HEIGHT: {:.2} PARTICLES: {:.2}",
+            state.profile_geometry_density,
+            state.profile_structure_height,
+            state.profile_particle_density
+        ),
+        format!("BOOT_ACTIVE: {}", state.boot_active),
+    ] {
+        draw_text(
+            rgba,
+            width,
+            height,
+            &line,
+            10,
+            y,
+            scale,
+            [255, 255, 255],
+            1.0,
+        );
+        y += 12;
+    }
+}
+
+#[cfg(feature = "real_graphics")]
 fn text_pixel_width(text: &str, scale: i32) -> i32 {
     text.chars()
         .map(|c| if c == ' ' { 4 } else { 6 })
@@ -1255,17 +1575,41 @@ fn glyph_5x7(c: char) -> [u8; 7] {
         'A' => [
             0b01110, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001,
         ],
+        'B' => [
+            0b11110, 0b10001, 0b10001, 0b11110, 0b10001, 0b10001, 0b11110,
+        ],
+        'C' => [
+            0b01110, 0b10001, 0b10000, 0b10000, 0b10000, 0b10001, 0b01110,
+        ],
+        'D' => [
+            0b11110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b11110,
+        ],
         'E' => [
             0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b11111,
         ],
+        'F' => [
+            0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b10000,
+        ],
+        'G' => [
+            0b01110, 0b10001, 0b10000, 0b10111, 0b10001, 0b10001, 0b01110,
+        ],
+        'H' => [
+            0b10001, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001,
+        ],
         'I' => [
             0b11111, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b11111,
+        ],
+        'J' => [
+            0b11111, 0b00010, 0b00010, 0b00010, 0b10010, 0b10010, 0b01100,
+        ],
+        'K' => [
+            0b10001, 0b10010, 0b10100, 0b11000, 0b10100, 0b10010, 0b10001,
         ],
         'L' => [
             0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b11111,
         ],
         'M' => [
-            0b10001, 0b11011, 0b10101, 0b10001, 0b10001, 0b10001, 0b10001,
+            0b10001, 0b11011, 0b10101, 0b10101, 0b10001, 0b10001, 0b10001,
         ],
         'N' => [
             0b10001, 0b11001, 0b10101, 0b10011, 0b10001, 0b10001, 0b10001,
@@ -1276,20 +1620,80 @@ fn glyph_5x7(c: char) -> [u8; 7] {
         'P' => [
             0b11110, 0b10001, 0b10001, 0b11110, 0b10000, 0b10000, 0b10000,
         ],
+        'Q' => [
+            0b01110, 0b10001, 0b10001, 0b10001, 0b10101, 0b10010, 0b01101,
+        ],
         'R' => [
             0b11110, 0b10001, 0b10001, 0b11110, 0b10100, 0b10010, 0b10001,
         ],
         'S' => [
             0b01111, 0b10000, 0b10000, 0b01110, 0b00001, 0b00001, 0b11110,
         ],
+        'T' => [
+            0b11111, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100,
+        ],
         'U' => [
             0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110,
+        ],
+        'V' => [
+            0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01010, 0b00100,
+        ],
+        'W' => [
+            0b10001, 0b10001, 0b10001, 0b10101, 0b10101, 0b10101, 0b01010,
         ],
         'X' => [
             0b10001, 0b10001, 0b01010, 0b00100, 0b01010, 0b10001, 0b10001,
         ],
+        'Y' => [
+            0b10001, 0b10001, 0b01010, 0b00100, 0b00100, 0b00100, 0b00100,
+        ],
+        'Z' => [
+            0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b10000, 0b11111,
+        ],
+        '0' => [
+            0b01110, 0b10001, 0b10011, 0b10101, 0b11001, 0b10001, 0b01110,
+        ],
+        '1' => [
+            0b00100, 0b01100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110,
+        ],
+        '2' => [
+            0b01110, 0b10001, 0b00001, 0b00110, 0b01000, 0b10000, 0b11111,
+        ],
+        '3' => [
+            0b11110, 0b00001, 0b00001, 0b01110, 0b00001, 0b00001, 0b11110,
+        ],
+        '4' => [
+            0b00010, 0b00110, 0b01010, 0b10010, 0b11111, 0b00010, 0b00010,
+        ],
+        '5' => [
+            0b11111, 0b10000, 0b10000, 0b11110, 0b00001, 0b00001, 0b11110,
+        ],
+        '6' => [
+            0b00110, 0b01000, 0b10000, 0b11110, 0b10001, 0b10001, 0b01110,
+        ],
+        '7' => [
+            0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b01000, 0b01000,
+        ],
+        '8' => [
+            0b01110, 0b10001, 0b10001, 0b01110, 0b10001, 0b10001, 0b01110,
+        ],
+        '9' => [
+            0b01110, 0b10001, 0b10001, 0b01111, 0b00001, 0b00010, 0b11100,
+        ],
         '-' => [
             0b00000, 0b00000, 0b00000, 0b11111, 0b00000, 0b00000, 0b00000,
+        ],
+        ':' => [
+            0b00000, 0b00100, 0b00100, 0b00000, 0b00100, 0b00100, 0b00000,
+        ],
+        '.' => [
+            0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00110, 0b00110,
+        ],
+        '_' => [
+            0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b11111,
+        ],
+        '|' => [
+            0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100,
         ],
         _ => [0; 7],
     }
@@ -1517,6 +1921,7 @@ pub struct MockRenderer {
     config: RenderBootstrapConfig,
     frames_rendered: u64,
     backend_ready: bool,
+    current_rhythm_snapshot: Option<rhythm_field::RhythmFieldSnapshot>,
 }
 
 impl MockRenderer {
@@ -1526,6 +1931,7 @@ impl MockRenderer {
             config,
             frames_rendered: 0,
             backend_ready,
+            current_rhythm_snapshot: None,
         }
     }
 
@@ -1548,6 +1954,36 @@ impl MockRenderer {
         self.config.backend_mode = mode;
         self.backend_ready = mode == RenderBackendMode::Mock;
         BackendTransition::Transitioned
+    }
+
+    pub fn set_rhythm_snapshot(&mut self, snapshot: rhythm_field::RhythmFieldSnapshot) {
+        self.current_rhythm_snapshot = Some(snapshot);
+    }
+
+    pub fn clear_rhythm_snapshot(&mut self) {
+        self.current_rhythm_snapshot = None;
+    }
+
+    pub fn rhythm_snapshot(&self) -> Option<rhythm_field::RhythmFieldSnapshot> {
+        self.current_rhythm_snapshot
+    }
+
+    pub fn world_debug_summary(&self) -> String {
+        let mut lines = vec![
+            format!("frames_rendered={}", self.frames_rendered),
+            format!("backend_mode={:?}", self.config.backend_mode),
+            format!("backend_ready={}", self.backend_ready),
+        ];
+
+        if let Some(rhythm) = self.current_rhythm_snapshot {
+            lines.push("Rhythm:".to_string());
+            lines.push(format!("pulse={:.2}", rhythm.pulse));
+            lines.push(format!("bass={:.2}", rhythm.bass_energy));
+            lines.push(format!("intensity={:.2}", rhythm.intensity));
+            lines.push(format!("accent={:.2}", rhythm.accent));
+        }
+
+        lines.join("\n")
     }
 
     pub fn run_frame(&mut self, stages: &[RenderStage]) -> RenderFrameStats {
@@ -2422,6 +2858,31 @@ mod tests {
     }
 
     #[test]
+    fn renderer_summary_reports_rhythm_state() {
+        let mut renderer = MockRenderer::new(RenderBootstrapConfig::default());
+        let summary_without = renderer.world_debug_summary();
+        assert!(!summary_without.contains("Rhythm:"));
+
+        renderer.set_rhythm_snapshot(rhythm_field::RhythmFieldSnapshot {
+            beat_phase: 0.2,
+            bar_phase: 0.4,
+            pulse: 0.82,
+            bass_energy: 0.61,
+            mid_energy: 0.45,
+            high_energy: 0.33,
+            intensity: 0.74,
+            accent: 0.18,
+        });
+
+        let summary = renderer.world_debug_summary();
+        assert!(summary.contains("Rhythm:"));
+        assert!(summary.contains("pulse=0.82"));
+        assert!(summary.contains("bass=0.61"));
+        assert!(summary.contains("intensity=0.74"));
+        assert!(summary.contains("accent=0.18"));
+    }
+
+    #[test]
     fn rasterized_boot_frame_contains_visible_pixels() {
         let frame = BootFrame {
             frame_index: 3,
@@ -2437,5 +2898,33 @@ mod tests {
 
         assert!(lit > 0);
         assert!(lit < image.pixel_count());
+    }
+
+    #[test]
+    fn runtime_render_debug_state_round_trips() {
+        let original = runtime_render_debug_state();
+
+        let updated = RuntimeRenderDebugState {
+            pulse_name: "megacity".to_string(),
+            scene_name: "particle_swirl".to_string(),
+            theme_name: "neon_night".to_string(),
+            profile_name: "dense_reactor".to_string(),
+            profile_geometry_density: 0.9,
+            profile_structure_height: 0.85,
+            profile_particle_density: 0.8,
+            profile_fog_density: 0.2,
+            profile_glow_intensity: 0.7,
+            starfield_enabled: true,
+            logo_enabled: false,
+            boot_active: false,
+        };
+
+        set_runtime_render_debug_state(updated.clone());
+        let observed = runtime_render_debug_state();
+
+        assert_eq!(observed, updated);
+
+        // Avoid leaking global state between tests.
+        set_runtime_render_debug_state(original);
     }
 }

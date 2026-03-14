@@ -1,6 +1,14 @@
 # AI Authoring: Procedural World Generation
 
-Use the new generator families and rendering systems to create rich deterministic worlds:
+Use generator families and rendering systems to build rich deterministic worlds.
+
+## Planning-to-render model
+- `WorldBlueprint`: high-level world descriptor.
+- `GeneratorStack`: deterministic parameter/structure generator.
+- Renderer pipeline: execution path.
+
+A practical bridge is:
+`ExperiencePlanner -> RenderTheme + WorldBlueprint -> GeneratorStack -> Renderer`.
 
 ## Prime generators
 - `ElectronicCity`
@@ -36,3 +44,6 @@ Layer variants:
 - `RhythmModulationLayer`
 
 Each layer wraps an existing `SceneGenerator`, so older generator definitions remain compatible.
+
+## RhythmField scope note
+Current stack output remains deterministic parameter generation only. RhythmField is used as modulation input for generator behavior and renderer configuration, while renderer stage order stays fixed.
