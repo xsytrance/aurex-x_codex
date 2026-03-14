@@ -83,7 +83,7 @@ fn apply_chromatic_hint(c: V3, uv: (f32, f32), amount: f32) -> V3 {
 }
 
 fn apply_film_grain(c: V3, uv: (f32, f32), seed: u32, amount: f32) -> V3 {
-    let n = (((uv.0 * 9123.7 + uv.1 * 5729.3 + seed as f32 * 0.01).sin()) * 43758.5453).fract();
+    let n = (((uv.0 * 9123.7 + uv.1 * 5729.3 + seed as f32 * 0.01).sin()) * 43_758.547).fract();
     let centered = (n - 0.5) * amount;
     (c + V3::splat(centered)).clamp01()
 }

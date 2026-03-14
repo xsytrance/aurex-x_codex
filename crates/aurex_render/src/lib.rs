@@ -1,3 +1,5 @@
+pub mod rhythm_field;
+
 #[cfg(feature = "real_graphics")]
 use winit::{dpi::PhysicalSize, event_loop::EventLoop, window::Window};
 
@@ -1517,6 +1519,7 @@ pub struct MockRenderer {
     config: RenderBootstrapConfig,
     frames_rendered: u64,
     backend_ready: bool,
+    current_rhythm_snapshot: Option<rhythm_field::RhythmFieldSnapshot>,
 }
 
 impl MockRenderer {
@@ -1526,6 +1529,7 @@ impl MockRenderer {
             config,
             frames_rendered: 0,
             backend_ready,
+            current_rhythm_snapshot: None,
         }
     }
 
@@ -1548,6 +1552,36 @@ impl MockRenderer {
         self.config.backend_mode = mode;
         self.backend_ready = mode == RenderBackendMode::Mock;
         BackendTransition::Transitioned
+    }
+
+    pub fn set_rhythm_snapshot(&mut self, snapshot: rhythm_field::RhythmFieldSnapshot) {
+        self.current_rhythm_snapshot = Some(snapshot);
+    }
+
+    pub fn clear_rhythm_snapshot(&mut self) {
+        self.current_rhythm_snapshot = None;
+    }
+
+    pub fn rhythm_snapshot(&self) -> Option<rhythm_field::RhythmFieldSnapshot> {
+        self.current_rhythm_snapshot
+    }
+
+    pub fn world_debug_summary(&self) -> String {
+        let mut lines = vec![
+            format!("frames_rendered={}", self.frames_rendered),
+            format!("backend_mode={:?}", self.config.backend_mode),
+            format!("backend_ready={}", self.backend_ready),
+        ];
+
+        if let Some(rhythm) = self.current_rhythm_snapshot {
+            lines.push("Rhythm:".to_string());
+            lines.push(format!("pulse={:.2}", rhythm.pulse));
+            lines.push(format!("bass={:.2}", rhythm.bass_energy));
+            lines.push(format!("intensity={:.2}", rhythm.intensity));
+            lines.push(format!("accent={:.2}", rhythm.accent));
+        }
+
+        lines.join("\n")
     }
 
     pub fn run_frame(&mut self, stages: &[RenderStage]) -> RenderFrameStats {
@@ -2419,6 +2453,31 @@ mod tests {
         let a = rasterize_boot_frame(&frame, 80, 45);
         let b = rasterize_boot_frame(&frame, 80, 45);
         assert_eq!(a.checksum(), b.checksum());
+    }
+
+    #[test]
+    fn renderer_summary_reports_rhythm_state() {
+        let mut renderer = MockRenderer::new(RenderBootstrapConfig::default());
+        let summary_without = renderer.world_debug_summary();
+        assert!(!summary_without.contains("Rhythm:"));
+
+        renderer.set_rhythm_snapshot(rhythm_field::RhythmFieldSnapshot {
+            beat_phase: 0.2,
+            bar_phase: 0.4,
+            pulse: 0.82,
+            bass_energy: 0.61,
+            mid_energy: 0.45,
+            high_energy: 0.33,
+            intensity: 0.74,
+            accent: 0.18,
+        });
+
+        let summary = renderer.world_debug_summary();
+        assert!(summary.contains("Rhythm:"));
+        assert!(summary.contains("pulse=0.82"));
+        assert!(summary.contains("bass=0.61"));
+        assert!(summary.contains("intensity=0.74"));
+        assert!(summary.contains("accent=0.18"));
     }
 
     #[test]
