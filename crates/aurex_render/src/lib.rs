@@ -432,6 +432,78 @@ fn safe_first_procedural_state(debug_state: &RuntimeRenderDebugState) -> Runtime
 }
 
 #[cfg(feature = "real_graphics")]
+fn warmup_frames_from_env() -> usize {
+    std::env::var("AUREX_PROCEDURAL_WARMUP_FRAMES")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(120)
+}
+
+#[cfg(feature = "real_graphics")]
+fn first_real_scene_override_from_env() -> Option<String> {
+    std::env::var("AUREX_FIRST_REAL_SCENE_OVERRIDE")
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+}
+
+#[cfg(feature = "real_graphics")]
+fn isolate_starfield_expansion_from_env() -> bool {
+    std::env::var("AUREX_ISOLATE_STARFIELD_EXPANSION")
+        .ok()
+        .map(|v| {
+            let lowered = v.to_ascii_lowercase();
+            matches!(lowered.as_str(), "1" | "true" | "yes" | "on")
+        })
+        .unwrap_or(false)
+}
+
+#[cfg(feature = "real_graphics")]
+fn debug_state_has_safe_ranges(state: &RuntimeRenderDebugState) -> bool {
+    let ranges = [
+        state.profile_geometry_density,
+        state.profile_particle_density,
+        state.profile_structure_height,
+        state.profile_fog_density,
+        state.profile_glow_intensity,
+    ];
+    ranges
+        .iter()
+        .all(|v| v.is_finite() && (0.0..=1.0).contains(v))
+}
+
+#[cfg(feature = "real_graphics")]
+fn scene_camera_is_valid(scene: &Scene) -> bool {
+    let camera = &scene.sdf.camera;
+    [
+        camera.position.x,
+        camera.position.y,
+        camera.position.z,
+        camera.target.x,
+        camera.target.y,
+        camera.target.z,
+        camera.fov_degrees,
+        camera.aspect_ratio,
+    ]
+    .into_iter()
+    .all(f32::is_finite)
+        && camera.fov_degrees > 1.0
+        && camera.fov_degrees < 179.0
+        && camera.aspect_ratio > 0.01
+}
+
+#[cfg(feature = "real_graphics")]
+fn preflight_real_scene(debug_state: &RuntimeRenderDebugState, elapsed: f32) -> bool {
+    if !debug_state_has_safe_ranges(debug_state) {
+        return false;
+    }
+    let scene = build_runtime_sdf_scene(debug_state, elapsed);
+    let (validated, _, _) = validate_runtime_scene(scene, debug_state);
+    scene_camera_is_valid(&validated)
+}
+
+#[cfg(feature = "real_graphics")]
 fn build_runtime_sdf_scene(debug_state: &RuntimeRenderDebugState, elapsed: f32) -> Scene {
     let stack: GeneratorStack = match debug_state.scene_name.as_str() {
         "rings" => generators::electronic_city_stack(),
@@ -731,6 +803,13 @@ where
     let mut last_frame_time = start_time;
     let mut procedural_renderer_active = false;
     let mut procedural_activation_logged = false;
+    let procedural_warmup_frames = warmup_frames_from_env();
+    let first_real_scene_override = first_real_scene_override_from_env();
+    let isolate_starfield_expansion = isolate_starfield_expansion_from_env();
+    let mut procedural_handoff_start_logged = false;
+    let mut safe_warmup_complete_logged = false;
+    let mut post_handoff_procedural_frames = 0usize;
+    let mut first_real_scene_frame_seen = false;
     let mut last_boot_log_second: i32 = -1;
     let _scene_particles = vec![Particle::default(); 220];
     let _particle_cursor = 0usize;
@@ -1007,18 +1086,88 @@ fn fs_main(inf: VsOut) -> @location(0) vec4<f32> {
                                 )
                             }
                         } else {
+                            if !procedural_handoff_start_logged {
+                                procedural_handoff_start_logged = true;
+                                eprintln!(
+                                    "Procedural handoff start at t={:.2} active_scene={} boot_active={} warmup_frames={} isolate_starfield_expansion={} first_real_scene_override={}",
+                                    elapsed,
+                                    debug_state.scene_name,
+                                    debug_state.boot_active,
+                                    procedural_warmup_frames,
+                                    isolate_starfield_expansion,
+                                    first_real_scene_override.as_deref().unwrap_or("none"),
+                                );
+                            }
+
+                            let safe_warmup_active =
+                                post_handoff_procedural_frames < procedural_warmup_frames;
+                            if safe_warmup_active {
+                                if post_handoff_procedural_frames == 0
+                                    || post_handoff_procedural_frames % 30 == 0
+                                {
+                                    eprintln!(
+                                        "Safe procedural warmup active frame={} of {} active_scene={} using_safe_content=true",
+                                        post_handoff_procedural_frames + 1,
+                                        procedural_warmup_frames,
+                                        debug_state.scene_name,
+                                    );
+                                }
+                            } else if !safe_warmup_complete_logged {
+                                safe_warmup_complete_logged = true;
+                                eprintln!(
+                                    "Safe procedural warmup complete at t={:.2} frames={} active_scene={}",
+                                    elapsed,
+                                    post_handoff_procedural_frames,
+                                    debug_state.scene_name,
+                                );
+                            }
+
                             let scene_time = if debug_state.boot_active {
                                 elapsed - 12.0
                             } else {
                                 elapsed
                             };
-                            let force_safe_first_frame = !procedural_activation_logged;
-                            let first_frame_state;
-                            let scene_state = if force_safe_first_frame {
-                                first_frame_state = safe_first_procedural_state(&debug_state);
-                                &first_frame_state
+                            let mut dynamic_scene_state = debug_state.clone();
+                            let mut using_safe_content = safe_warmup_active;
+                            let mut safe_reason = if safe_warmup_active {
+                                Some("warmup")
                             } else {
-                                &debug_state
+                                None
+                            };
+
+                            if !safe_warmup_active
+                                && isolate_starfield_expansion
+                                && debug_state.scene_name == "starfield_expansion"
+                            {
+                                using_safe_content = true;
+                                safe_reason = Some("starfield_isolation");
+                            }
+
+                            if !safe_warmup_active
+                                && !first_real_scene_frame_seen
+                                && !using_safe_content
+                            {
+                                if let Some(override_scene) = first_real_scene_override.as_ref() {
+                                    dynamic_scene_state.scene_name = override_scene.clone();
+                                }
+                                if !preflight_real_scene(&dynamic_scene_state, scene_time) {
+                                    using_safe_content = true;
+                                    safe_reason = Some("first_real_preflight_rejected");
+                                    eprintln!(
+                                        "First real procedural scene preflight rejected; continuing safe content active_scene={} rendered_scene={}",
+                                        debug_state.scene_name,
+                                        dynamic_scene_state.scene_name,
+                                    );
+                                }
+                                first_real_scene_frame_seen = true;
+                            }
+
+                            let safe_scene_state;
+                            let scene_state = if using_safe_content {
+                                safe_scene_state = safe_first_procedural_state(&debug_state);
+                                &safe_scene_state
+                            } else {
+                                &dynamic_scene_state
                             };
 
                             let (procedural, proc_diag) = rasterize_procedural_scene(
@@ -1036,7 +1185,7 @@ fn fs_main(inf: VsOut) -> @location(0) vec4<f32> {
                                     handoff_ready,
                                     debug_state.scene_name,
                                     debug_state.boot_active,
-                                    force_safe_first_frame,
+                                    using_safe_content,
                                     proc_diag.scene_name,
                                     proc_diag.shape_count,
                                     scene_state.profile_geometry_density,
@@ -1052,6 +1201,34 @@ fn fs_main(inf: VsOut) -> @location(0) vec4<f32> {
                                     proc_diag.used_fallback,
                                 );
                             }
+
+                            let camera_finite = [
+                                proc_diag.camera_position.x,
+                                proc_diag.camera_position.y,
+                                proc_diag.camera_position.z,
+                                proc_diag.camera_target.x,
+                                proc_diag.camera_target.y,
+                                proc_diag.camera_target.z,
+                            ]
+                            .into_iter()
+                            .all(f32::is_finite);
+
+                            eprintln!(
+                                "Procedural frame diag t={:.2} warmup_active={} using_safe_content={} safe_reason={} real_scene_content={} active_scene={} rendered_scene={} shape_count={} camera_finite={} fallback={}",
+                                elapsed,
+                                safe_warmup_active,
+                                using_safe_content,
+                                safe_reason.unwrap_or("none"),
+                                !using_safe_content,
+                                debug_state.scene_name,
+                                proc_diag.scene_name,
+                                proc_diag.shape_count,
+                                camera_finite,
+                                proc_diag.used_fallback,
+                            );
+
+                            post_handoff_procedural_frames =
+                                post_handoff_procedural_frames.saturating_add(1);
                             procedural
                         };
 

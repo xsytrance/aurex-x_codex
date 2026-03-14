@@ -37,6 +37,7 @@ use timeline::{
 const DEFAULT_PULSE_NAME: &str = "megacity";
 const DEFAULT_SEED: u64 = 2026;
 const BOOT_HANDOFF_SECONDS: f32 = 12.0;
+const DEFAULT_PROCEDURAL_WARMUP_FRAMES: usize = 120;
 const AVAILABLE_PULSE_NAMES: [&str; 4] = ["megacity", "jazz", "ambient", "aurielle_intro"];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -388,6 +389,18 @@ fn runtime_render_debug_state_for_loop(pulse_loop: &RuntimePulseLoop) -> Runtime
 
 fn runtime_handoff_ready(pulse_loop: &RuntimePulseLoop) -> bool {
     pulse_loop.clock.time_seconds >= BOOT_HANDOFF_SECONDS
+}
+
+fn procedural_warmup_frames_from_env() -> usize {
+    std::env::var("AUREX_PROCEDURAL_WARMUP_FRAMES")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(DEFAULT_PROCEDURAL_WARMUP_FRAMES)
+}
+
+fn should_unlock_audio(post_handoff_frames: usize, warmup_frames: usize) -> bool {
+    post_handoff_frames >= warmup_frames
 }
 
 fn boot_audio_config(seed: u32) -> ProceduralAudioConfig {
@@ -794,8 +807,12 @@ fn main() {
         }
     };
 
+    let procedural_warmup_frames = procedural_warmup_frames_from_env();
     let runtime_audio = runtime_audio;
     let mut pulse_audio_unlocked = false;
+    let mut post_handoff_frames = 0usize;
+    let mut handoff_started_logged = false;
+    let mut warmup_complete_logged = false;
     set_runtime_render_debug_state(runtime_render_debug_state_for_loop(&pulse_loop));
     if let Err(err) = run_real_renderer_event_loop_with_frame_hook(move |t| {
         let tick = pulse_loop.update(t);
@@ -803,14 +820,44 @@ fn main() {
         let handoff_ready = runtime_handoff_ready(&pulse_loop);
         set_runtime_render_debug_state(render_debug_state.clone());
 
-        if handoff_ready && !pulse_audio_unlocked {
+        if handoff_ready {
+            if !handoff_started_logged {
+                handoff_started_logged = true;
+                println!(
+                    "Procedural handoff start at t={:.2} active_scene={} boot_active={} warmup_frames={}",
+                    pulse_loop.clock.time_seconds,
+                    render_debug_state.scene_name,
+                    render_debug_state.boot_active,
+                    procedural_warmup_frames,
+                );
+            }
+            post_handoff_frames = post_handoff_frames.saturating_add(1);
+            if !warmup_complete_logged
+                && should_unlock_audio(post_handoff_frames, procedural_warmup_frames)
+            {
+                warmup_complete_logged = true;
+                println!(
+                    "Safe procedural warmup complete at t={:.2} frames={} active_scene={}",
+                    pulse_loop.clock.time_seconds,
+                    post_handoff_frames,
+                    render_debug_state.scene_name,
+                );
+            }
+        }
+
+        if handoff_ready
+            && !pulse_audio_unlocked
+            && should_unlock_audio(post_handoff_frames, procedural_warmup_frames)
+        {
             pulse_audio_unlocked = true;
             if let Some(audio) = runtime_audio.as_ref() {
                 audio.set_procedural_config(pulse_audio_config_for(&pulse_loop.pulse));
                 println!(
-                    "Audio procedural config unlocked at t={:.2} handoff_ready={} active_scene={} boot_active={}",
+                    "Audio unlock complete at t={:.2} handoff_ready={} warmup_frames={} post_handoff_frames={} active_scene={} boot_active={}",
                     pulse_loop.clock.time_seconds,
                     handoff_ready,
+                    procedural_warmup_frames,
+                    post_handoff_frames,
                     render_debug_state.scene_name,
                     render_debug_state.boot_active,
                 );
@@ -857,8 +904,9 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::{
-        DEFAULT_SEED, RuntimePulseLoop, available_pulse_names, create_pulse_at_time,
-        parse_runtime_options, runtime_diagnostics_report, runtime_render_debug_state_for_loop,
+        BOOT_HANDOFF_SECONDS, DEFAULT_SEED, RuntimePulseLoop, available_pulse_names,
+        create_pulse_at_time, parse_runtime_options, runtime_diagnostics_report,
+        runtime_handoff_ready, runtime_render_debug_state_for_loop, should_unlock_audio,
     };
 
     #[test]
@@ -982,6 +1030,23 @@ mod tests {
         assert!(runtime_render_debug_state_for_loop(&pulse_loop).boot_active);
         let _ = pulse_loop.update(12.1);
         assert!(!runtime_render_debug_state_for_loop(&pulse_loop).boot_active);
+    }
+
+    #[test]
+    fn procedural_handoff_begins_only_after_handoff_condition() {
+        let mut pulse_loop = RuntimePulseLoop::new("aurielle_intro", DEFAULT_SEED);
+        let _ = pulse_loop.update(BOOT_HANDOFF_SECONDS - 0.01);
+        assert!(!runtime_handoff_ready(&pulse_loop));
+        let _ = pulse_loop.update(BOOT_HANDOFF_SECONDS + 0.01);
+        assert!(runtime_handoff_ready(&pulse_loop));
+    }
+
+    #[test]
+    fn audio_unlock_is_delayed_until_after_warmup_frames() {
+        assert!(!should_unlock_audio(0, 120));
+        assert!(!should_unlock_audio(119, 120));
+        assert!(should_unlock_audio(120, 120));
+        assert!(should_unlock_audio(121, 120));
     }
 
     #[test]
