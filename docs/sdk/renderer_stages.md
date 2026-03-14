@@ -6,12 +6,14 @@ Renderer stage model (`aurex_render_sdf::stages`):
 3. GeometrySdf
 4. MaterialPattern
 5. LightingAtmosphere
-6. PostProcessing
+6. Particles
+7. PostProcessing
+8. TemporalFeedback
 
 This decomposition supports:
 - profiling and diagnostics
-- future deterministic parallel batching
-- future GPU pass mapping
+- deterministic stage ordering
+- future GPU pass mapping without changing stage semantics
 
 ## Timing instrumentation
 Each stage records elapsed time in diagnostics:

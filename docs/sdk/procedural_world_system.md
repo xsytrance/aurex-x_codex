@@ -1,25 +1,16 @@
 # Procedural World System (Technical SDK)
 
-This phase adds parallel procedural richness systems while preserving deterministic rendering:
+The procedural world path is deterministic and layered, while preserving the existing renderer execution model.
 
-- Cone marching acceleration (`cone_march.rs`)
-- Distance/Fractal LOD (`lod.rs`)
-- Volumetric atmosphere (`volumetric.rs`)
-- Procedural particles (`particles.rs`)
-- KIFS fractal helpers (`fractals.rs`)
-- Prime-specific generators (`aurex_scene::generators`)
+## Data flow
+1. `WorldBlueprint` defines high-level world intent.
+2. `GeneratorStack` expands that intent into deterministic scene parameters and SDF node groups.
+3. The renderer consumes the generated scene data through the fixed pipeline stages.
 
-## Performance diagnostics
-Frame diagnostics now include:
-- LOD activation counts
-- average cone-march step reduction
-- stage timings including Particles, PostProcessing, TemporalFeedback
-
-## Recursive micro/macro guidance
-Use nested repetition + generator layering to create multi-scale worlds (macro structures with micro detail motifs) while keeping deterministic behavior.
+`GeneratorStack` is currently a **parameter/structure generation layer**. It does not execute rendering.
 
 ## GeneratorStack architecture
-Worlds can now be authored as a `generator_stack` (sequential layer execution) instead of a single generator:
+Worlds can be authored as a `generator_stack` (sequential layer execution) instead of a single generator:
 
 - `BaseGenerator`
 - `StructureLayer`
@@ -27,6 +18,31 @@ Worlds can now be authored as a `generator_stack` (sequential layer execution) i
 - `ParticleLayer`
 - `RhythmModulationLayer`
 
-Each layer implements the common `SceneGeneratorLayer` trait. The stack expands in order and combines outputs into a final SDF group node.
+Each layer implements the `SceneGeneratorLayer` trait, runs in stack order, and contributes to a final grouped SDF node.
 
-Rhythm-aware layers can read runtime modulation context (`runtime_context.rhythm_field`) via scene runtime modulation plumbing to produce beat/bass/harmonic driven geometry changes without modifying renderer stage order.
+## Rhythm modulation (current + forward path)
+Rhythm-aware layers consume runtime modulation context (`runtime_context.rhythm_field`) to drive deterministic generator parameters.
+
+Current behavior:
+- RhythmField influences generated parameters/geometry shaping.
+- Renderer stages remain unchanged.
+
+Forward path:
+- Future RhythmField expansion should continue as upstream modulation of generator and render configuration inputs, not as a new renderer architecture layer.
+
+## Performance diagnostics
+Frame diagnostics include:
+- LOD activation counts
+- average cone-march step reduction
+- stage timings including `Particles`, `PostProcessing`, and `TemporalFeedback`
+
+## Recursive micro/macro guidance
+Use nested repetition + generator layering to compose multi-scale worlds (macro structures + micro motifs) while preserving determinism.
+
+## RhythmField modulation pass
+RhythmField is the deterministic music-to-world modulation layer between generator output and renderer execution:
+
+Music Sequencer -> RhythmField -> Modulation Pass -> GeneratorStackOutput (modulated) -> Renderer Pipeline
+
+The modulation pass applies bounded deltas to generator output parameters (terrain, structures, atmosphere, lighting, particles, camera hints). Base world identity remains intact.
+

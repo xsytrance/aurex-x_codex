@@ -116,6 +116,7 @@ pub struct RenderConfig {
     pub quality: QualitySettings,
     pub output_diagnostics: bool,
     pub post: PostProcessConfig,
+    pub stop_after_sdf_stage: Option<SdfStage>,
 }
 
 impl Default for RenderConfig {
@@ -154,6 +155,7 @@ impl Default for RenderConfig {
             quality: QualitySettings::default(),
             output_diagnostics: false,
             post: PostProcessConfig::default(),
+            stop_after_sdf_stage: None,
         }
     }
 }
@@ -173,6 +175,47 @@ pub struct RenderedFrame {
     pub height: u32,
     pub pixels: Vec<Rgba8>,
     pub bloom_prepass: Option<Vec<f32>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SdfStage {
+    ScenePreprocess,
+    EffectGraphEvaluation,
+    GeometrySdf,
+    MaterialPattern,
+    LightingAtmosphere,
+    Particles,
+    PostProcessing,
+    TemporalFeedback,
+}
+
+impl SdfStage {
+    fn as_name(self) -> &'static str {
+        match self {
+            Self::ScenePreprocess => "ScenePreprocess",
+            Self::EffectGraphEvaluation => "EffectGraphEvaluation",
+            Self::GeometrySdf => "GeometrySdf",
+            Self::MaterialPattern => "MaterialPattern",
+            Self::LightingAtmosphere => "LightingAtmosphere",
+            Self::Particles => "Particles",
+            Self::PostProcessing => "PostProcessing",
+            Self::TemporalFeedback => "TemporalFeedback",
+        }
+    }
+
+    fn from_env_value(value: &str) -> Option<Self> {
+        match value.trim() {
+            "ScenePreprocess" => Some(Self::ScenePreprocess),
+            "EffectGraphEvaluation" => Some(Self::EffectGraphEvaluation),
+            "GeometrySdf" => Some(Self::GeometrySdf),
+            "MaterialPattern" => Some(Self::MaterialPattern),
+            "LightingAtmosphere" => Some(Self::LightingAtmosphere),
+            "Particles" => Some(Self::Particles),
+            "PostProcessing" => Some(Self::PostProcessing),
+            "TemporalFeedback" => Some(Self::TemporalFeedback),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -237,6 +280,133 @@ pub fn render_sdf_scene_with_diagnostics(
     render_sdf_scene_with_state_and_diagnostics(scene, config, &mut state)
 }
 
+fn stop_after_sdf_stage_from_env() -> Option<SdfStage> {
+    std::env::var("AUREX_STOP_AFTER_SDF_STAGE")
+        .ok()
+        .as_deref()
+        .and_then(SdfStage::from_env_value)
+}
+
+fn resolved_stop_after_sdf_stage(config: &RenderConfig) -> Option<SdfStage> {
+    config
+        .stop_after_sdf_stage
+        .or_else(stop_after_sdf_stage_from_env)
+}
+
+fn safe_dummy_frame(config: RenderConfig, color: Rgba8) -> RenderedFrame {
+    let len = (config.width as usize) * (config.height as usize);
+    RenderedFrame {
+        width: config.width,
+        height: config.height,
+        pixels: vec![color; len],
+        bloom_prepass: config.output_bloom_prepass.then(|| vec![0.0; len]),
+    }
+}
+
+fn maybe_stop_after_stage(
+    stop_after: Option<SdfStage>,
+    stage: SdfStage,
+    config: RenderConfig,
+    diagnostics: &mut FrameDiagnostics,
+    frame_start: Instant,
+) -> Option<(RenderedFrame, FrameDiagnostics)> {
+    if stop_after == Some(stage) {
+        eprintln!("sdf_stage_stop_after hit stage={}", stage.as_name());
+        diagnostics.total_frame_time_ms = frame_start.elapsed().as_secs_f64() * 1000.0;
+        diagnostics.stats.stage_time_ms_total = diagnostics.total_frame_time_ms;
+        diagnostics.finalize_stage_percentages();
+        return Some((
+            safe_dummy_frame(
+                config,
+                Rgba8 {
+                    r: 8,
+                    g: 8,
+                    b: 12,
+                    a: 255,
+                },
+            ),
+            diagnostics.clone(),
+        ));
+    }
+    None
+}
+
+fn vec3_finite(v: aurex_scene::Vec3) -> bool {
+    v.x.is_finite() && v.y.is_finite() && v.z.is_finite()
+}
+
+fn modifiers_are_finite(modifiers: &[SdfModifier]) -> bool {
+    modifiers.iter().all(|modifier| match modifier {
+        SdfModifier::Repeat { cell }
+        | SdfModifier::RepeatGrid { cell_size: cell }
+        | SdfModifier::Translate { offset: cell }
+        | SdfModifier::Rotate { axis: cell, .. } => vec3_finite(*cell),
+        SdfModifier::Mirror { normal, offset } => vec3_finite(*normal) && offset.is_finite(),
+        SdfModifier::RepeatAxis { spacing, .. }
+        | SdfModifier::Scale { factor: spacing }
+        | SdfModifier::Twist { strength: spacing }
+        | SdfModifier::Bend { strength: spacing } => spacing.is_finite(),
+        SdfModifier::RepeatPolar { sectors } => *sectors > 0,
+        SdfModifier::RepeatSphere { radius } => radius.is_finite() && *radius > 0.0,
+        SdfModifier::KaleidoscopeFold { segments } => *segments > 0,
+        SdfModifier::NoiseDisplacement {
+            amplitude,
+            frequency,
+            ..
+        } => amplitude.is_finite() && frequency.is_finite(),
+        SdfModifier::FoldSpace | SdfModifier::MirrorFold => true,
+    })
+}
+
+fn node_is_finite(node: &SdfNode) -> bool {
+    match node {
+        SdfNode::Empty => true,
+        SdfNode::Primitive { object } => {
+            modifiers_are_finite(&object.modifiers)
+                && object
+                    .bounds_radius
+                    .map(|r| r.is_finite() && r >= 0.0)
+                    .unwrap_or(true)
+        }
+        SdfNode::Group { children }
+        | SdfNode::Union { children }
+        | SdfNode::Intersect { children }
+        | SdfNode::Blend { children, .. }
+        | SdfNode::SmoothUnion { children, .. } => children.iter().all(node_is_finite),
+        SdfNode::Transform {
+            modifiers,
+            child,
+            bounds_radius,
+        } => {
+            modifiers_are_finite(modifiers)
+                && bounds_radius
+                    .map(|r| r.is_finite() && r >= 0.0)
+                    .unwrap_or(true)
+                && node_is_finite(child)
+        }
+        SdfNode::Subtract { base, subtract } => {
+            node_is_finite(base) && subtract.iter().all(node_is_finite)
+        }
+    }
+}
+
+fn validate_scene_for_geometry(scene: &Scene) -> Result<(), &'static str> {
+    let camera = &scene.sdf.camera;
+    if !vec3_finite(camera.position) || !vec3_finite(camera.target) {
+        return Err("camera vectors must be finite");
+    }
+    if !camera.fov_degrees.is_finite() || camera.fov_degrees <= 0.0 {
+        return Err("camera fov must be finite and positive");
+    }
+    if !camera.aspect_ratio.is_finite() || camera.aspect_ratio <= 0.0 {
+        return Err("camera aspect ratio must be finite and positive");
+    }
+    if !node_is_finite(&scene.sdf.root) {
+        return Err("scene root contains non-finite transforms/modifiers");
+    }
+    Ok(())
+}
+
 pub fn render_sdf_scene_with_state_and_diagnostics(
     scene: &Scene,
     config: RenderConfig,
@@ -244,6 +414,7 @@ pub fn render_sdf_scene_with_state_and_diagnostics(
 ) -> (RenderedFrame, FrameDiagnostics) {
     let frame_start = Instant::now();
     let mut diagnostics = FrameDiagnostics::default();
+    let stop_after = resolved_stop_after_sdf_stage(&config);
     reset_lod_counters();
     diagnostics.stages.extend([
         "ScenePreprocess",
@@ -256,12 +427,64 @@ pub fn render_sdf_scene_with_state_and_diagnostics(
         "TemporalFeedback",
     ]);
 
+    eprintln!("sdf_stage_begin stage=ScenePreprocess");
     let animated_scene = scene_at_time(
         scene,
         config.time,
         Some(&mut diagnostics),
         &mut state.effect_graph_cache,
     );
+    eprintln!("sdf_stage_end stage=ScenePreprocess");
+    if let Some(frame) = maybe_stop_after_stage(
+        stop_after,
+        SdfStage::ScenePreprocess,
+        config,
+        &mut diagnostics,
+        frame_start,
+    ) {
+        return frame;
+    }
+
+    if !diagnostics
+        .stage_durations_ms
+        .contains_key("EffectGraphEvaluation")
+    {
+        diagnostics.add_stage_duration("EffectGraphEvaluation", 0.0);
+    }
+    eprintln!("sdf_stage_begin stage=EffectGraphEvaluation");
+    eprintln!("sdf_stage_end stage=EffectGraphEvaluation");
+    if let Some(frame) = maybe_stop_after_stage(
+        stop_after,
+        SdfStage::EffectGraphEvaluation,
+        config,
+        &mut diagnostics,
+        frame_start,
+    ) {
+        return frame;
+    }
+
+    eprintln!("sdf_stage_begin stage=GeometrySdf pre_validation");
+    if let Err(reason) = validate_scene_for_geometry(&animated_scene) {
+        eprintln!("sdf_stage_validation_failed stage=GeometrySdf reason={reason}");
+        diagnostics.add_stage_duration("GeometrySdf", 0.0);
+        diagnostics.total_frame_time_ms = frame_start.elapsed().as_secs_f64() * 1000.0;
+        diagnostics.stats.stage_time_ms_total = diagnostics.total_frame_time_ms;
+        diagnostics.finalize_stage_percentages();
+        return (
+            safe_dummy_frame(
+                config,
+                Rgba8 {
+                    r: 0,
+                    g: 0,
+                    b: 0,
+                    a: 255,
+                },
+            ),
+            diagnostics,
+        );
+    }
+    eprintln!("sdf_stage_end stage=GeometrySdf pre_validation");
+
     let mut post_colors = Vec::with_capacity((config.width * config.height) as usize);
     let mut depth_buffer = Vec::with_capacity((config.width * config.height) as usize);
     let mut bloom_prepass = config
@@ -278,6 +501,7 @@ pub fn render_sdf_scene_with_state_and_diagnostics(
     let mut particles_ns = 0_u128;
     let mut post_ns = 0_u128;
 
+    eprintln!("sdf_stage_begin stage=GeometrySdf");
     for y in 0..config.height {
         for x in 0..config.width {
             let ray = generate_camera_ray(&animated_scene, x, y, config.width, config.height);
@@ -353,16 +577,74 @@ pub fn render_sdf_scene_with_state_and_diagnostics(
             diagnostics.stats.raymarch_steps_total += march_steps as u64;
         }
     }
-
     diagnostics.add_stage_duration("GeometrySdf", geometry_ns as f64 / 1_000_000.0);
+    eprintln!("sdf_stage_end stage=GeometrySdf");
+    if let Some(frame) = maybe_stop_after_stage(
+        stop_after,
+        SdfStage::GeometrySdf,
+        config,
+        &mut diagnostics,
+        frame_start,
+    ) {
+        return frame;
+    }
+
+    eprintln!("sdf_stage_begin stage=MaterialPattern");
     diagnostics.add_stage_duration("MaterialPattern", material_pattern_ns as f64 / 1_000_000.0);
+    eprintln!("sdf_stage_end stage=MaterialPattern");
+    if let Some(frame) = maybe_stop_after_stage(
+        stop_after,
+        SdfStage::MaterialPattern,
+        config,
+        &mut diagnostics,
+        frame_start,
+    ) {
+        return frame;
+    }
+
+    eprintln!("sdf_stage_begin stage=LightingAtmosphere");
     diagnostics.add_stage_duration(
         "LightingAtmosphere",
         lighting_atmosphere_ns as f64 / 1_000_000.0,
     );
-    diagnostics.add_stage_duration("Particles", particles_ns as f64 / 1_000_000.0);
-    diagnostics.add_stage_duration("PostProcessing", post_ns as f64 / 1_000_000.0);
+    eprintln!("sdf_stage_end stage=LightingAtmosphere");
+    if let Some(frame) = maybe_stop_after_stage(
+        stop_after,
+        SdfStage::LightingAtmosphere,
+        config,
+        &mut diagnostics,
+        frame_start,
+    ) {
+        return frame;
+    }
 
+    eprintln!("sdf_stage_begin stage=Particles");
+    diagnostics.add_stage_duration("Particles", particles_ns as f64 / 1_000_000.0);
+    eprintln!("sdf_stage_end stage=Particles");
+    if let Some(frame) = maybe_stop_after_stage(
+        stop_after,
+        SdfStage::Particles,
+        config,
+        &mut diagnostics,
+        frame_start,
+    ) {
+        return frame;
+    }
+
+    eprintln!("sdf_stage_begin stage=PostProcessing");
+    diagnostics.add_stage_duration("PostProcessing", post_ns as f64 / 1_000_000.0);
+    eprintln!("sdf_stage_end stage=PostProcessing");
+    if let Some(frame) = maybe_stop_after_stage(
+        stop_after,
+        SdfStage::PostProcessing,
+        config,
+        &mut diagnostics,
+        frame_start,
+    ) {
+        return frame;
+    }
+
+    eprintln!("sdf_stage_begin stage=TemporalFeedback");
     let temporal_start = Instant::now();
     let temporal_effects: Vec<TemporalEffect> = animated_scene
         .sdf
@@ -402,6 +684,17 @@ pub fn render_sdf_scene_with_state_and_diagnostics(
         "TemporalFeedback",
         temporal_start.elapsed().as_secs_f64() * 1000.0,
     );
+    eprintln!("sdf_stage_end stage=TemporalFeedback");
+    if let Some(frame) = maybe_stop_after_stage(
+        stop_after,
+        SdfStage::TemporalFeedback,
+        config,
+        &mut diagnostics,
+        frame_start,
+    ) {
+        return frame;
+    }
+
     let pixels = to_rgba8_pixels(&final_colors);
 
     let effect_graph_evals = diagnostics.stats.cache.effect_graph_evals;
@@ -913,7 +1206,7 @@ fn scene_at_time(
         );
     }
 
-    if let Some(d) = diagnostics.as_deref_mut() {
+    if let Some(d) = diagnostics {
         d.add_stage_duration(
             "ScenePreprocess",
             preprocess_start.elapsed().as_secs_f64() * 1000.0,
@@ -930,45 +1223,39 @@ fn apply_generator_keyframes(
 ) {
     if let Some(TimelineValue::Float { value }) =
         timeline.sample_keyframe_value("generator.tunnel.radius", t)
+        && let SceneGenerator::Tunnel(g) = generator
     {
-        if let SceneGenerator::Tunnel(g) = generator {
-            g.radius = value;
-        }
+        g.radius = value;
     }
     if let Some(TimelineValue::Float { value }) =
         timeline.sample_keyframe_value("generator.tunnel.twist", t)
+        && let SceneGenerator::Tunnel(g) = generator
     {
-        if let SceneGenerator::Tunnel(g) = generator {
-            g.twist = value;
-        }
+        g.twist = value;
     }
     if let Some(TimelineValue::Float { value }) =
         timeline.sample_keyframe_value("generator.temple.fractal_scale", t)
+        && let SceneGenerator::FractalTemple(g) = generator
     {
-        if let SceneGenerator::FractalTemple(g) = generator {
-            g.fractal_scale = value;
-        }
+        g.fractal_scale = value;
     }
     if let Some(TimelineValue::Float { value }) =
         timeline.sample_keyframe_value("generator.circuit.component_density", t)
+        && let SceneGenerator::CircuitBoard(g) = generator
     {
-        if let SceneGenerator::CircuitBoard(g) = generator {
-            g.component_density = value;
-        }
+        g.component_density = value;
     }
     if let Some(TimelineValue::Float { value }) =
         timeline.sample_keyframe_value("generator.galaxy.rotation_speed", t)
+        && let SceneGenerator::ParticleGalaxy(g) = generator
     {
-        if let SceneGenerator::ParticleGalaxy(g) = generator {
-            g.rotation_speed = value;
-        }
+        g.rotation_speed = value;
     }
     if let Some(TimelineValue::Float { value }) =
         timeline.sample_keyframe_value("generator.galaxy.radius", t)
+        && let SceneGenerator::ParticleGalaxy(g) = generator
     {
-        if let SceneGenerator::ParticleGalaxy(g) = generator {
-            g.radius = value;
-        }
+        g.radius = value;
     }
 }
 
@@ -1154,12 +1441,12 @@ fn apply_rhythm_space_to_scene(scene: &mut Scene, features: AudioFeatures, t: f3
                     g.radius *= 1.0 + beat_pulse * 0.08;
                 }
                 SceneGenerator::FractalTemple(g) => {
-                    let measure_gate = if features.current_beat % 4 == 0 {
+                    let measure_gate = if features.current_beat.is_multiple_of(4) {
                         1.0
                     } else {
                         0.0
                     };
-                    let phrase_gate = if features.current_beat % 16 == 0 {
+                    let phrase_gate = if features.current_beat.is_multiple_of(16) {
                         1.0
                     } else {
                         0.0
@@ -1233,12 +1520,12 @@ fn apply_rhythm_space_to_scene(scene: &mut Scene, features: AudioFeatures, t: f3
             .push(aurex_scene::fields::SceneField::Rhythm(
                 aurex_scene::fields::RhythmField {
                     beat_strength: (1.0 - features.beat_phase).max(0.0),
-                    measure_strength: if features.current_beat % 4 == 0 {
+                    measure_strength: if features.current_beat.is_multiple_of(4) {
                         1.0
                     } else {
                         0.35
                     },
-                    phrase_strength: if features.current_beat % 16 == 0 {
+                    phrase_strength: if features.current_beat.is_multiple_of(16) {
                         1.0
                     } else {
                         0.2
@@ -2265,11 +2552,12 @@ impl std::ops::Div<f32> for V3 {
 #[cfg(test)]
 mod tests {
     use super::{
-        RenderConfig, RenderTime, evaluate_material, render_sdf_scene_with_config, smooth_min,
+        RenderConfig, RenderTime, SdfStage, evaluate_material, render_sdf_scene_with_config,
+        render_sdf_scene_with_diagnostics, smooth_min,
     };
     use aurex_scene::{
         Scene, SdfCamera, SdfLighting, SdfMaterial, SdfMaterialType, SdfModifier, SdfNode,
-        SdfObject, SdfPattern, SdfPrimitive, Vec3,
+        SdfObject, SdfPattern, SdfPrimitive, Vec3, generators,
         patterns::{
             PatternBinding, PatternComposeOp, PatternLayer, PatternNetwork, PatternNode,
             PatternParams, PatternPreset,
@@ -2506,6 +2794,107 @@ mod tests {
             },
         );
         assert_ne!(with_fx.pixels, no_fx.pixels);
+    }
+
+    #[test]
+    fn generator_stack_drives_geometry_sdf_stage() {
+        let mut scene = sample_scene();
+        scene.sdf.root = SdfNode::Empty;
+        scene.sdf.generator = None;
+        scene.sdf.generator_stack = Some(generators::electronic_city_stack());
+
+        let (frame, diagnostics) = render_sdf_scene_with_diagnostics(
+            &scene,
+            RenderConfig {
+                width: 48,
+                height: 27,
+                time: RenderTime { seconds: 0.6 },
+                ..RenderConfig::default()
+            },
+        );
+
+        let geometry_ms = diagnostics
+            .stage_durations_ms
+            .get("GeometrySdf")
+            .copied()
+            .unwrap_or(0.0);
+
+        assert!(geometry_ms > 0.0);
+        assert!(
+            frame
+                .pixels
+                .iter()
+                .any(|px| px.r > 0 || px.g > 0 || px.b > 0)
+        );
+    }
+
+    #[test]
+    fn stop_after_each_sdf_stage_returns_valid_frame() {
+        let stages = [
+            SdfStage::ScenePreprocess,
+            SdfStage::EffectGraphEvaluation,
+            SdfStage::GeometrySdf,
+            SdfStage::MaterialPattern,
+            SdfStage::LightingAtmosphere,
+            SdfStage::Particles,
+            SdfStage::PostProcessing,
+            SdfStage::TemporalFeedback,
+        ];
+
+        for stage in stages {
+            let (frame, diagnostics) = render_sdf_scene_with_diagnostics(
+                &sample_scene(),
+                RenderConfig {
+                    width: 24,
+                    height: 16,
+                    stop_after_sdf_stage: Some(stage),
+                    ..RenderConfig::default()
+                },
+            );
+            assert_eq!(frame.width, 24);
+            assert_eq!(frame.height, 16);
+            assert_eq!(frame.pixels.len(), 24 * 16);
+            assert!(diagnostics.stages.contains(&stage.as_name()));
+        }
+    }
+
+    #[test]
+    fn geometry_sdf_stop_returns_safe_frame() {
+        let (frame, _) = render_sdf_scene_with_diagnostics(
+            &sample_scene(),
+            RenderConfig {
+                width: 18,
+                height: 10,
+                stop_after_sdf_stage: Some(SdfStage::GeometrySdf),
+                ..RenderConfig::default()
+            },
+        );
+        assert_eq!(frame.pixels.len(), 18 * 10);
+    }
+
+    #[test]
+    fn invalid_camera_returns_fallback_frame() {
+        let mut scene = sample_scene();
+        scene.sdf.camera.position.x = f32::NAN;
+        let (frame, diagnostics) = render_sdf_scene_with_diagnostics(
+            &scene,
+            RenderConfig {
+                width: 20,
+                height: 12,
+                ..RenderConfig::default()
+            },
+        );
+        assert_eq!(frame.width, 20);
+        assert_eq!(frame.height, 12);
+        assert_eq!(frame.pixels.len(), 20 * 12);
+        assert_eq!(
+            diagnostics
+                .stage_durations_ms
+                .get("GeometrySdf")
+                .copied()
+                .unwrap_or(-1.0),
+            0.0
+        );
     }
 
     #[test]
