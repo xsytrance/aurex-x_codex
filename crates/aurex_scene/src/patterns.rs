@@ -1,21 +1,17 @@
 use crate::Vec3;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum PatternSpace {
+    #[default]
     World,
     Local,
     Surface,
 }
 
-impl Default for PatternSpace {
-    fn default() -> Self {
-        Self::World
-    }
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum PatternReactiveSource {
+    #[default]
     None,
     Low,
     Mid,
@@ -25,12 +21,6 @@ pub enum PatternReactiveSource {
     Measure,
     Phrase,
     Tempo,
-}
-
-impl Default for PatternReactiveSource {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
@@ -96,11 +86,12 @@ pub enum PatternNode {
     MosaicPattern(PatternParams),
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum PatternComposeOp {
     Add,
     Multiply,
     Mask,
+    #[default]
     Blend,
     Max,
     Min,
@@ -121,12 +112,6 @@ pub struct PatternLayer {
 
 fn default_layer_weight() -> f32 {
     1.0
-}
-
-impl Default for PatternComposeOp {
-    fn default() -> Self {
-        Self::Blend
-    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -514,7 +499,7 @@ fn rotate2(x: f32, y: f32, r: f32) -> (f32, f32) {
 }
 
 fn hash3(x: f32, y: f32, z: f32, seed: u32) -> f32 {
-    let v = (x * 127.1 + y * 311.7 + z * 74.7 + seed as f32 * 19.19).sin() * 43758.5453;
+    let v = (x * 127.1 + y * 311.7 + z * 74.7 + seed as f32 * 19.19).sin() * 43_758.547;
     v.fract() * 2.0 - 1.0
 }
 
