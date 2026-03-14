@@ -1,6 +1,7 @@
 mod pulse_builder;
 mod pulse_sequence;
 mod pulses;
+mod runtime_flags;
 mod timeline;
 
 use aurex_audio::{
@@ -27,6 +28,7 @@ use pulses::{
     },
     jazz_atmosphere::create_jazz_atmosphere_pulse,
 };
+use runtime_flags::RuntimeDebugFlags;
 use timeline::{
     AudioAction, AudioCue, AudioTransport, EventScheduler, PulseTimeline, SceneManager,
     SceneVisualProfile, TimelineClock, TimelineEvent, TimelineEventKind, blend_scene_profiles,
@@ -656,6 +658,8 @@ fn runtime_diagnostics_report(selected_pulse: &ExamplePulseConfig) -> String {
 }
 
 fn main() {
+    let debug_flags = RuntimeDebugFlags::from_env();
+
     let options = match parse_runtime_options(std::env::args().skip(1)) {
         Ok(options) => options,
         Err(err) => {
@@ -668,6 +672,7 @@ fn main() {
     let pulse = pulse_loop.pulse.clone();
 
     println!("Launching Pulse: {}", pulse.pulse_name);
+    println!("runtime_debug_flags={}", debug_flags.summary());
     if let Some(duration) = pulse.sequence_duration_seconds {
         println!("Sequence Duration: {:.1}s", duration);
     }

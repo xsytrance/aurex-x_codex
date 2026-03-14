@@ -140,6 +140,7 @@ dependencies = [
  "aurex_core",
  "aurex_ecs",
  "aurex_lighting",
+ "aurex_midi",
  "aurex_postfx",
  "aurex_render",
  "aurex_shape_synth",
@@ -175,6 +176,14 @@ dependencies = [
 [[package]]
 name = "aurex_lighting"
 version = "0.1.0"
+
+[[package]]
+name = "aurex_midi"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "aurex_music"
