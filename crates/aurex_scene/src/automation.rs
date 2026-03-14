@@ -108,10 +108,10 @@ pub fn apply_bindings(
         let value = binding.track.sample(input, seed);
         match binding.target {
             AutomationTarget::TunnelRadius => {
-                if let Some(generator) = &mut scene.sdf.generator {
-                    if let crate::generators::SceneGenerator::Tunnel(tunnel) = generator {
-                        tunnel.radius = (tunnel.radius + value * 0.15).max(0.2);
-                    }
+                if let Some(generator) = &mut scene.sdf.generator
+                    && let crate::generators::SceneGenerator::Tunnel(tunnel) = generator
+                {
+                    tunnel.radius = (tunnel.radius + value * 0.15).max(0.2);
                 }
                 for o in &mut scene.sdf.objects {
                     if let SdfPrimitive::Torus { major_radius, .. } = &mut o.primitive {
@@ -149,7 +149,7 @@ pub fn apply_bindings(
 }
 
 fn hash_noise(t: f32, seed: u32) -> f32 {
-    let v = (t * 37.1 + seed as f32 * 0.17).sin() * 43758.5453;
+    let v = (t * 37.1 + seed as f32 * 0.17).sin() * 43_758.547;
     v.fract().abs()
 }
 
