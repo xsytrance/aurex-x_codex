@@ -40,6 +40,7 @@ use lod::{LodConfig, lod_activation_count, lod_iterations, reset_lod_counters};
 use noise::{NoiseVec3, fbm, value_noise};
 use particles::{ParticleConfig, particle_overlay};
 use post::{PostProcessConfig, process_pixel};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 use temporal::{
@@ -948,6 +949,34 @@ struct RayStageDurations {
 struct NodeEval {
     distance: f32,
     material: SdfMaterial,
+}
+
+const SAFE_FAR_DISTANCE: f32 = 1.0e6;
+const MAX_NODE_EVAL_DEPTH: usize = 256;
+const INVALID_MATH_WARNING_LIMIT: usize = 64;
+static INVALID_MATH_WARNING_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+fn log_invalid_math_warning(message: &str) {
+    let warning_idx = INVALID_MATH_WARNING_COUNT.fetch_add(1, Ordering::Relaxed);
+    if warning_idx < INVALID_MATH_WARNING_LIMIT {
+        eprintln!("geometry_sdf_warning kind=invalid_math detail={message}");
+    }
+}
+
+fn safe_miss_eval() -> NodeEval {
+    NodeEval {
+        distance: SAFE_FAR_DISTANCE,
+        material: SdfMaterial::default(),
+    }
+}
+
+fn sanitize_eval(mut eval: NodeEval, context: &str) -> NodeEval {
+    if !eval.distance.is_finite() {
+        log_invalid_math_warning(&format!("context={context} reason=non_finite_distance"));
+        return safe_miss_eval();
+    }
+    eval.distance = eval.distance.clamp(-SAFE_FAR_DISTANCE, SAFE_FAR_DISTANCE);
+    eval
 }
 
 fn scene_at_time(
@@ -1881,7 +1910,18 @@ fn apply_pattern(pattern: SdfPattern, p: V3, time: f32, seed: i32) -> f32 {
 }
 
 fn march_scene(scene: &Scene, origin: V3, direction: V3, config: RenderConfig) -> Option<Hit> {
-    let mut t = 0.0;
+    if !origin.x.is_finite()
+        || !origin.y.is_finite()
+        || !origin.z.is_finite()
+        || !direction.x.is_finite()
+        || !direction.y.is_finite()
+        || !direction.z.is_finite()
+    {
+        log_invalid_math_warning("context=march_scene reason=non_finite_ray");
+        return None;
+    }
+
+    let mut t: f32 = 0.0;
     let mut glow = 0.0;
     let mut march_steps = 0;
     let mut reduction_acc = 0.0_f32;
@@ -1895,7 +1935,15 @@ fn march_scene(scene: &Scene, origin: V3, direction: V3, config: RenderConfig) -
 
     for _ in 0..max_steps {
         march_steps += 1;
+        if !t.is_finite() {
+            log_invalid_math_warning("context=march_scene reason=non_finite_accumulated_distance");
+            return None;
+        }
         let p = origin + direction * t;
+        if !p.x.is_finite() || !p.y.is_finite() || !p.z.is_finite() {
+            log_invalid_math_warning("context=march_scene reason=non_finite_point");
+            return None;
+        }
         let eval = scene_distance(scene, p, config.time.seconds, config);
 
         if !eval.distance.is_finite() {
@@ -1929,7 +1977,8 @@ fn march_scene(scene: &Scene, origin: V3, direction: V3, config: RenderConfig) -
         }
 
         let clamped_distance = eval.distance.max(config.surface_epsilon.max(min_advance));
-        let base_step = clamped_distance.max(config.surface_epsilon * config.min_step_scale.max(0.05));
+        let base_step =
+            clamped_distance.max(config.surface_epsilon * config.min_step_scale.max(0.05));
         let far_factor = if config.adaptive_raymarch {
             (1.0 + (t / max_distance.max(1.0)) * config.far_field_boost).clamp(
                 config.min_step_scale.max(0.05),
@@ -1938,8 +1987,8 @@ fn march_scene(scene: &Scene, origin: V3, direction: V3, config: RenderConfig) -
         } else {
             1.0
         };
-        let adaptive_step = (base_step * far_factor * config.quality.raymarch_quality.max(0.25))
-            .max(min_advance);
+        let adaptive_step =
+            (base_step * far_factor * config.quality.raymarch_quality.max(0.25)).max(min_advance);
         let cone_cfg = ConeMarchConfig {
             cone_step_multiplier: config.cone_step_multiplier,
             cone_shadow_factor: config.cone_shadow_factor,
@@ -1958,7 +2007,10 @@ fn march_scene(scene: &Scene, origin: V3, direction: V3, config: RenderConfig) -
 
         let next_t = (t + stepped).max(t + min_advance);
         if !next_t.is_finite() || next_t <= t {
-            eprintln!("raymarch_guard break=non_advancing_ray t={:.6} next_t={:.6}", t, next_t);
+            eprintln!(
+                "raymarch_guard break=non_advancing_ray t={:.6} next_t={:.6}",
+                t, next_t
+            );
             return None;
         }
         t = next_t;
@@ -1976,6 +2028,10 @@ fn soft_shadow(scene: &Scene, origin: V3, direction: V3, config: RenderConfig) -
     for _ in 0..config.shadow_steps {
         let p = origin + direction * t;
         let eval = scene_distance(scene, p, config.time.seconds, config);
+        if !eval.distance.is_finite() {
+            log_invalid_math_warning("context=soft_shadow reason=non_finite_distance");
+            return 1.0;
+        }
         if eval.distance < config.surface_epsilon {
             return 0.0;
         }
@@ -1988,7 +2044,12 @@ fn soft_shadow(scene: &Scene, origin: V3, direction: V3, config: RenderConfig) -
         shadow = shadow.min(
             config.shadow_softness * shadow_cone_factor(eval.distance, cone_cfg) / t.max(0.001),
         );
-        t += cone_step(eval.distance, t, cone_cfg).max(0.01);
+        let step = cone_step(eval.distance.max(1e-4), t, cone_cfg).max(0.01);
+        if !step.is_finite() {
+            log_invalid_math_warning("context=soft_shadow reason=non_finite_step");
+            return 1.0;
+        }
+        t += step;
         if t > config.max_distance {
             break;
         }
@@ -2008,21 +2069,33 @@ fn estimate_normal(scene: &Scene, p: V3, eps: f32, time: f32, config: RenderConf
     let dz = scene_distance(scene, p + ez, time, config).distance
         - scene_distance(scene, p - ez, time, config).distance;
 
-    V3::new(dx, dy, dz).normalized()
+    let n = V3::new(dx, dy, dz).normalized();
+    if !n.x.is_finite() || !n.y.is_finite() || !n.z.is_finite() {
+        return V3::new(0.0, 1.0, 0.0);
+    }
+    n
 }
 
 fn scene_distance(scene: &Scene, point: V3, time: f32, config: RenderConfig) -> NodeEval {
+    if !point.x.is_finite() || !point.y.is_finite() || !point.z.is_finite() {
+        log_invalid_math_warning("context=scene_distance reason=non_finite_input_point");
+        return safe_miss_eval();
+    }
     let field = sample_scene_fields(scene, point, time);
     let warped = point + V3::new(field.vector.x, field.vector.y, field.vector.z) * 0.08;
+    if !warped.x.is_finite() || !warped.y.is_finite() || !warped.z.is_finite() {
+        log_invalid_math_warning("context=scene_distance reason=non_finite_warped_point");
+        return safe_miss_eval();
+    }
     if !matches!(scene.sdf.root, SdfNode::Empty) {
         evaluate_node(&scene.sdf.root, warped, scene.sdf.seed, time, None, config)
     } else {
-        let mut best = NodeEval {
-            distance: f32::INFINITY,
-            material: SdfMaterial::default(),
-        };
+        let mut best = safe_miss_eval();
         for object in &scene.sdf.objects {
-            let eval = evaluate_object(object, warped, scene.sdf.seed, time, config);
+            let eval = sanitize_eval(
+                evaluate_object(object, warped, scene.sdf.seed, time, config),
+                "scene_distance_object",
+            );
             if eval.distance < best.distance {
                 best = eval;
             }
@@ -2039,20 +2112,41 @@ fn evaluate_node(
     hint: Option<f32>,
     config: RenderConfig,
 ) -> NodeEval {
+    evaluate_node_with_depth(node, point, scene_seed, time, hint, config, 0)
+}
+
+fn evaluate_node_with_depth(
+    node: &SdfNode,
+    point: V3,
+    scene_seed: u32,
+    time: f32,
+    hint: Option<f32>,
+    config: RenderConfig,
+    depth: usize,
+) -> NodeEval {
+    if depth >= MAX_NODE_EVAL_DEPTH {
+        log_invalid_math_warning("context=evaluate_node reason=max_depth_exceeded");
+        return safe_miss_eval();
+    }
+
     match node {
-        SdfNode::Empty => NodeEval {
-            distance: f32::INFINITY,
-            material: SdfMaterial::default(),
-        },
-        SdfNode::Primitive { object } => evaluate_object(object, point, scene_seed, time, config),
+        SdfNode::Empty => safe_miss_eval(),
+        SdfNode::Primitive { object } => sanitize_eval(
+            evaluate_object(object, point, scene_seed, time, config),
+            "evaluate_node_primitive",
+        ),
         SdfNode::Group { children } | SdfNode::Union { children } => {
-            let mut best = NodeEval {
-                distance: f32::INFINITY,
-                material: SdfMaterial::default(),
-            };
+            let mut best = safe_miss_eval();
             for child in children {
-                let child_eval =
-                    evaluate_node(child, point, scene_seed, time, Some(best.distance), config);
+                let child_eval = evaluate_node_with_depth(
+                    child,
+                    point,
+                    scene_seed,
+                    time,
+                    Some(best.distance),
+                    config,
+                    depth + 1,
+                );
                 if child_eval.distance < best.distance {
                     best = child_eval;
                     if let Some(h) = hint
@@ -2065,12 +2159,17 @@ fn evaluate_node(
             best
         }
         SdfNode::SmoothUnion { children, k } => {
-            let mut acc = NodeEval {
-                distance: f32::INFINITY,
-                material: SdfMaterial::default(),
-            };
+            let mut acc = safe_miss_eval();
             for child in children {
-                let next = evaluate_node(child, point, scene_seed, time, hint, config);
+                let next = evaluate_node_with_depth(
+                    child,
+                    point,
+                    scene_seed,
+                    time,
+                    hint,
+                    config,
+                    depth + 1,
+                );
                 if !acc.distance.is_finite() {
                     acc = next;
                 } else {
@@ -2083,60 +2182,87 @@ fn evaluate_node(
                     } else {
                         acc.material.clone()
                     };
-                    acc = NodeEval {
-                        distance: d,
-                        material: mat,
-                    };
+                    acc = sanitize_eval(
+                        NodeEval {
+                            distance: d,
+                            material: mat,
+                        },
+                        "evaluate_node_smooth_union",
+                    );
                 }
             }
             acc
         }
         SdfNode::Subtract { base, subtract } => {
-            let mut base_eval = evaluate_node(base, point, scene_seed, time, hint, config);
+            let mut base_eval =
+                evaluate_node_with_depth(base, point, scene_seed, time, hint, config, depth + 1);
             if subtract.is_empty() {
                 return base_eval;
             }
             let mut d_sub = f32::INFINITY;
             for n in subtract {
-                let e = evaluate_node(n, point, scene_seed, time, Some(d_sub), config);
+                let e = evaluate_node_with_depth(
+                    n,
+                    point,
+                    scene_seed,
+                    time,
+                    Some(d_sub),
+                    config,
+                    depth + 1,
+                );
                 d_sub = d_sub.min(e.distance);
             }
             base_eval.distance = smooth_max(base_eval.distance, -d_sub, 0.0);
-            base_eval
+            sanitize_eval(base_eval, "evaluate_node_subtract")
         }
         SdfNode::Intersect { children } => {
             if children.is_empty() {
-                return NodeEval {
-                    distance: f32::INFINITY,
-                    material: SdfMaterial::default(),
-                };
+                return safe_miss_eval();
             }
-            let mut acc = evaluate_node(&children[0], point, scene_seed, time, hint, config);
+            let mut acc = evaluate_node_with_depth(
+                &children[0],
+                point,
+                scene_seed,
+                time,
+                hint,
+                config,
+                depth + 1,
+            );
             for child in &children[1..] {
-                let e = evaluate_node(child, point, scene_seed, time, hint, config);
+                let e = evaluate_node_with_depth(
+                    child,
+                    point,
+                    scene_seed,
+                    time,
+                    hint,
+                    config,
+                    depth + 1,
+                );
                 if e.distance > acc.distance {
                     acc.material = e.material.clone();
                 }
                 acc.distance = acc.distance.max(e.distance);
             }
-            acc
+            sanitize_eval(acc, "evaluate_node_intersect")
         }
         SdfNode::Blend { children, weights } => {
             if children.is_empty() {
-                return NodeEval {
-                    distance: f32::INFINITY,
-                    material: SdfMaterial::default(),
-                };
+                return safe_miss_eval();
             }
             let mut sum_w = 0.0;
             let mut dist = 0.0;
-            let mut nearest = NodeEval {
-                distance: f32::INFINITY,
-                material: SdfMaterial::default(),
-            };
+            let mut nearest = safe_miss_eval();
             for (i, child) in children.iter().enumerate() {
                 let w = weights.get(i).copied().unwrap_or(1.0).max(0.0001);
-                let e = evaluate_node(child, point, scene_seed, time, hint, config);
+                let e = evaluate_node_with_depth(
+                    child,
+                    point,
+                    scene_seed,
+                    time,
+                    hint,
+                    config,
+                    depth + 1,
+                );
                 dist += e.distance * w;
                 sum_w += w;
                 if e.distance < nearest.distance {
@@ -2144,7 +2270,7 @@ fn evaluate_node(
                 }
             }
             nearest.distance = dist / sum_w.max(0.0001);
-            nearest
+            sanitize_eval(nearest, "evaluate_node_blend")
         }
         SdfNode::Transform {
             modifiers,
@@ -2155,28 +2281,39 @@ fn evaluate_node(
             let mut scale = 1.0;
             for modifier in modifiers {
                 apply_modifier(&mut p, &mut scale, modifier, scene_seed, time);
+                if !p.x.is_finite() || !p.y.is_finite() || !p.z.is_finite() || !scale.is_finite() {
+                    log_invalid_math_warning(
+                        "context=evaluate_node_transform reason=non_finite_modifier_output",
+                    );
+                    return safe_miss_eval();
+                }
             }
+            let safe_scale = scale.abs().clamp(1e-4, 1e4);
             if let Some(r) = bounds_radius {
                 let bound_d = p.length() - *r;
                 if let Some(h) = hint
                     && bound_d > h
                 {
-                    return NodeEval {
-                        distance: bound_d,
-                        material: SdfMaterial::default(),
-                    };
+                    return sanitize_eval(
+                        NodeEval {
+                            distance: bound_d,
+                            material: SdfMaterial::default(),
+                        },
+                        "evaluate_node_transform_bound",
+                    );
                 }
             }
-            let mut eval = evaluate_node(
+            let mut eval = evaluate_node_with_depth(
                 child,
                 p,
                 scene_seed,
                 time,
-                hint.map(|h| h / scale.max(1e-6)),
+                hint.map(|h| h / safe_scale),
                 config,
+                depth + 1,
             );
-            eval.distance *= scale;
-            eval
+            eval.distance *= safe_scale;
+            sanitize_eval(eval, "evaluate_node_transform")
         }
     }
 }
@@ -2192,7 +2329,12 @@ fn evaluate_object(
     let mut distance_scale = 1.0;
     for modifier in &object.modifiers {
         apply_modifier(&mut p, &mut distance_scale, modifier, scene_seed, time);
+        if !p.x.is_finite() || !p.y.is_finite() || !p.z.is_finite() || !distance_scale.is_finite() {
+            log_invalid_math_warning("context=evaluate_object reason=non_finite_modifier_output");
+            return safe_miss_eval();
+        }
     }
+    distance_scale = distance_scale.abs().clamp(1e-4, 1e4);
     if let Some(r) = object.bounds_radius {
         let bound_d = p.length() - r;
         if bound_d > 4.0 {
@@ -2203,10 +2345,13 @@ fn evaluate_object(
         }
     }
     let distance = eval_primitive(&object.primitive, p, scene_seed, time, config) * distance_scale;
-    NodeEval {
-        distance,
-        material: object.material.clone(),
-    }
+    sanitize_eval(
+        NodeEval {
+            distance,
+            material: object.material.clone(),
+        },
+        "evaluate_object",
+    )
 }
 
 fn apply_modifier(
@@ -2576,8 +2721,9 @@ impl std::ops::Div<f32> for V3 {
 #[cfg(test)]
 mod tests {
     use super::{
-        RenderConfig, RenderTime, SdfStage, evaluate_material, render_sdf_scene_with_config,
-        render_sdf_scene_with_diagnostics, smooth_min,
+        MAX_NODE_EVAL_DEPTH, RenderConfig, RenderTime, SdfStage, V3, evaluate_material,
+        march_scene, render_sdf_scene_with_config, render_sdf_scene_with_diagnostics,
+        scene_distance, smooth_min,
     };
     use aurex_scene::{
         Scene, SdfCamera, SdfLighting, SdfMaterial, SdfMaterialType, SdfModifier, SdfNode,
@@ -2962,8 +3108,110 @@ mod tests {
         if let Some(hit) = hit {
             assert!(hit.distance_traveled.is_finite());
             assert!(hit.distance_traveled <= 0.05);
-            assert!(hit.position.x.is_finite() && hit.position.y.is_finite() && hit.position.z.is_finite());
+            assert!(
+                hit.position.x.is_finite()
+                    && hit.position.y.is_finite()
+                    && hit.position.z.is_finite()
+            );
         }
+    }
+
+    #[test]
+    fn invalid_transform_does_not_crash_geometry_sdf() {
+        let mut scene = sample_scene();
+        scene.sdf.root = SdfNode::Transform {
+            modifiers: vec![SdfModifier::Scale { factor: f32::NAN }],
+            child: Box::new(SdfNode::Primitive {
+                object: SdfObject {
+                    primitive: SdfPrimitive::Sphere { radius: 1.0 },
+                    modifiers: vec![],
+                    material: SdfMaterial::default(),
+                    bounds_radius: Some(1.0),
+                },
+            }),
+            bounds_radius: Some(2.0),
+        };
+
+        let (frame, _) = render_sdf_scene_with_diagnostics(
+            &scene,
+            RenderConfig {
+                width: 20,
+                height: 12,
+                ..RenderConfig::default()
+            },
+        );
+
+        assert_eq!(frame.pixels.len(), 20 * 12);
+    }
+
+    #[test]
+    fn node_traversal_depth_limit_returns_safe_distance() {
+        let mut nested = SdfNode::Primitive {
+            object: SdfObject {
+                primitive: SdfPrimitive::Sphere { radius: 1.0 },
+                modifiers: vec![],
+                material: SdfMaterial::default(),
+                bounds_radius: Some(1.0),
+            },
+        };
+
+        for _ in 0..(MAX_NODE_EVAL_DEPTH + 16) {
+            nested = SdfNode::Transform {
+                modifiers: vec![SdfModifier::Translate {
+                    offset: Vec3::new(0.0, 0.0, 0.0),
+                }],
+                child: Box::new(nested),
+                bounds_radius: Some(10.0),
+            };
+        }
+
+        let eval = scene_distance(
+            &Scene {
+                sdf: aurex_scene::SdfScene {
+                    root: nested,
+                    ..sample_scene().sdf
+                },
+            },
+            V3::new(0.0, 0.0, 0.0),
+            0.0,
+            RenderConfig::default(),
+        );
+
+        assert!(eval.distance.is_finite());
+        assert!(eval.distance >= 0.0);
+    }
+
+    #[test]
+    fn bad_scene_data_still_returns_valid_framebuffer() {
+        let mut scene = sample_scene();
+        scene.sdf.root = SdfNode::Primitive {
+            object: SdfObject {
+                primitive: SdfPrimitive::Mandelbulb {
+                    power: f32::NAN,
+                    iterations: 32,
+                    bailout: 8.0,
+                },
+                modifiers: vec![SdfModifier::NoiseDisplacement {
+                    amplitude: f32::NAN,
+                    frequency: 1.0,
+                    seed: 1,
+                }],
+                material: SdfMaterial::default(),
+                bounds_radius: None,
+            },
+        };
+
+        let frame = render_sdf_scene_with_config(
+            &scene,
+            RenderConfig {
+                width: 16,
+                height: 9,
+                ..RenderConfig::default()
+            },
+        );
+        assert_eq!(frame.width, 16);
+        assert_eq!(frame.height, 9);
+        assert_eq!(frame.pixels.len(), 16 * 9);
     }
 
     #[test]
