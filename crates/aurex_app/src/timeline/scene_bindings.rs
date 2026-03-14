@@ -25,6 +25,30 @@ impl Default for SceneVisualProfile {
 
 pub fn profile_for_scene(scene_id: &str) -> SceneVisualProfile {
     match scene_id {
+        "megacity_skyline" => SceneVisualProfile {
+            geometry_density: 0.92,
+            particle_density: 0.28,
+            fog_density: 0.22,
+            glow_intensity: 0.88,
+            starfield_enabled: false,
+            logo_enabled: false,
+        },
+        "jazz_lounge" => SceneVisualProfile {
+            geometry_density: 0.42,
+            particle_density: 0.22,
+            fog_density: 0.68,
+            glow_intensity: 0.52,
+            starfield_enabled: false,
+            logo_enabled: false,
+        },
+        "ambient_mist" => SceneVisualProfile {
+            geometry_density: 0.18,
+            particle_density: 0.16,
+            fog_density: 0.86,
+            glow_intensity: 0.34,
+            starfield_enabled: true,
+            logo_enabled: false,
+        },
         "boot_pulse" => SceneVisualProfile {
             geometry_density: 0.35,
             particle_density: 0.2,
@@ -135,6 +159,16 @@ mod tests {
         let stars = profile_for_scene("starfield_expansion");
         assert!(stars.starfield_enabled);
         assert!(stars.particle_density > 0.6);
+    }
+
+    #[test]
+    fn demo_profiles_are_distinct() {
+        let megacity = profile_for_scene("megacity_skyline");
+        let jazz = profile_for_scene("jazz_lounge");
+        let ambient = profile_for_scene("ambient_mist");
+        assert!(megacity.geometry_density > jazz.geometry_density);
+        assert!(ambient.fog_density > jazz.fog_density);
+        assert!(jazz.glow_intensity != ambient.glow_intensity);
     }
 
     #[test]

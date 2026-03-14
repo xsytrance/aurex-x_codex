@@ -14,8 +14,8 @@ use aurex_render::{
     BootAnimationConfig, BootAnimator, BootPostFxTrack, BootSequenceRecipe, BootStylePreset,
     BootStyleProfile, CameraRig, MockRenderer, RENDER_MAIN_STAGES, RenderBackendMode,
     RenderBackendReadiness, RenderBootstrapConfig, RenderBootstrapExecutor, RenderBootstrapPlan,
-    RenderStage, attempt_real_renderer_bootstrap, rasterize_boot_frame,
-    run_real_renderer_event_loop_with_frame_hook,
+    RenderStage, RuntimeRenderDebugState, attempt_real_renderer_bootstrap, rasterize_boot_frame,
+    run_real_renderer_event_loop_with_frame_hook, set_runtime_render_debug_state,
 };
 use aurex_shape_synth::{PrimitiveType, ShapeDescriptor};
 use pulses::{
@@ -137,6 +137,11 @@ impl RuntimePulseLoop {
         let pulse = create_initial_pulse(pulse_name, seed);
         let last_phase_name = pulse.current_phase_name.clone();
         let timeline = select_timeline(pulse_name);
+        let mut scene_manager = SceneManager::default();
+        if let Some((scene_id, layer)) = initial_scene_for_pulse(pulse_name) {
+            scene_manager.activate_scene(scene_id, layer);
+        }
+
         Self {
             pulse_name: pulse_name.to_string(),
             seed,
@@ -145,7 +150,7 @@ impl RuntimePulseLoop {
             clock: TimelineClock::new(1.0 / 60.0),
             timeline,
             scheduler: EventScheduler::new(),
-            scene_manager: SceneManager::default(),
+            scene_manager,
             audio_transport: AudioTransport::default(),
             resolved_profile: SceneVisualProfile::default(),
         }
@@ -248,6 +253,15 @@ fn select_timeline(pulse_name: &str) -> PulseTimeline {
     }
 }
 
+fn initial_scene_for_pulse(pulse_name: &str) -> Option<(&'static str, u8)> {
+    match pulse_name {
+        "megacity" => Some(("megacity_skyline", 0)),
+        "jazz" => Some(("jazz_lounge", 0)),
+        "ambient" => Some(("ambient_mist", 0)),
+        _ => None,
+    }
+}
+
 fn timeline_summary_lines(pulse_loop: &RuntimePulseLoop) -> Vec<String> {
     vec![
         format!(
@@ -316,6 +330,36 @@ fn apply_scene_profile_to_pulse(
         (pulse.rhythm_snapshot.intensity * 0.5 + profile.glow_intensity * 0.5).clamp(0.0, 1.0);
     pulse.rhythm_snapshot.high_energy =
         (pulse.rhythm_snapshot.high_energy * 0.5 + profile.particle_density * 0.5).clamp(0.0, 1.0);
+}
+
+fn runtime_render_debug_state_for_loop(pulse_loop: &RuntimePulseLoop) -> RuntimeRenderDebugState {
+    let dominant_scene = pulse_loop
+        .scene_manager
+        .layers
+        .iter()
+        .max_by(|a, b| a.weight.total_cmp(&b.weight))
+        .map(|l| l.scene_id.clone())
+        .unwrap_or_else(|| "unbound".to_string());
+
+    RuntimeRenderDebugState {
+        pulse_name: pulse_loop.pulse.pulse_name.clone(),
+        scene_name: dominant_scene,
+        theme_name: format!("{:?}", pulse_loop.pulse.world_blueprint.theme),
+        profile_name: format!(
+            "geom:{:.2}|particles:{:.2}|fog:{:.2}|glow:{:.2}",
+            pulse_loop.resolved_profile.geometry_density,
+            pulse_loop.resolved_profile.particle_density,
+            pulse_loop.resolved_profile.fog_density,
+            pulse_loop.resolved_profile.glow_intensity
+        ),
+        profile_geometry_density: pulse_loop.resolved_profile.geometry_density,
+        profile_particle_density: pulse_loop.resolved_profile.particle_density,
+        profile_fog_density: pulse_loop.resolved_profile.fog_density,
+        profile_glow_intensity: pulse_loop.resolved_profile.glow_intensity,
+        starfield_enabled: pulse_loop.resolved_profile.starfield_enabled,
+        logo_enabled: pulse_loop.resolved_profile.logo_enabled,
+        boot_active: pulse_loop.clock.time_seconds < 1.25,
+    }
 }
 
 fn runtime_diagnostics_report(selected_pulse: &ExamplePulseConfig) -> String {
@@ -692,8 +736,10 @@ fn main() {
     };
 
     let runtime_audio = runtime_audio;
+    set_runtime_render_debug_state(runtime_render_debug_state_for_loop(&pulse_loop));
     if let Err(err) = run_real_renderer_event_loop_with_frame_hook(move |t| {
         let tick = pulse_loop.update(t);
+        set_runtime_render_debug_state(runtime_render_debug_state_for_loop(&pulse_loop));
         if let Some(phase_name) = tick.phase_change {
             println!("Phase Change: {}", phase_name);
             println!("{}", runtime_diagnostics_report(&pulse_loop.pulse));
@@ -729,7 +775,7 @@ fn main() {
 mod tests {
     use super::{
         DEFAULT_SEED, RuntimePulseLoop, available_pulse_names, create_pulse_at_time,
-        parse_runtime_options, runtime_diagnostics_report,
+        parse_runtime_options, runtime_diagnostics_report, runtime_render_debug_state_for_loop,
     };
 
     #[test]
@@ -844,5 +890,27 @@ mod tests {
         assert_ne!(early.particle_density, later.particle_density);
         assert_ne!(early.fog_density, later.fog_density);
         assert_ne!(early.glow_intensity, later.glow_intensity);
+    }
+
+    #[test]
+    fn boot_active_flag_switches_to_pulse_active_after_handoff() {
+        let mut pulse_loop = RuntimePulseLoop::new("aurielle_intro", DEFAULT_SEED);
+        let _ = pulse_loop.update(0.5);
+        assert!(runtime_render_debug_state_for_loop(&pulse_loop).boot_active);
+        let _ = pulse_loop.update(2.0);
+        assert!(!runtime_render_debug_state_for_loop(&pulse_loop).boot_active);
+    }
+
+    #[test]
+    fn visual_profile_application_is_deterministic_for_same_time() {
+        let mut a = RuntimePulseLoop::new("aurielle_intro", DEFAULT_SEED);
+        let mut b = RuntimePulseLoop::new("aurielle_intro", DEFAULT_SEED);
+        let _ = a.update(9.8);
+        let _ = b.update(9.8);
+        assert_eq!(a.resolved_profile, b.resolved_profile);
+        assert_eq!(
+            a.pulse.world_blueprint.palette_hint,
+            b.pulse.world_blueprint.palette_hint
+        );
     }
 }
