@@ -1737,7 +1737,7 @@ fn scene_distance(scene: &Scene, point: V3, time: f32, config: RenderConfig) -> 
         let safe_sphere = NodeEval {
             distance: warped.length() - 0.95,
             material: SdfMaterial {
-                material_type: SdfMaterialType::Lambert,
+                material_type: SdfMaterialType::SolidColor,
                 emissive_strength: 0.1,
                 ..SdfMaterial::default()
             },
@@ -1746,7 +1746,7 @@ fn scene_distance(scene: &Scene, point: V3, time: f32, config: RenderConfig) -> 
         let safe_plane = NodeEval {
             distance: warped.y + 1.1,
             material: SdfMaterial {
-                material_type: SdfMaterialType::Lambert,
+                material_type: SdfMaterialType::SolidColor,
                 base_color: Vec3::new(0.18, 0.2, 0.24),
                 ..SdfMaterial::default()
             },
