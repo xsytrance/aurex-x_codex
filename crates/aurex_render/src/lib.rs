@@ -1437,6 +1437,57 @@ fn fs_main() -> @location(0) vec4<f32> {
                             bytes_per_row,
                             expected_bytes,
                         );
+                        assert_eq!(
+                            cpu_frame.rgba.len(), expected_bytes,
+                            "cpu framebuffer byte length mismatch"
+                        );
+                        assert_eq!(
+                            bytes_per_row % 4,
+                            0,
+                            "bytes_per_row must align with RGBA8 block size"
+                        );
+                        assert!(config.width > 0 && config.height > 0);
+                        eprintln!(
+                            "framebuffer_diag width={} height={} bytes_per_row={} expected_bytes={} format=Rgba8UnormSrgb",
+                            config.width,
+                            config.height,
+                            bytes_per_row,
+                            expected_bytes,
+                        );
+
+                        let capture_gpu_errors =
+                            procedural_renderer_active && !first_procedural_submission_captured;
+                        if capture_gpu_errors {
+                            device.push_error_scope(wgpu::ErrorFilter::Validation);
+                            device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
+                            eprintln!("gpu_error_scope_push first_procedural_submission");
+                        }
+
+                        if !diagnostic_gpu_triangle {
+                            queue.write_texture(
+                                wgpu::TexelCopyTextureInfo {
+                                    texture: &boot_texture,
+                                    mip_level: 0,
+                                    origin: wgpu::Origin3d::ZERO,
+                                    aspect: wgpu::TextureAspect::All,
+                                },
+                                &cpu_frame.rgba,
+                                wgpu::TexelCopyBufferLayout {
+                                    offset: 0,
+                                    bytes_per_row: Some(bytes_per_row),
+                                    rows_per_image: Some(config.height),
+                                },
+                                wgpu::Extent3d {
+                                    width: config.width,
+                                    height: config.height,
+                                    depth_or_array_layers: 1,
+                                },
+                            );
+                        } else {
+                            eprintln!(
+                                "diagnostic_gpu_triangle_active=true skipping_cpu_texture_upload"
+                            );
+                        }
 
                         let capture_gpu_errors =
                             procedural_renderer_active && !first_procedural_submission_captured;
