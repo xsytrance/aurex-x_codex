@@ -471,6 +471,26 @@ fn diagnostic_gpu_triangle_from_env() -> bool {
 }
 
 #[cfg(feature = "real_graphics")]
+fn bypass_procedural_setup_from_env() -> bool {
+    std::env::var("AUREX_BYPASS_PROCEDURAL_SETUP")
+        .ok()
+        .map(|v| {
+            let lowered = v.to_ascii_lowercase();
+            matches!(lowered.as_str(), "1" | "true" | "yes" | "on")
+        })
+        .unwrap_or(false)
+}
+
+#[cfg(feature = "real_graphics")]
+fn should_short_circuit_procedural_setup(
+    procedural_renderer_active: bool,
+    diagnostic_gpu_triangle: bool,
+    bypass_procedural_setup: bool,
+) -> bool {
+    procedural_renderer_active && (diagnostic_gpu_triangle || bypass_procedural_setup)
+}
+
+#[cfg(feature = "real_graphics")]
 fn debug_state_has_safe_ranges(state: &RuntimeRenderDebugState) -> bool {
     let ranges = [
         state.profile_geometry_density,
@@ -822,6 +842,7 @@ where
     let mut post_handoff_procedural_frames = 0usize;
     let mut first_real_scene_frame_seen = false;
     let diagnostic_gpu_triangle = diagnostic_gpu_triangle_from_env();
+    let bypass_procedural_setup = bypass_procedural_setup_from_env();
     let mut first_procedural_submission_captured = false;
     let mut last_boot_log_second: i32 = -1;
     let _scene_particles = vec![Particle::default(); 220];
@@ -1080,14 +1101,21 @@ fn fs_main() -> @location(0) vec4<f32> {
 
                         on_frame(start_time.elapsed().as_secs_f32());
 
+                        let triangle_render_active = should_short_circuit_procedural_setup(
+                            procedural_renderer_active,
+                            diagnostic_gpu_triangle,
+                            bypass_procedural_setup,
+                        );
                         eprintln!(
-                            "swapchain_acquire_start mode={} diag_triangle={} size={}x{}",
+                            "swapchain_acquire_start mode={} diag_triangle={} bypass_setup={} triangle_render_active={} size={}x{}",
                             if procedural_renderer_active {
                                 "PROCEDURAL"
                             } else {
                                 "BOOT"
                             },
                             diagnostic_gpu_triangle,
+                            bypass_procedural_setup,
+                            triangle_render_active,
                             config.width,
                             config.height,
                         );
@@ -1173,6 +1201,10 @@ fn fs_main() -> @location(0) vec4<f32> {
                                 )
                             }
                         } else {
+                            eprintln!(
+                                "entering_procedural_handoff t={:.2} active_scene={}",
+                                elapsed, debug_state.scene_name
+                            );
                             if !procedural_handoff_start_logged {
                                 procedural_handoff_start_logged = true;
                                 eprintln!(
@@ -1185,6 +1217,37 @@ fn fs_main() -> @location(0) vec4<f32> {
                                     first_real_scene_override.as_deref().unwrap_or("none"),
                                 );
                             }
+
+                            let short_circuit_procedural_setup =
+                                should_short_circuit_procedural_setup(
+                                    procedural_renderer_active,
+                                    diagnostic_gpu_triangle,
+                                    bypass_procedural_setup,
+                                );
+
+                            if short_circuit_procedural_setup {
+                                let reason = if diagnostic_gpu_triangle {
+                                    "diagnostic_triangle"
+                                } else {
+                                    "bypass_procedural_setup"
+                                };
+                                eprintln!(
+                                    "diagnostic triangle short-circuit active reason={} bypass_flag={}",
+                                    reason,
+                                    bypass_procedural_setup,
+                                );
+                                eprintln!(
+                                    "procedural scene build skipped active_scene={} warmup_skipped=true setup_skipped=true",
+                                    debug_state.scene_name,
+                                );
+                                post_handoff_procedural_frames =
+                                    post_handoff_procedural_frames.saturating_add(1);
+                                BootFramebuffer {
+                                    width: config.width,
+                                    height: config.height,
+                                    rgba: vec![0; (config.width as usize) * (config.height as usize) * 4],
+                                }
+                            } else {
 
                             let safe_warmup_active =
                                 post_handoff_procedural_frames < procedural_warmup_frames;
@@ -1314,9 +1377,10 @@ fn fs_main() -> @location(0) vec4<f32> {
                                 proc_diag.used_fallback,
                             );
 
-                            post_handoff_procedural_frames =
-                                post_handoff_procedural_frames.saturating_add(1);
-                            procedural
+                                post_handoff_procedural_frames =
+                                    post_handoff_procedural_frames.saturating_add(1);
+                                procedural
+                            }
                         };
 
                         overlay_runtime_debug(
@@ -1373,6 +1437,23 @@ fn fs_main() -> @location(0) vec4<f32> {
                             bytes_per_row,
                             expected_bytes,
                         );
+                        assert_eq!(
+                            cpu_frame.rgba.len(), expected_bytes,
+                            "cpu framebuffer byte length mismatch"
+                        );
+                        assert_eq!(
+                            bytes_per_row % 4,
+                            0,
+                            "bytes_per_row must align with RGBA8 block size"
+                        );
+                        assert!(config.width > 0 && config.height > 0);
+                        eprintln!(
+                            "framebuffer_diag width={} height={} bytes_per_row={} expected_bytes={} format=Rgba8UnormSrgb",
+                            config.width,
+                            config.height,
+                            bytes_per_row,
+                            expected_bytes,
+                        );
 
                         let capture_gpu_errors =
                             procedural_renderer_active && !first_procedural_submission_captured;
@@ -1408,6 +1489,40 @@ fn fs_main() -> @location(0) vec4<f32> {
                             );
                         }
 
+                        let capture_gpu_errors =
+                            procedural_renderer_active && !first_procedural_submission_captured;
+                        if capture_gpu_errors {
+                            device.push_error_scope(wgpu::ErrorFilter::Validation);
+                            device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
+                            eprintln!("gpu_error_scope_push first_procedural_submission");
+                        }
+
+                        if !triangle_render_active {
+                            queue.write_texture(
+                                wgpu::TexelCopyTextureInfo {
+                                    texture: &boot_texture,
+                                    mip_level: 0,
+                                    origin: wgpu::Origin3d::ZERO,
+                                    aspect: wgpu::TextureAspect::All,
+                                },
+                                &cpu_frame.rgba,
+                                wgpu::TexelCopyBufferLayout {
+                                    offset: 0,
+                                    bytes_per_row: Some(bytes_per_row),
+                                    rows_per_image: Some(config.height),
+                                },
+                                wgpu::Extent3d {
+                                    width: config.width,
+                                    height: config.height,
+                                    depth_or_array_layers: 1,
+                                },
+                            );
+                        } else {
+                            eprintln!(
+                                "diagnostic_gpu_triangle_active=true skipping_cpu_texture_upload triangle_render_active=true"
+                            );
+                        }
+
                         let swap_view = frame
                             .texture
                             .create_view(&wgpu::TextureViewDescriptor::default());
@@ -1438,7 +1553,8 @@ fn fs_main() -> @location(0) vec4<f32> {
                                 occlusion_query_set: None,
                                 timestamp_writes: None,
                             });
-                            if diagnostic_gpu_triangle {
+                            eprintln!("encoder_begin");
+                            if triangle_render_active {
                                 pass.set_pipeline(&diagnostic_pipeline);
                             } else {
                                 pass.set_pipeline(&pipeline);
@@ -3598,6 +3714,27 @@ mod tests {
 
         // Avoid leaking global state between tests.
         set_runtime_render_debug_state(original);
+    }
+
+    #[test]
+    #[cfg(feature = "real_graphics")]
+    fn diagnostic_short_circuit_requires_procedural_mode() {
+        assert!(!should_short_circuit_procedural_setup(false, true, false));
+        assert!(!should_short_circuit_procedural_setup(false, false, true));
+        assert!(should_short_circuit_procedural_setup(true, true, false));
+    }
+
+    #[test]
+    #[cfg(feature = "real_graphics")]
+    fn bypass_flag_short_circuits_procedural_setup() {
+        assert!(should_short_circuit_procedural_setup(true, false, true));
+        assert!(should_short_circuit_procedural_setup(true, true, true));
+    }
+
+    #[test]
+    #[cfg(feature = "real_graphics")]
+    fn procedural_setup_runs_normally_without_toggles() {
+        assert!(!should_short_circuit_procedural_setup(true, false, false));
     }
     #[cfg(feature = "real_graphics")]
     #[test]
