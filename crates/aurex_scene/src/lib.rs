@@ -8,6 +8,7 @@ pub mod fields;
 pub mod generators;
 pub mod harmonics;
 pub mod patterns;
+pub mod scene_generator;
 pub mod transition;
 
 use aurex_audio::ProceduralAudioConfig;
