@@ -4,7 +4,8 @@ mod pulses;
 mod timeline;
 
 use aurex_audio::{
-    AudioBackendMode, AudioBackendReadiness, MockAudioEngine, start_runtime_sine_output,
+    AudioBackendMode, AudioBackendReadiness, MockAudioEngine, ProceduralAudioConfig,
+    default_demo_audio_config, start_runtime_pulse_output,
 };
 use aurex_conductor::{ConductorClock, ConductorStage, MAIN_LOOP_STAGES, execute_frame};
 use aurex_ecs::{CommandBuffer, EcsCommand, EcsWorld, EntityId, Transform2p5D};
@@ -384,6 +385,18 @@ fn runtime_render_debug_state_for_loop(pulse_loop: &RuntimePulseLoop) -> Runtime
     }
 }
 
+fn pulse_audio_config_for(pulse: &ExamplePulseConfig) -> ProceduralAudioConfig {
+    let mut cfg = default_demo_audio_config(pulse.pulse_config.seed as u32);
+    cfg.tempo = match pulse.pulse_name.as_str() {
+        "megacity" => 138.0,
+        "aurielle_intro" => 124.0,
+        "jazz" => 96.0,
+        "ambient" => 76.0,
+        _ => 120.0,
+    };
+    cfg
+}
+
 fn runtime_diagnostics_report(selected_pulse: &ExamplePulseConfig) -> String {
     let mut clock = ConductorClock::default();
     let camera = CameraRig::default();
@@ -759,7 +772,8 @@ fn main() {
         println!("{line}");
     }
 
-    let runtime_audio = match start_runtime_sine_output() {
+    let runtime_audio = match start_runtime_pulse_output(pulse_audio_config_for(&pulse_loop.pulse))
+    {
         Ok(audio) => {
             println!("audio_runtime=started detail:cpal stream active");
             Some(audio)
@@ -778,6 +792,9 @@ fn main() {
         if let Some(phase_name) = tick.phase_change {
             println!("Phase Change: {}", phase_name);
             println!("{}", runtime_diagnostics_report(&pulse_loop.pulse));
+            if let Some(audio) = runtime_audio.as_ref() {
+                audio.set_procedural_config(pulse_audio_config_for(&pulse_loop.pulse));
+            }
         }
         for event in tick.triggered_events {
             println!("Timeline Event: {event}");

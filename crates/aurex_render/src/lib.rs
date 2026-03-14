@@ -3,6 +3,17 @@ pub mod rhythm_field;
 use std::sync::{Mutex, OnceLock};
 
 #[cfg(feature = "real_graphics")]
+use aurex_render_sdf::{
+    RenderConfig as SdfRenderConfig, RenderTime as SdfRenderTime,
+    RendererState as SdfRendererState, render_sdf_scene_with_diagnostics,
+};
+#[cfg(feature = "real_graphics")]
+use aurex_scene::{
+    Scene, SdfCamera, SdfLighting, SdfNode, Vec3,
+    generators::{self, GeneratorStack, RhythmFieldContext, RuntimeModulationContext},
+};
+
+#[cfg(feature = "real_graphics")]
 use winit::{dpi::PhysicalSize, event_loop::EventLoop, window::Window};
 
 #[derive(Debug, Clone)]
@@ -264,6 +275,109 @@ pub fn runtime_render_debug_state() -> RuntimeRenderDebugState {
         .lock()
         .map(|lock| lock.clone())
         .unwrap_or_default()
+}
+
+#[cfg(feature = "real_graphics")]
+fn sdf_renderer_state_cell() -> &'static Mutex<SdfRendererState> {
+    static CELL: OnceLock<Mutex<SdfRendererState>> = OnceLock::new();
+    CELL.get_or_init(|| Mutex::new(SdfRendererState::default()))
+}
+
+#[cfg(feature = "real_graphics")]
+fn build_runtime_sdf_scene(debug_state: &RuntimeRenderDebugState) -> Scene {
+    let stack: GeneratorStack = match debug_state.pulse_name.as_str() {
+        "megacity" => generators::electronic_city_stack(),
+        "jazz" => generators::jazz_improvisation_stack(),
+        "ambient" => generators::rock_mountain_stack(),
+        _ => generators::electronic_city_stack(),
+    };
+
+    let fog_density = (0.012 + debug_state.profile_fog_density * 0.08).clamp(0.0, 0.25);
+    let rhythm = RhythmFieldContext {
+        beat_phase: debug_state.profile_particle_density,
+        beat_strength: debug_state.profile_glow_intensity,
+        bass_energy: debug_state.profile_structure_height,
+        harmonic_energy: debug_state.profile_geometry_density,
+    };
+
+    Scene {
+        sdf: aurex_scene::SdfScene {
+            camera: SdfCamera {
+                position: Vec3::new(0.0, 4.0 + debug_state.profile_structure_height * 5.0, -22.0),
+                target: Vec3::new(0.0, 2.5, 0.0),
+                fov_degrees: 58.0,
+                aspect_ratio: 16.0 / 9.0,
+            },
+            lighting: SdfLighting {
+                ambient_light: 0.10 + debug_state.profile_glow_intensity * 0.25,
+                key_lights: vec![aurex_scene::KeyLight {
+                    direction: Vec3::new(-0.35, -1.0, -0.45),
+                    intensity: 0.85 + debug_state.profile_glow_intensity * 0.8,
+                    color: Vec3::new(0.95, 0.98, 1.0),
+                }],
+                fog_color: Vec3::new(0.05, 0.09, 0.16),
+                fog_density,
+                fog_height_falloff: 0.07,
+                volumetric: Default::default(),
+            },
+            seed: 2026,
+            objects: vec![],
+            root: SdfNode::Empty,
+            timeline: None,
+            generator: None,
+            generator_stack: Some(stack),
+            fields: vec![],
+            patterns: vec![],
+            harmonics: None,
+            rhythm: None,
+            audio: Some(aurex_audio::default_demo_audio_config(2026)),
+            effect_graph: None,
+            automation_tracks: vec![],
+            demo_sequence: None,
+            temporal_effects: vec![],
+            runtime_modulation: Some(RuntimeModulationContext {
+                rhythm_field: Some(rhythm),
+            }),
+        },
+    }
+}
+
+#[cfg(feature = "real_graphics")]
+fn rasterize_procedural_scene(
+    width: u32,
+    height: u32,
+    elapsed: f32,
+    debug_state: &RuntimeRenderDebugState,
+) -> BootFramebuffer {
+    let scene = build_runtime_sdf_scene(debug_state);
+    let _ = sdf_renderer_state_cell();
+    let (frame, diagnostics) = render_sdf_scene_with_diagnostics(
+        &scene,
+        SdfRenderConfig {
+            width,
+            height,
+            time: SdfRenderTime { seconds: elapsed },
+            output_diagnostics: true,
+            ..SdfRenderConfig::default()
+        },
+    );
+
+    let mut rgba = Vec::with_capacity((width as usize) * (height as usize) * 4);
+    for p in frame.pixels {
+        rgba.extend_from_slice(&[p.r, p.g, p.b, p.a]);
+    }
+
+    if let Some(geom_ms) = diagnostics.stage_durations_ms.get("GeometrySdf") {
+        if *geom_ms <= 0.0 {
+            eprintln!("render_stage_warning=GeometrySdf duration was zero");
+        }
+    }
+
+    BootFramebuffer {
+        width,
+        height,
+        rgba,
+    }
 }
 
 #[cfg(feature = "real_graphics")]
@@ -599,17 +713,27 @@ fn fs_main(inf: VsOut) -> @location(0) vec4<f32> {
                             };
                             let scene = select_runtime_scene(scene_time, &debug_state);
                             let local_t = local_scene_time(scene_time);
-                            rasterize_demo_scene(
+                            let procedural = rasterize_procedural_scene(
                                 config.width,
                                 config.height,
-                                scene,
-                                local_t,
-                                dt,
-                                runtime_pulse,
-                                &mut scene_particles,
-                                &mut particle_cursor,
-                                &starfield,
-                            )
+                                scene_time,
+                                &debug_state,
+                            );
+                            if procedural.rgba.iter().any(|v| *v != 0) {
+                                procedural
+                            } else {
+                                rasterize_demo_scene(
+                                    config.width,
+                                    config.height,
+                                    scene,
+                                    local_t,
+                                    dt,
+                                    runtime_pulse,
+                                    &mut scene_particles,
+                                    &mut particle_cursor,
+                                    &starfield,
+                                )
+                            }
                         };
 
                         overlay_runtime_debug(
@@ -1451,17 +1575,41 @@ fn glyph_5x7(c: char) -> [u8; 7] {
         'A' => [
             0b01110, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001,
         ],
+        'B' => [
+            0b11110, 0b10001, 0b10001, 0b11110, 0b10001, 0b10001, 0b11110,
+        ],
+        'C' => [
+            0b01110, 0b10001, 0b10000, 0b10000, 0b10000, 0b10001, 0b01110,
+        ],
+        'D' => [
+            0b11110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b11110,
+        ],
         'E' => [
             0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b11111,
         ],
+        'F' => [
+            0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b10000,
+        ],
+        'G' => [
+            0b01110, 0b10001, 0b10000, 0b10111, 0b10001, 0b10001, 0b01110,
+        ],
+        'H' => [
+            0b10001, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001,
+        ],
         'I' => [
             0b11111, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b11111,
+        ],
+        'J' => [
+            0b11111, 0b00010, 0b00010, 0b00010, 0b10010, 0b10010, 0b01100,
+        ],
+        'K' => [
+            0b10001, 0b10010, 0b10100, 0b11000, 0b10100, 0b10010, 0b10001,
         ],
         'L' => [
             0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b11111,
         ],
         'M' => [
-            0b10001, 0b11011, 0b10101, 0b10001, 0b10001, 0b10001, 0b10001,
+            0b10001, 0b11011, 0b10101, 0b10101, 0b10001, 0b10001, 0b10001,
         ],
         'N' => [
             0b10001, 0b11001, 0b10101, 0b10011, 0b10001, 0b10001, 0b10001,
@@ -1472,20 +1620,80 @@ fn glyph_5x7(c: char) -> [u8; 7] {
         'P' => [
             0b11110, 0b10001, 0b10001, 0b11110, 0b10000, 0b10000, 0b10000,
         ],
+        'Q' => [
+            0b01110, 0b10001, 0b10001, 0b10001, 0b10101, 0b10010, 0b01101,
+        ],
         'R' => [
             0b11110, 0b10001, 0b10001, 0b11110, 0b10100, 0b10010, 0b10001,
         ],
         'S' => [
             0b01111, 0b10000, 0b10000, 0b01110, 0b00001, 0b00001, 0b11110,
         ],
+        'T' => [
+            0b11111, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100,
+        ],
         'U' => [
             0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110,
+        ],
+        'V' => [
+            0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01010, 0b00100,
+        ],
+        'W' => [
+            0b10001, 0b10001, 0b10001, 0b10101, 0b10101, 0b10101, 0b01010,
         ],
         'X' => [
             0b10001, 0b10001, 0b01010, 0b00100, 0b01010, 0b10001, 0b10001,
         ],
+        'Y' => [
+            0b10001, 0b10001, 0b01010, 0b00100, 0b00100, 0b00100, 0b00100,
+        ],
+        'Z' => [
+            0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b10000, 0b11111,
+        ],
+        '0' => [
+            0b01110, 0b10001, 0b10011, 0b10101, 0b11001, 0b10001, 0b01110,
+        ],
+        '1' => [
+            0b00100, 0b01100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110,
+        ],
+        '2' => [
+            0b01110, 0b10001, 0b00001, 0b00110, 0b01000, 0b10000, 0b11111,
+        ],
+        '3' => [
+            0b11110, 0b00001, 0b00001, 0b01110, 0b00001, 0b00001, 0b11110,
+        ],
+        '4' => [
+            0b00010, 0b00110, 0b01010, 0b10010, 0b11111, 0b00010, 0b00010,
+        ],
+        '5' => [
+            0b11111, 0b10000, 0b10000, 0b11110, 0b00001, 0b00001, 0b11110,
+        ],
+        '6' => [
+            0b00110, 0b01000, 0b10000, 0b11110, 0b10001, 0b10001, 0b01110,
+        ],
+        '7' => [
+            0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b01000, 0b01000,
+        ],
+        '8' => [
+            0b01110, 0b10001, 0b10001, 0b01110, 0b10001, 0b10001, 0b01110,
+        ],
+        '9' => [
+            0b01110, 0b10001, 0b10001, 0b01111, 0b00001, 0b00010, 0b11100,
+        ],
         '-' => [
             0b00000, 0b00000, 0b00000, 0b11111, 0b00000, 0b00000, 0b00000,
+        ],
+        ':' => [
+            0b00000, 0b00100, 0b00100, 0b00000, 0b00100, 0b00100, 0b00000,
+        ],
+        '.' => [
+            0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00110, 0b00110,
+        ],
+        '_' => [
+            0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b11111,
+        ],
+        '|' => [
+            0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100,
         ],
         _ => [0; 7],
     }

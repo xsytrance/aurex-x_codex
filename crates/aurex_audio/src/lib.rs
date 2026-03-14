@@ -9,7 +9,7 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use sequencer::AudioSequence;
 use serde::{Deserialize, Serialize};
 use std::sync::{
-    Arc,
+    Arc, RwLock,
     atomic::{AtomicU32, Ordering},
 };
 
@@ -192,6 +192,7 @@ impl MockAudioEngine {
 pub struct RuntimeAudioOutput {
     _stream: cpal::Stream,
     pulse: Arc<AtomicU32>,
+    procedural_config: Option<Arc<RwLock<ProceduralAudioConfig>>>,
 }
 
 impl RuntimeAudioOutput {
@@ -199,9 +200,29 @@ impl RuntimeAudioOutput {
         self.pulse
             .store(pulse.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
     }
+
+    pub fn set_procedural_config(&self, config: ProceduralAudioConfig) {
+        if let Some(slot) = &self.procedural_config
+            && let Ok(mut lock) = slot.write()
+        {
+            *lock = config;
+        }
+    }
 }
 
 pub fn start_runtime_sine_output() -> Result<RuntimeAudioOutput, String> {
+    start_runtime_audio_output_internal(None)
+}
+
+pub fn start_runtime_pulse_output(
+    initial_config: ProceduralAudioConfig,
+) -> Result<RuntimeAudioOutput, String> {
+    start_runtime_audio_output_internal(Some(initial_config))
+}
+
+fn start_runtime_audio_output_internal(
+    initial_config: Option<ProceduralAudioConfig>,
+) -> Result<RuntimeAudioOutput, String> {
     let host = cpal::default_host();
     let device = host
         .default_output_device()
@@ -214,18 +235,27 @@ pub fn start_runtime_sine_output() -> Result<RuntimeAudioOutput, String> {
     let sample_rate = default_config.sample_rate().0 as f32;
     let channels = default_config.channels() as usize;
     let pulse = Arc::new(AtomicU32::new(0.0f32.to_bits()));
+    let procedural_config = initial_config.map(|cfg| Arc::new(RwLock::new(cfg)));
 
     let err_fn = |err| eprintln!("audio_stream_error={err}");
 
     let stream = match default_config.sample_format() {
         cpal::SampleFormat::F32 => {
             let pulse = Arc::clone(&pulse);
+            let procedural = procedural_config.clone();
             let mut synth = RuntimeSynthState::default();
             device
                 .build_output_stream(
                     &default_config.config(),
                     move |data: &mut [f32], _| {
-                        write_trance_data(data, channels, sample_rate, &mut synth, &pulse)
+                        write_trance_data(
+                            data,
+                            channels,
+                            sample_rate,
+                            &mut synth,
+                            &pulse,
+                            procedural.as_ref(),
+                        )
                     },
                     err_fn,
                     None,
@@ -234,12 +264,20 @@ pub fn start_runtime_sine_output() -> Result<RuntimeAudioOutput, String> {
         }
         cpal::SampleFormat::I16 => {
             let pulse = Arc::clone(&pulse);
+            let procedural = procedural_config.clone();
             let mut synth = RuntimeSynthState::default();
             device
                 .build_output_stream(
                     &default_config.config(),
                     move |data: &mut [i16], _| {
-                        write_trance_data(data, channels, sample_rate, &mut synth, &pulse)
+                        write_trance_data(
+                            data,
+                            channels,
+                            sample_rate,
+                            &mut synth,
+                            &pulse,
+                            procedural.as_ref(),
+                        )
                     },
                     err_fn,
                     None,
@@ -248,12 +286,20 @@ pub fn start_runtime_sine_output() -> Result<RuntimeAudioOutput, String> {
         }
         cpal::SampleFormat::U16 => {
             let pulse = Arc::clone(&pulse);
+            let procedural = procedural_config.clone();
             let mut synth = RuntimeSynthState::default();
             device
                 .build_output_stream(
                     &default_config.config(),
                     move |data: &mut [u16], _| {
-                        write_trance_data(data, channels, sample_rate, &mut synth, &pulse)
+                        write_trance_data(
+                            data,
+                            channels,
+                            sample_rate,
+                            &mut synth,
+                            &pulse,
+                            procedural.as_ref(),
+                        )
                     },
                     err_fn,
                     None,
@@ -272,6 +318,7 @@ pub fn start_runtime_sine_output() -> Result<RuntimeAudioOutput, String> {
     Ok(RuntimeAudioOutput {
         _stream: stream,
         pulse,
+        procedural_config,
     })
 }
 
@@ -365,6 +412,7 @@ struct RuntimeSynthState {
     lead_freq: f32,
     lead_env: f32,
     started: bool,
+    procedural_time: f32,
 }
 
 impl Default for RuntimeSynthState {
@@ -388,6 +436,7 @@ impl Default for RuntimeSynthState {
             lead_freq: 440.0,
             lead_env: 0.0,
             started: false,
+            procedural_time: 0.0,
         }
     }
 }
@@ -509,6 +558,7 @@ fn write_trance_data<T>(
     sample_rate: f32,
     synth: &mut RuntimeSynthState,
     pulse: &Arc<AtomicU32>,
+    procedural_config: Option<&Arc<RwLock<ProceduralAudioConfig>>>,
 ) where
     T: cpal::Sample + cpal::FromSample<f32>,
 {
@@ -565,9 +615,27 @@ fn write_trance_data<T>(
         let hat = rand_noise(synth) * synth.hat_env;
         synth.hat_env *= 0.989;
 
-        let mixed =
+        let trance =
             (kick * 0.55 + sub * 0.45 + pad * 0.30 + lead * 0.22 + snare * 0.16 + hat * 0.12)
                 .clamp(-0.95, 0.95);
+
+        let procedural = if let Some(lock) = procedural_config {
+            if let Ok(cfg) = lock.read() {
+                synthesize_mono_sample(&cfg, synth.procedural_time, sample_rate)
+            } else {
+                0.0
+            }
+        } else {
+            0.0
+        };
+
+        let mixed = if procedural_config.is_some() {
+            (trance * 0.35 + procedural * 0.65).clamp(-0.95, 0.95)
+        } else {
+            trance
+        };
+        synth.procedural_time += dt;
+
         let v: T = T::from_sample(mixed);
         for s in frame.iter_mut() {
             *s = v;
@@ -629,7 +697,7 @@ pub fn default_demo_audio_config(seed: u32) -> ProceduralAudioConfig {
 #[cfg(test)]
 mod tests {
     use std::sync::{
-        Arc,
+        Arc, RwLock,
         atomic::{AtomicU32, Ordering},
     };
 
@@ -727,15 +795,29 @@ mod tests {
     }
 
     #[test]
+    fn trance_writer_can_mix_procedural_pulse_graph() {
+        let pulse = Arc::new(AtomicU32::new(0.5f32.to_bits()));
+        let mut synth = super::RuntimeSynthState::default();
+        let mut base = vec![0.0_f32; 2048];
+        write_trance_data(&mut base, 1, 48_000.0, &mut synth, &pulse, None);
+
+        let cfg = Arc::new(RwLock::new(default_demo_audio_config(404)));
+        let mut with_cfg = vec![0.0_f32; 2048];
+        write_trance_data(&mut with_cfg, 1, 48_000.0, &mut synth, &pulse, Some(&cfg));
+
+        assert_ne!(base, with_cfg);
+    }
+
+    #[test]
     fn trance_writer_emits_kick_and_pulse_sensitive_sub() {
         let pulse = Arc::new(AtomicU32::new(0.0f32.to_bits()));
         let mut synth = super::RuntimeSynthState::default();
         let mut low = vec![0.0_f32; 4096];
-        write_trance_data(&mut low, 1, 48_000.0, &mut synth, &pulse);
+        write_trance_data(&mut low, 1, 48_000.0, &mut synth, &pulse, None);
 
         pulse.store(1.0f32.to_bits(), Ordering::Relaxed);
         let mut high = vec![0.0_f32; 4096];
-        write_trance_data(&mut high, 1, 48_000.0, &mut synth, &pulse);
+        write_trance_data(&mut high, 1, 48_000.0, &mut synth, &pulse, None);
 
         let low_energy: f32 = low.iter().map(|s| s.abs()).sum();
         let high_energy: f32 = high.iter().map(|s| s.abs()).sum();
