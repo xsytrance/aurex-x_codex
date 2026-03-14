@@ -782,6 +782,33 @@ fn advance_warmup_counter(warmup_frame_counter: usize, warmup_total_frames: usiz
 }
 
 #[cfg(feature = "real_graphics")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RuntimeRenderMode {
+    Boot,
+    Procedural,
+}
+
+#[cfg(feature = "real_graphics")]
+impl RuntimeRenderMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Boot => "BOOT",
+            Self::Procedural => "PROCEDURAL",
+        }
+    }
+}
+
+#[cfg(feature = "real_graphics")]
+fn transition_to_procedural_once(mode: &mut RuntimeRenderMode) -> bool {
+    if *mode == RuntimeRenderMode::Boot {
+        *mode = RuntimeRenderMode::Procedural;
+        true
+    } else {
+        false
+    }
+}
+
+#[cfg(feature = "real_graphics")]
 fn rasterize_procedural_scene(
     width: u32,
     height: u32,
@@ -1044,7 +1071,7 @@ where
         .to_boot_screen_sequence("AUREX-X", "Prime Pulse online");
     let start_time = std::time::Instant::now();
     let mut last_frame_time = start_time;
-    let mut procedural_renderer_active = false;
+    let mut render_mode_state = RuntimeRenderMode::Boot;
     let mut procedural_activation_logged = false;
     let procedural_warmup_frames = warmup_frames_from_env();
     let first_real_scene_override = first_real_scene_override_from_env();
@@ -1056,6 +1083,7 @@ where
     let diagnostic_gpu_triangle = diagnostic_gpu_triangle_from_env();
     let bypass_procedural_setup = bypass_procedural_setup_from_env();
     let mut first_procedural_submission_captured = false;
+    let mut first_procedural_present_logged = false;
     let mut last_boot_log_second: i32 = -1;
     let _scene_particles = vec![Particle::default(); 220];
     let _particle_cursor = 0usize;
@@ -1314,17 +1342,50 @@ fn fs_main() -> @location(0) vec4<f32> {
                         on_frame(start_time.elapsed().as_secs_f32());
 
                         let stage_controls = procedural_setup_controls_from_env();
-                        let triangle_render_active = procedural_renderer_active
+
+                        let now = std::time::Instant::now();
+                        let elapsed = start_time.elapsed().as_secs_f32();
+                        let _dt = (now - last_frame_time).as_secs_f32().clamp(0.0, 0.05);
+                        last_frame_time = now;
+                        let debug_state = runtime_render_debug_state();
+                        let timeline_idx = ((elapsed * 24.0) as usize) % timeline_frames.len();
+                        let boot = &timeline_frames[timeline_idx];
+                        let screen = &boot_screen.frames[timeline_idx % boot_screen.frames.len()];
+
+                        let handoff_ready = elapsed >= 12.0;
+                        let handoff_begins_this_frame =
+                            handoff_starts_now(handoff_ready, procedural_handoff_start_logged);
+                        if handoff_begins_this_frame {
+                            eprintln!(
+                                "render_mode_handoff_ready t={:.2} active_scene={} boot_active={}",
+                                elapsed, debug_state.scene_name, debug_state.boot_active
+                            );
+                        }
+                        let handoff_active = procedural_handoff_start_logged || handoff_begins_this_frame;
+                        let procedural_path_active =
+                            render_mode_state == RuntimeRenderMode::Procedural || handoff_active;
+                        let render_mode = render_mode_state.as_str();
+
+                        if procedural_path_active && post_handoff_procedural_frames <= 5 {
+                            eprintln!(
+                                "mode_diag frame={} mode={} handoff_started={} warmup_active={} warmup_counter={} boot_active={} scene= {}",
+                                post_handoff_procedural_frames,
+                                render_mode,
+                                procedural_handoff_start_logged,
+                                warmup_active(post_handoff_procedural_frames, procedural_warmup_frames),
+                                post_handoff_procedural_frames,
+                                debug_state.boot_active,
+                                debug_state.scene_name
+                            );
+                        }
+
+                        let triangle_render_active = procedural_path_active
                             && (diagnostic_gpu_triangle
                                 || bypass_procedural_setup
                                 || stage_controls.stop_after.is_some());
                         eprintln!(
                             "swapchain_acquire_start mode={} diag_triangle={} bypass_setup={} triangle_render_active={} size={}x{}",
-                            if procedural_renderer_active {
-                                "PROCEDURAL"
-                            } else {
-                                "BOOT"
-                            },
+                            render_mode,
                             diagnostic_gpu_triangle,
                             bypass_procedural_setup,
                             triangle_render_active,
@@ -1346,27 +1407,7 @@ fn fs_main() -> @location(0) vec4<f32> {
                         };
                         eprintln!("swapchain_acquire_ok");
 
-                        let now = std::time::Instant::now();
-                        let elapsed = start_time.elapsed().as_secs_f32();
-                        let _dt = (now - last_frame_time).as_secs_f32().clamp(0.0, 0.05);
-                        last_frame_time = now;
-                        let debug_state = runtime_render_debug_state();
-                        let timeline_idx = ((elapsed * 24.0) as usize) % timeline_frames.len();
-                        let boot = &timeline_frames[timeline_idx];
-                        let screen = &boot_screen.frames[timeline_idx % boot_screen.frames.len()];
-
-                        let handoff_ready = !debug_state.boot_active && elapsed >= 12.0;
-                        if handoff_ready {
-                            procedural_renderer_active = true;
-                        }
-
-                        let render_mode = if procedural_renderer_active {
-                            "PROCEDURAL"
-                        } else {
-                            "BOOT"
-                        };
-
-                        if !procedural_renderer_active {
+                        if !procedural_path_active {
                             let now_second = elapsed.floor() as i32;
                             if now_second != last_boot_log_second {
                                 last_boot_log_second = now_second;
@@ -1381,7 +1422,7 @@ fn fs_main() -> @location(0) vec4<f32> {
                             }
                         }
 
-                        let mut cpu_frame = if !procedural_renderer_active {
+                        let mut cpu_frame = if !procedural_path_active {
                             if debug_state.boot_active && elapsed < 5.0 {
                                 let mut frame =
                                     rasterize_boot_frame(boot, config.width, config.height);
@@ -1417,7 +1458,7 @@ fn fs_main() -> @location(0) vec4<f32> {
                                 "entering_procedural_handoff t={:.2} active_scene={}",
                                 elapsed, debug_state.scene_name
                             );
-                            if !procedural_handoff_start_logged {
+                            if handoff_begins_this_frame {
                                 procedural_handoff_start_logged = true;
                                 eprintln!(
                                     "Procedural handoff start at t={:.2} active_scene={} boot_active={} warmup_frames={} isolate_starfield_expansion={} first_real_scene_override={}",
@@ -1432,7 +1473,7 @@ fn fs_main() -> @location(0) vec4<f32> {
 
                             let short_circuit_procedural_setup =
                                 should_short_circuit_procedural_setup(
-                                    procedural_renderer_active,
+                                    render_mode_state == RuntimeRenderMode::Procedural,
                                     bypass_procedural_setup,
                                 );
 
@@ -1447,7 +1488,7 @@ fn fs_main() -> @location(0) vec4<f32> {
                                     debug_state.scene_name,
                                 );
                                 post_handoff_procedural_frames =
-                                    post_handoff_procedural_frames.saturating_add(1);
+                                    advance_warmup_counter(post_handoff_procedural_frames, procedural_warmup_frames);
                                 BootFramebuffer {
                                     width: config.width,
                                     height: config.height,
@@ -1456,7 +1497,7 @@ fn fs_main() -> @location(0) vec4<f32> {
                             } else {
 
                             let safe_warmup_active =
-                                post_handoff_procedural_frames < procedural_warmup_frames;
+                                warmup_active(post_handoff_procedural_frames, procedural_warmup_frames);
                             if safe_warmup_active {
                                 if post_handoff_procedural_frames == 0
                                     || post_handoff_procedural_frames % 30 == 0
@@ -1584,7 +1625,13 @@ fn fs_main() -> @location(0) vec4<f32> {
                             );
 
                                 post_handoff_procedural_frames =
-                                    post_handoff_procedural_frames.saturating_add(1);
+                                    advance_warmup_counter(post_handoff_procedural_frames, procedural_warmup_frames);
+                                if transition_to_procedural_once(&mut render_mode_state) {
+                                    eprintln!(
+                                        "render_mode_transition BOOT->PROCEDURAL t={:.2} scene={}",
+                                        elapsed, proc_diag.scene_name
+                                    );
+                                }
                                 procedural
                             }
                         };
@@ -1643,51 +1690,9 @@ fn fs_main() -> @location(0) vec4<f32> {
                             bytes_per_row,
                             expected_bytes,
                         );
-                        assert!(config.width > 0 && config.height > 0);
-                        eprintln!(
-                            "framebuffer_diag width={} height={} bytes_per_row={} expected_bytes={} format=Rgba8UnormSrgb",
-                            config.width,
-                            config.height,
-                            bytes_per_row,
-                            expected_bytes,
-                        );
 
                         let capture_gpu_errors =
-                            procedural_renderer_active && !first_procedural_submission_captured;
-                        if capture_gpu_errors {
-                            device.push_error_scope(wgpu::ErrorFilter::Validation);
-                            device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
-                            eprintln!("gpu_error_scope_push first_procedural_submission");
-                        }
-
-                        if !triangle_render_active {
-                            queue.write_texture(
-                                wgpu::TexelCopyTextureInfo {
-                                    texture: &boot_texture,
-                                    mip_level: 0,
-                                    origin: wgpu::Origin3d::ZERO,
-                                    aspect: wgpu::TextureAspect::All,
-                                },
-                                &cpu_frame.rgba,
-                                wgpu::TexelCopyBufferLayout {
-                                    offset: 0,
-                                    bytes_per_row: Some(bytes_per_row),
-                                    rows_per_image: Some(config.height),
-                                },
-                                wgpu::Extent3d {
-                                    width: config.width,
-                                    height: config.height,
-                                    depth_or_array_layers: 1,
-                                },
-                            );
-                        } else {
-                            eprintln!(
-                                "diagnostic_gpu_triangle_active=true skipping_cpu_texture_upload triangle_render_active=true"
-                            );
-                        }
-
-                        let capture_gpu_errors =
-                            procedural_renderer_active && !first_procedural_submission_captured;
+                            render_mode_state == RuntimeRenderMode::Procedural && !first_procedural_submission_captured;
                         if capture_gpu_errors {
                             device.push_error_scope(wgpu::ErrorFilter::Validation);
                             device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
@@ -1779,6 +1784,14 @@ fn fs_main() -> @location(0) vec4<f32> {
                         eprintln!("surface_present_start");
                         frame.present();
                         eprintln!("surface_present_ok");
+                        if render_mode_state == RuntimeRenderMode::Procedural {
+                            if !first_procedural_present_logged {
+                                first_procedural_present_logged = true;
+                                eprintln!("first_procedural_present frame={} scene={}", post_handoff_procedural_frames, debug_state.scene_name);
+                            } else {
+                                eprintln!("procedural_frame_count={} scene={}", post_handoff_procedural_frames, debug_state.scene_name);
+                            }
+                        }
                     }
                     _ => {}
                 },
@@ -3935,6 +3948,42 @@ mod tests {
 
     #[test]
     #[cfg(feature = "real_graphics")]
+    fn render_mode_transitions_to_procedural_only_once() {
+        let mut mode = RuntimeRenderMode::Boot;
+        assert!(transition_to_procedural_once(&mut mode));
+        assert_eq!(mode, RuntimeRenderMode::Procedural);
+        assert!(!transition_to_procedural_once(&mut mode));
+        assert_eq!(mode, RuntimeRenderMode::Procedural);
+    }
+
+    #[test]
+    #[cfg(feature = "real_graphics")]
+    fn procedural_mode_persists_after_setup_completion() {
+        let mut mode = RuntimeRenderMode::Boot;
+        let setup_completed = true;
+        if setup_completed {
+            transition_to_procedural_once(&mut mode);
+        }
+
+        for _ in 0..5 {
+            assert_eq!(mode, RuntimeRenderMode::Procedural);
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "real_graphics")]
+    fn boot_mode_does_not_reassert_after_procedural_activation() {
+        let mut mode = RuntimeRenderMode::Boot;
+        transition_to_procedural_once(&mut mode);
+
+        let handoff_ready = false;
+        let handoff_started = true;
+        assert!(!handoff_starts_now(handoff_ready, handoff_started));
+        assert_eq!(mode, RuntimeRenderMode::Procedural);
+    }
+
+    #[test]
+    #[cfg(feature = "real_graphics")]
     fn stop_after_stage_is_honored() {
         let controls = ProceduralSetupControls {
             stop_after: Some(ProceduralSetupStage::BuildGenerator),
@@ -3968,7 +4017,15 @@ mod tests {
             boot_active: false,
         };
 
-        let mut scene = build_runtime_sdf_scene(&debug, 0.0);
+        let mut scene = build_runtime_sdf_scene(
+            &debug,
+            0.0,
+            ProceduralSetupControls {
+                stop_after: None,
+                skip_root_tree_build: false,
+                skip_procedural_camera: false,
+            },
+        );
         scene.sdf.camera.position.x = f32::NAN;
         let (safe, fallback, shape_count) = validate_runtime_scene(scene, &debug);
 
@@ -3996,7 +4053,15 @@ mod tests {
             boot_active: false,
         };
 
-        let scene = build_runtime_sdf_scene(&debug, 0.0);
+        let scene = build_runtime_sdf_scene(
+            &debug,
+            0.0,
+            ProceduralSetupControls {
+                stop_after: None,
+                skip_root_tree_build: false,
+                skip_procedural_camera: false,
+            },
+        );
         assert!(count_primitives(&scene.sdf.root) > 0);
         assert!(node_has_valid_modifiers(&scene.sdf.root));
     }
