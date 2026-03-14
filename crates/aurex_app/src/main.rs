@@ -416,6 +416,14 @@ fn audio_disabled_from_env_value(value: Option<&str>) -> bool {
     value.map(env_flag_true).unwrap_or(false)
 }
 
+fn verbose_runtime_logs_enabled_from_env() -> bool {
+    std::env::var("AUREX_VERBOSE_RUNTIME_LOGS")
+        .ok()
+        .as_deref()
+        .map(env_flag_true)
+        .unwrap_or(false)
+}
+
 fn should_attempt_audio_unlock(
     audio_enabled: bool,
     handoff_ready: bool,
@@ -849,6 +857,8 @@ fn main() {
     let mut post_handoff_frames = 0usize;
     let mut handoff_started_logged = false;
     let mut warmup_complete_logged = false;
+    let verbose_runtime_logs = verbose_runtime_logs_enabled_from_env();
+    let mut runtime_verbose_log_frame_counter = 0usize;
     set_runtime_render_debug_state(runtime_render_debug_state_for_loop(&pulse_loop));
     if let Err(err) = run_real_renderer_event_loop_with_frame_hook(move |t| {
         let tick = pulse_loop.update(t);
@@ -913,21 +923,26 @@ fn main() {
         for event in tick.triggered_events {
             println!("Timeline Event: {event}");
         }
-        if !tick.active_scenes.is_empty() {
-            println!("Timeline Scenes: {}", tick.active_scenes.join(" | "));
+        if verbose_runtime_logs {
+            runtime_verbose_log_frame_counter = runtime_verbose_log_frame_counter.saturating_add(1);
+            if runtime_verbose_log_frame_counter.is_multiple_of(60) {
+                if !tick.active_scenes.is_empty() {
+                    println!("Timeline Scenes: {}", tick.active_scenes.join(" | "));
+                }
+                println!(
+                    "Timeline Visual Params: geom={:.2} scale={:.2} height={:.2} complexity={:.2} particles={:.2} fog={:.2} glow={:.2} stars={} logo={}",
+                    tick.resolved_profile.geometry_density,
+                    tick.resolved_profile.structure_scale,
+                    tick.resolved_profile.structure_height,
+                    tick.resolved_profile.structure_complexity,
+                    tick.resolved_profile.particle_density,
+                    tick.resolved_profile.fog_density,
+                    tick.resolved_profile.glow_intensity,
+                    tick.resolved_profile.starfield_enabled,
+                    tick.resolved_profile.logo_enabled
+                );
+            }
         }
-        println!(
-            "Timeline Visual Params: geom={:.2} scale={:.2} height={:.2} complexity={:.2} particles={:.2} fog={:.2} glow={:.2} stars={} logo={}",
-            tick.resolved_profile.geometry_density,
-            tick.resolved_profile.structure_scale,
-            tick.resolved_profile.structure_height,
-            tick.resolved_profile.structure_complexity,
-            tick.resolved_profile.particle_density,
-            tick.resolved_profile.fog_density,
-            tick.resolved_profile.glow_intensity,
-            tick.resolved_profile.starfield_enabled,
-            tick.resolved_profile.logo_enabled
-        );
 
         if let Some(audio) = runtime_audio.as_ref() {
             let pulse =

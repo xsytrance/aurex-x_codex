@@ -453,6 +453,16 @@ fn log_only_procedural_transition_from_env() -> bool {
 }
 
 #[cfg(feature = "real_graphics")]
+fn verbose_runtime_logs_from_env() -> bool {
+    env_flag_true("AUREX_VERBOSE_RUNTIME_LOGS")
+}
+
+#[cfg(feature = "real_graphics")]
+fn gpu_error_scopes_enabled_from_env() -> bool {
+    env_flag_true("AUREX_ENABLE_GPU_ERROR_SCOPES") && !disable_gpu_error_scopes_from_env()
+}
+
+#[cfg(feature = "real_graphics")]
 fn warmup_frames_from_env() -> usize {
     std::env::var("AUREX_PROCEDURAL_WARMUP_FRAMES")
         .ok()
@@ -1108,7 +1118,8 @@ where
     let mut first_real_scene_frame_seen = false;
     let diagnostic_gpu_triangle = diagnostic_gpu_triangle_from_env();
     let bypass_procedural_setup = bypass_procedural_setup_from_env();
-    let disable_gpu_error_scopes = disable_gpu_error_scopes_from_env();
+    let gpu_error_scopes_enabled = gpu_error_scopes_enabled_from_env();
+    let verbose_runtime_logs = verbose_runtime_logs_from_env();
     let log_only_procedural_transition = log_only_procedural_transition_from_env();
     let mut first_procedural_submission_captured = false;
     let mut first_procedural_present_logged = false;
@@ -1202,68 +1213,6 @@ fn fs_main(inf: VsOut) -> @location(0) vec4<f32> {
             targets: &[Some(wgpu::ColorTargetState {
                 format: config.format,
                 blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-        }),
-        primitive: wgpu::PrimitiveState::default(),
-        depth_stencil: None,
-        multisample: wgpu::MultisampleState::default(),
-        multiview: None,
-        cache: None,
-    });
-
-    let diagnostic_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("Aurex-X Diagnostic Triangle Shader"),
-        source: wgpu::ShaderSource::Wgsl(
-            r#"
-struct VsOut {
-    @builtin(position) position: vec4<f32>,
-};
-
-@vertex
-fn vs_main(@builtin(vertex_index) vid: u32) -> VsOut {
-    var positions = array<vec2<f32>, 3>(
-        vec2<f32>(-1.0, -1.0),
-        vec2<f32>(3.0, -1.0),
-        vec2<f32>(-1.0, 3.0),
-    );
-    var out: VsOut;
-    out.position = vec4<f32>(positions[vid], 0.0, 1.0);
-    return out;
-}
-
-@fragment
-fn fs_main() -> @location(0) vec4<f32> {
-    return vec4<f32>(0.08, 0.22, 0.38, 1.0);
-}
-"#
-            .into(),
-        ),
-    });
-
-    let diagnostic_pipeline_layout =
-        device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Aurex-X Diagnostic Triangle Pipeline Layout"),
-            bind_group_layouts: &[],
-            push_constant_ranges: &[],
-        });
-
-    let diagnostic_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("Aurex-X Diagnostic Triangle Pipeline"),
-        layout: Some(&diagnostic_pipeline_layout),
-        vertex: wgpu::VertexState {
-            module: &diagnostic_shader,
-            entry_point: Some("vs_main"),
-            buffers: &[],
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-        },
-        fragment: Some(wgpu::FragmentState {
-            module: &diagnostic_shader,
-            entry_point: Some("fs_main"),
-            targets: &[Some(wgpu::ColorTargetState {
-                format: config.format,
-                blend: Some(wgpu::BlendState::REPLACE),
                 write_mask: wgpu::ColorWrites::ALL,
             })],
             compilation_options: wgpu::PipelineCompilationOptions::default(),
@@ -1807,6 +1756,19 @@ fn fs_main() -> @location(0) vec4<f32> {
                             bytes_per_row,
                             expected_bytes,
                         );
+                        assert_eq!(
+                            bytes_per_row % 4,
+                            0,
+                            "bytes_per_row must align with RGBA8 block size"
+                        );
+                        assert!(config.width > 0 && config.height > 0);
+                        eprintln!(
+                            "framebuffer_diag width={} height={} bytes_per_row={} expected_bytes={} format=Rgba8UnormSrgb",
+                            config.width,
+                            config.height,
+                            bytes_per_row,
+                            expected_bytes,
+                        );
                         assert!(config.width > 0 && config.height > 0);
                         eprintln!(
                             "framebuffer_diag width={} height={} bytes_per_row={} expected_bytes={} format=Rgba8UnormSrgb",
@@ -1854,6 +1816,45 @@ fn fs_main() -> @location(0) vec4<f32> {
                             && !first_procedural_submission_captured
                             && !disable_gpu_error_scopes;
                         if disable_gpu_error_scopes {
+                            eprintln!("gpu_error_scopes_disabled=true");
+                        }
+                        if capture_gpu_errors {
+                            eprintln!("gpu_error_scope_push begin");
+                            device.push_error_scope(wgpu::ErrorFilter::Validation);
+                            device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
+                            eprintln!("gpu_error_scope_push end");
+                        }
+
+                        if !triangle_render_active {
+                            queue.write_texture(
+                                wgpu::TexelCopyTextureInfo {
+                                    texture: &boot_texture,
+                                    mip_level: 0,
+                                    origin: wgpu::Origin3d::ZERO,
+                                    aspect: wgpu::TextureAspect::All,
+                                },
+                                &cpu_frame.rgba,
+                                wgpu::TexelCopyBufferLayout {
+                                    offset: 0,
+                                    bytes_per_row: Some(bytes_per_row),
+                                    rows_per_image: Some(config.height),
+                                },
+                                wgpu::Extent3d {
+                                    width: config.width,
+                                    height: config.height,
+                                    depth_or_array_layers: 1,
+                                },
+                            );
+                        } else {
+                            eprintln!(
+                                "diagnostic_gpu_triangle_active=true skipping_cpu_texture_upload triangle_render_active=true"
+                            );
+                        }
+
+                        let capture_gpu_errors = render_mode_state == RuntimeRenderMode::Procedural
+                            && !first_procedural_submission_captured
+                            && gpu_error_scopes_enabled;
+                        if !gpu_error_scopes_enabled && verbose_runtime_logs {
                             eprintln!("gpu_error_scopes_disabled=true");
                         }
                         if capture_gpu_errors {
@@ -1951,11 +1952,15 @@ fn fs_main() -> @location(0) vec4<f32> {
                             first_procedural_submission_captured = true;
                         }
 
-                        eprintln!("present begin");
-                        eprintln!("surface_present_start");
+                        if verbose_runtime_logs {
+                            eprintln!("present begin");
+                            eprintln!("surface_present_start");
+                        }
                         frame.present();
-                        eprintln!("surface_present_ok");
-                        eprintln!("present end");
+                        if verbose_runtime_logs {
+                            eprintln!("surface_present_ok");
+                            eprintln!("present end");
+                        }
                         if render_mode_state == RuntimeRenderMode::Procedural {
                             if !first_procedural_present_logged {
                                 first_procedural_present_logged = true;
@@ -1968,9 +1973,13 @@ fn fs_main() -> @location(0) vec4<f32> {
                     _ => {}
                 },
                 Event::AboutToWait => {
-                    eprintln!("request_redraw begin");
+                    if verbose_runtime_logs {
+                        eprintln!("request_redraw begin");
+                    }
                     window.request_redraw();
-                    eprintln!("request_redraw end");
+                    if verbose_runtime_logs {
+                        eprintln!("request_redraw end");
+                    }
                 }
                 _ => {}
             }
@@ -4154,6 +4163,12 @@ mod tests {
         let handoff_started = true;
         assert!(!handoff_starts_now(handoff_ready, handoff_started));
         assert_eq!(mode, RuntimeRenderMode::Procedural);
+    }
+
+    #[test]
+    #[cfg(feature = "real_graphics")]
+    fn gpu_error_scopes_are_disabled_by_default() {
+        assert!(!gpu_error_scopes_enabled_from_env());
     }
 
     #[test]
