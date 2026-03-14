@@ -84,7 +84,7 @@ impl FieldSample {
         }
     }
 
-    pub fn add(self, rhs: Self) -> Self {
+    pub fn combine(self, rhs: Self) -> Self {
         Self {
             scalar: self.scalar + rhs.scalar,
             vector: Vec3::new(
@@ -114,7 +114,7 @@ pub fn sample_fields(
     scene_seed: u32,
 ) -> FieldSample {
     fields.iter().fold(FieldSample::zero(), |acc, f| {
-        acc.add(sample_field(f, position, time, scene_seed))
+        acc.combine(sample_field(f, position, time, scene_seed))
     })
 }
 
@@ -211,7 +211,7 @@ fn sample_audio_field(field: AudioField, position: Vec3, time: f32, seed: u32) -
 }
 
 fn hash3(x: f32, y: f32, z: f32, seed: u32) -> f32 {
-    let v = (x * 127.1 + y * 311.7 + z * 74.7 + seed as f32 * 19.19).sin() * 43758.5453;
+    let v = (x * 127.1 + y * 311.7 + z * 74.7 + seed as f32 * 19.19).sin() * 43_758.547;
     v.fract() * 2.0 - 1.0
 }
 

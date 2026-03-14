@@ -1,5 +1,11 @@
+mod pulse_builder;
+mod pulse_sequence;
+mod pulses;
+mod timeline;
+
 use aurex_audio::{
-    AudioBackendMode, AudioBackendReadiness, MockAudioEngine, start_runtime_sine_output,
+    AudioBackendMode, AudioBackendReadiness, MockAudioEngine, ProceduralAudioConfig,
+    default_demo_audio_config, start_runtime_pulse_output,
 };
 use aurex_conductor::{ConductorClock, ConductorStage, MAIN_LOOP_STAGES, execute_frame};
 use aurex_ecs::{CommandBuffer, EcsCommand, EcsWorld, EntityId, Transform2p5D};
@@ -9,14 +15,389 @@ use aurex_render::{
     BootAnimationConfig, BootAnimator, BootPostFxTrack, BootSequenceRecipe, BootStylePreset,
     BootStyleProfile, CameraRig, MockRenderer, RENDER_MAIN_STAGES, RenderBackendMode,
     RenderBackendReadiness, RenderBootstrapConfig, RenderBootstrapExecutor, RenderBootstrapPlan,
-    RenderStage, attempt_real_renderer_bootstrap, rasterize_boot_frame,
-    run_real_renderer_event_loop_with_frame_hook,
+    RenderStage, RuntimeRenderDebugState, attempt_real_renderer_bootstrap, rasterize_boot_frame,
+    run_real_renderer_event_loop_with_frame_hook, set_runtime_render_debug_state,
 };
 use aurex_shape_synth::{PrimitiveType, ShapeDescriptor};
-use std::thread;
-use std::time::{Duration, Instant};
+use pulses::{
+    ExamplePulseConfig,
+    ambient_dreamscape::create_ambient_dreamscape_pulse,
+    aurielle_intro::{create_aurielle_intro_pulse, create_aurielle_intro_pulse_at_time},
+    electronic_megacity::{
+        create_electronic_megacity_pulse, create_electronic_megacity_pulse_at_time,
+    },
+    jazz_atmosphere::create_jazz_atmosphere_pulse,
+};
+use timeline::{
+    AudioAction, AudioCue, AudioTransport, EventScheduler, PulseTimeline, SceneManager,
+    SceneVisualProfile, TimelineClock, TimelineEvent, TimelineEventKind, blend_scene_profiles,
+    scripts::aurielle_intro::aurielle_intro_timeline,
+};
 
-fn runtime_diagnostics_report() -> String {
+const DEFAULT_PULSE_NAME: &str = "megacity";
+const DEFAULT_SEED: u64 = 2026;
+const AVAILABLE_PULSE_NAMES: [&str; 4] = ["megacity", "jazz", "ambient", "aurielle_intro"];
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RuntimeOptions {
+    pulse_name: String,
+    seed: u64,
+}
+
+#[derive(Debug, Clone)]
+struct RuntimeTickReport {
+    phase_change: Option<String>,
+    triggered_events: Vec<String>,
+    active_scenes: Vec<String>,
+    resolved_profile: SceneVisualProfile,
+}
+
+fn available_pulse_names() -> &'static [&'static str] {
+    &AVAILABLE_PULSE_NAMES
+}
+
+fn parse_runtime_options(args: impl IntoIterator<Item = String>) -> Result<RuntimeOptions, String> {
+    let mut pulse_name: Option<String> = None;
+    let mut seed = DEFAULT_SEED;
+
+    let mut iter = args.into_iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--seed" => {
+                let value = iter.next().ok_or_else(|| {
+                    "Missing value for --seed. Example: cargo run -- megacity --seed 42".to_string()
+                })?;
+                seed = value.parse::<u64>().map_err(|_| {
+                    format!("Invalid --seed value '{value}'. Expected unsigned integer (u64).")
+                })?;
+            }
+            value if value.starts_with("--") => {
+                return Err(format!(
+                    "Unknown option '{value}'. Supported option: --seed <u64>"
+                ));
+            }
+            value => {
+                if pulse_name.is_some() {
+                    return Err(
+                        "Too many positional arguments. Usage: cargo run -- [pulse] [--seed <u64>]"
+                            .to_string(),
+                    );
+                }
+                pulse_name = Some(value.to_string());
+            }
+        }
+    }
+
+    let pulse_name = pulse_name.unwrap_or_else(|| DEFAULT_PULSE_NAME.to_string());
+    if !available_pulse_names().contains(&pulse_name.as_str()) {
+        return Err(format!(
+            "Unknown pulse '{pulse_name}'. Available pulses: {}",
+            available_pulse_names().join(", ")
+        ));
+    }
+
+    Ok(RuntimeOptions { pulse_name, seed })
+}
+
+fn create_initial_pulse(pulse_name: &str, seed: u64) -> ExamplePulseConfig {
+    match pulse_name {
+        "megacity" => create_electronic_megacity_pulse(seed),
+        "jazz" => create_jazz_atmosphere_pulse(seed),
+        "ambient" => create_ambient_dreamscape_pulse(seed),
+        "aurielle_intro" => create_aurielle_intro_pulse(seed),
+        _ => unreachable!("unsupported pulse should be rejected by parse_runtime_options"),
+    }
+}
+
+fn create_pulse_at_time(pulse_name: &str, seed: u64, elapsed_seconds: f32) -> ExamplePulseConfig {
+    match pulse_name {
+        "megacity" => create_electronic_megacity_pulse_at_time(seed, elapsed_seconds),
+        "jazz" => create_jazz_atmosphere_pulse(seed),
+        "ambient" => create_ambient_dreamscape_pulse(seed),
+        "aurielle_intro" => create_aurielle_intro_pulse_at_time(seed, elapsed_seconds),
+        _ => unreachable!("unsupported pulse should be rejected by parse_runtime_options"),
+    }
+}
+
+#[derive(Debug)]
+struct RuntimePulseLoop {
+    pulse_name: String,
+    seed: u64,
+    pulse: ExamplePulseConfig,
+    last_phase_name: Option<String>,
+    clock: TimelineClock,
+    timeline: PulseTimeline,
+    scheduler: EventScheduler,
+    scene_manager: SceneManager,
+    audio_transport: AudioTransport,
+    resolved_profile: SceneVisualProfile,
+}
+
+impl RuntimePulseLoop {
+    fn new(pulse_name: &str, seed: u64) -> Self {
+        let pulse = create_initial_pulse(pulse_name, seed);
+        let last_phase_name = pulse.current_phase_name.clone();
+        let timeline = select_timeline(pulse_name);
+        let mut scene_manager = SceneManager::default();
+        if let Some((scene_id, layer)) = initial_scene_for_pulse(pulse_name) {
+            scene_manager.activate_scene(scene_id, layer);
+        }
+
+        Self {
+            pulse_name: pulse_name.to_string(),
+            seed,
+            pulse,
+            last_phase_name,
+            clock: TimelineClock::new(1.0 / 60.0),
+            timeline,
+            scheduler: EventScheduler::new(),
+            scene_manager,
+            audio_transport: AudioTransport::default(),
+            resolved_profile: SceneVisualProfile::default(),
+        }
+    }
+
+    fn update(&mut self, wall_time_seconds: f32) -> RuntimeTickReport {
+        let _steps = self.clock.advance_to(wall_time_seconds.max(0.0));
+        let elapsed_seconds = self.clock.time_seconds;
+
+        self.pulse = create_pulse_at_time(&self.pulse_name, self.seed, elapsed_seconds);
+        let next_phase = self.pulse.current_phase_name.clone();
+
+        let phase_change = if next_phase != self.last_phase_name {
+            self.last_phase_name = next_phase.clone();
+            next_phase
+        } else {
+            None
+        };
+
+        let due = self
+            .scheduler
+            .collect_due_events(&self.timeline, elapsed_seconds);
+
+        let mut triggered_events = Vec::new();
+        for event in due {
+            match &event.kind {
+                TimelineEventKind::ActivateScene { scene_id, layer } => {
+                    self.scene_manager.activate_scene(scene_id.clone(), *layer);
+                    triggered_events.push(format!("scene:{}", scene_id));
+                }
+                TimelineEventKind::StartTransition {
+                    from_scene,
+                    to_scene,
+                    layer,
+                    spec,
+                } => {
+                    self.scene_manager.start_transition(
+                        from_scene.clone(),
+                        to_scene.clone(),
+                        *layer,
+                        *spec,
+                        elapsed_seconds,
+                    );
+                    triggered_events.push(format!("transition:{}->{}", from_scene, to_scene));
+                }
+                TimelineEventKind::AudioCue { cue_id, action } => {
+                    self.audio_transport.apply_cue(AudioCue {
+                        cue_id: cue_id.clone(),
+                        action: *action,
+                    });
+                    triggered_events.push(format!("audio:{cue_id}:{action:?}"));
+                }
+                TimelineEventKind::Trigger { key } => {
+                    triggered_events.push(format!("trigger:{key}"));
+                }
+            }
+        }
+
+        self.scene_manager.update(elapsed_seconds);
+        self.resolved_profile = blend_scene_profiles(&self.scene_manager.layers);
+        apply_scene_profile_to_pulse(
+            &mut self.pulse,
+            self.resolved_profile,
+            &self.scene_manager.layers,
+        );
+
+        let active_scenes = self
+            .scene_manager
+            .layers
+            .iter()
+            .map(|layer| format!("{}@{}:{:.2}", layer.scene_id, layer.layer, layer.weight))
+            .collect();
+
+        RuntimeTickReport {
+            phase_change,
+            triggered_events,
+            active_scenes,
+            resolved_profile: self.resolved_profile,
+        }
+    }
+}
+
+fn select_timeline(pulse_name: &str) -> PulseTimeline {
+    if pulse_name == "aurielle_intro" {
+        aurielle_intro_timeline()
+    } else {
+        PulseTimeline::new(
+            format!("{}_timeline", pulse_name),
+            0.0,
+            vec![TimelineEvent {
+                id: 1,
+                at_seconds: 0.0,
+                priority: 0,
+                kind: TimelineEventKind::AudioCue {
+                    cue_id: "default_loop".to_string(),
+                    action: AudioAction::Play,
+                },
+            }],
+        )
+    }
+}
+
+fn initial_scene_for_pulse(pulse_name: &str) -> Option<(&'static str, u8)> {
+    match pulse_name {
+        "megacity" => Some(("megacity_skyline", 0)),
+        "jazz" => Some(("jazz_lounge", 0)),
+        "ambient" => Some(("ambient_mist", 0)),
+        _ => None,
+    }
+}
+
+fn timeline_summary_lines(pulse_loop: &RuntimePulseLoop) -> Vec<String> {
+    vec![
+        format!(
+            "Timeline: {} t={:.2}s frame={}",
+            pulse_loop.timeline.name, pulse_loop.clock.time_seconds, pulse_loop.clock.frame_index
+        ),
+        format!(
+            "Timeline Active Scenes: {}",
+            pulse_loop.scene_manager.layers.len()
+        ),
+        format!(
+            "Timeline Active Audio Tracks: {}",
+            pulse_loop.audio_transport.active_tracks.join(",")
+        ),
+        format!(
+            "Timeline Visual Profile: geom={:.2} scale={:.2} height={:.2} complexity={:.2} particles={:.2} fog={:.2} glow={:.2} stars={} logo={}",
+            pulse_loop.resolved_profile.geometry_density,
+            pulse_loop.resolved_profile.structure_scale,
+            pulse_loop.resolved_profile.structure_height,
+            pulse_loop.resolved_profile.structure_complexity,
+            pulse_loop.resolved_profile.particle_density,
+            pulse_loop.resolved_profile.fog_density,
+            pulse_loop.resolved_profile.glow_intensity,
+            pulse_loop.resolved_profile.starfield_enabled,
+            pulse_loop.resolved_profile.logo_enabled
+        ),
+    ]
+}
+
+fn apply_scene_profile_to_pulse(
+    pulse: &mut ExamplePulseConfig,
+    profile: SceneVisualProfile,
+    layers: &[timeline::scene_manager::SceneLayerState],
+) {
+    let primary_scene = layers
+        .iter()
+        .max_by(|a, b| a.weight.total_cmp(&b.weight))
+        .map(|l| l.scene_id.as_str())
+        .unwrap_or("scene_default");
+
+    pulse.world_blueprint.palette_hint = format!(
+        "{}|{}|stars:{}|logo:{}",
+        pulse.pulse_config.color_palette,
+        primary_scene,
+        profile.starfield_enabled,
+        profile.logo_enabled
+    );
+    pulse.world_blueprint.geometry_density = profile.geometry_density;
+    pulse.world_blueprint.structure_scale = profile.structure_scale;
+    pulse.world_blueprint.structure_height = profile.structure_height;
+    pulse.world_blueprint.structure_complexity = profile.structure_complexity;
+
+    pulse.generator_output.structures.density = profile.geometry_density;
+    pulse.generator_output.structures.structure_scale = profile.structure_scale;
+    pulse.generator_output.structures.structure_height = profile.structure_height;
+    pulse.generator_output.structures.structure_complexity = profile.structure_complexity;
+    pulse.generator_output.particles.density_multiplier = profile.particle_density;
+    pulse.generator_output.atmosphere.fog_density = profile.fog_density;
+    pulse.generator_output.lighting.flash_envelope = profile.glow_intensity;
+
+    pulse.modulated_output.structures.density = (pulse.modulated_output.structures.density * 0.5
+        + profile.geometry_density * 0.5)
+        .clamp(0.0, 1.0);
+    pulse.modulated_output.structures.structure_scale =
+        (pulse.modulated_output.structures.structure_scale * 0.4 + profile.structure_scale * 0.6)
+            .clamp(0.0, 1.0);
+    pulse.modulated_output.structures.structure_height =
+        (pulse.modulated_output.structures.structure_height * 0.35
+            + profile.structure_height * 0.65)
+            .clamp(0.0, 1.0);
+    pulse.modulated_output.structures.structure_complexity =
+        (pulse.modulated_output.structures.structure_complexity * 0.45
+            + profile.structure_complexity * 0.55)
+            .clamp(0.0, 1.0);
+    pulse.modulated_output.particles.density_multiplier =
+        (pulse.modulated_output.particles.density_multiplier * 0.4
+            + profile.particle_density * 0.6)
+            .clamp(0.0, 1.0);
+    pulse.modulated_output.atmosphere.fog_density =
+        (pulse.modulated_output.atmosphere.fog_density * 0.4 + profile.fog_density * 0.6)
+            .clamp(0.0, 1.0);
+    pulse.modulated_output.lighting.flash_envelope =
+        (pulse.modulated_output.lighting.flash_envelope * 0.3 + profile.glow_intensity * 0.7)
+            .clamp(0.0, 1.0);
+
+    pulse.rhythm_snapshot.intensity =
+        (pulse.rhythm_snapshot.intensity * 0.5 + profile.glow_intensity * 0.5).clamp(0.0, 1.0);
+    pulse.rhythm_snapshot.high_energy =
+        (pulse.rhythm_snapshot.high_energy * 0.5 + profile.particle_density * 0.5).clamp(0.0, 1.0);
+}
+
+fn runtime_render_debug_state_for_loop(pulse_loop: &RuntimePulseLoop) -> RuntimeRenderDebugState {
+    let dominant_scene = pulse_loop
+        .scene_manager
+        .layers
+        .iter()
+        .max_by(|a, b| a.weight.total_cmp(&b.weight))
+        .map(|l| l.scene_id.clone())
+        .unwrap_or_else(|| "unbound".to_string());
+
+    RuntimeRenderDebugState {
+        pulse_name: pulse_loop.pulse.pulse_name.clone(),
+        scene_name: dominant_scene,
+        theme_name: format!("{:?}", pulse_loop.pulse.world_blueprint.theme),
+        profile_name: format!(
+            "geom:{:.2}|scale:{:.2}|height:{:.2}|particles:{:.2}",
+            pulse_loop.resolved_profile.geometry_density,
+            pulse_loop.resolved_profile.structure_scale,
+            pulse_loop.resolved_profile.structure_height,
+            pulse_loop.resolved_profile.particle_density
+        ),
+        profile_geometry_density: pulse_loop.resolved_profile.geometry_density,
+        profile_structure_height: pulse_loop.resolved_profile.structure_height,
+        profile_particle_density: pulse_loop.resolved_profile.particle_density,
+        profile_fog_density: pulse_loop.resolved_profile.fog_density,
+        profile_glow_intensity: pulse_loop.resolved_profile.glow_intensity,
+        starfield_enabled: pulse_loop.resolved_profile.starfield_enabled,
+        logo_enabled: pulse_loop.resolved_profile.logo_enabled,
+        boot_active: pulse_loop.clock.time_seconds < 1.25,
+    }
+}
+
+fn pulse_audio_config_for(pulse: &ExamplePulseConfig) -> ProceduralAudioConfig {
+    let mut cfg = default_demo_audio_config(pulse.pulse_config.seed as u32);
+    cfg.tempo = match pulse.pulse_name.as_str() {
+        "megacity" => 138.0,
+        "aurielle_intro" => 124.0,
+        "jazz" => 96.0,
+        "ambient" => 76.0,
+        _ => 120.0,
+    };
+    cfg
+}
+
+fn runtime_diagnostics_report(selected_pulse: &ExamplePulseConfig) -> String {
     let mut clock = ConductorClock::default();
     let camera = CameraRig::default();
 
@@ -69,6 +450,9 @@ fn runtime_diagnostics_report() -> String {
 
     let mut renderer = MockRenderer::new(RenderBootstrapConfig::default());
     let render_stats = renderer.run_frame(&RENDER_MAIN_STAGES);
+
+    renderer.set_rhythm_snapshot(selected_pulse.rhythm_snapshot);
+    let renderer_world_debug = renderer.world_debug_summary();
 
     let mut visited = Vec::new();
     let trace = execute_frame(&mut clock, |stage| {
@@ -231,6 +615,58 @@ fn runtime_diagnostics_report() -> String {
         "render_real_bootstrap={:?} detail:{}",
         real_renderer_bootstrap.result, real_renderer_bootstrap.detail
     ));
+
+    lines.push(format!(
+        "pulse_showcase_count={}",
+        available_pulse_names().len()
+    ));
+    lines.push(format!("Pulse: {}", selected_pulse.pulse_name));
+    lines.push(format!("Theme: {:?}", selected_pulse.world_blueprint.theme));
+    lines.push(format!(
+        "Geometry: {:?}",
+        selected_pulse.pulse_config.geometry_style
+    ));
+    lines.push(format!(
+        "Structures: {:?}",
+        selected_pulse.pulse_config.structure_set
+    ));
+    lines.push(format!(
+        "WorldBlueprint Geometry: density={:.3} scale={:.3} height={:.3} complexity={:.3}",
+        selected_pulse.world_blueprint.geometry_density,
+        selected_pulse.world_blueprint.structure_scale,
+        selected_pulse.world_blueprint.structure_height,
+        selected_pulse.world_blueprint.structure_complexity
+    ));
+    lines.push(format!(
+        "Geometry: structures_density={:.3} scale={:.3} height={:.3} complexity={:.3}",
+        selected_pulse.modulated_output.structures.density,
+        selected_pulse.modulated_output.structures.structure_scale,
+        selected_pulse.modulated_output.structures.structure_height,
+        selected_pulse
+            .modulated_output
+            .structures
+            .structure_complexity
+    ));
+    lines.push(format!(
+        "Atmosphere: fog_density={:.3}",
+        selected_pulse.modulated_output.atmosphere.fog_density
+    ));
+    lines.push(format!(
+        "Rhythm snapshot: pulse={:.2} bass={:.2} intensity={:.2}",
+        selected_pulse.rhythm_snapshot.pulse,
+        selected_pulse.rhythm_snapshot.bass_energy,
+        selected_pulse.rhythm_snapshot.intensity
+    ));
+    if let Some(duration) = selected_pulse.sequence_duration_seconds {
+        lines.push(format!("Sequence Duration: {:.1}s", duration));
+    }
+    if let Some(phase) = selected_pulse.current_phase_name.as_deref() {
+        lines.push(format!("Current Phase: {}", phase));
+    }
+    lines.push(format!(
+        "renderer_world_debug_lines={}",
+        renderer_world_debug.lines().count()
+    ));
     lines.push(format!("boot_frame_count={}", boot_frames.len()));
     lines.push(format!(
         "boot_first=tick:{} radius:{:.3} glow:{:.3} hue:{:.2}",
@@ -312,9 +748,32 @@ fn runtime_diagnostics_report() -> String {
 }
 
 fn main() {
-    println!("{}", runtime_diagnostics_report());
+    let options = match parse_runtime_options(std::env::args().skip(1)) {
+        Ok(options) => options,
+        Err(err) => {
+            eprintln!("{err}");
+            return;
+        }
+    };
 
-    let runtime_audio = match start_runtime_sine_output() {
+    let mut pulse_loop = RuntimePulseLoop::new(&options.pulse_name, options.seed);
+    let pulse = pulse_loop.pulse.clone();
+
+    println!("Launching Pulse: {}", pulse.pulse_name);
+    if let Some(duration) = pulse.sequence_duration_seconds {
+        println!("Sequence Duration: {:.1}s", duration);
+    }
+    if let Some(phase) = pulse.current_phase_name.as_deref() {
+        println!("Current Phase: {}", phase);
+    }
+
+    println!("{}", runtime_diagnostics_report(&pulse));
+    for line in timeline_summary_lines(&pulse_loop) {
+        println!("{line}");
+    }
+
+    let runtime_audio = match start_runtime_pulse_output(pulse_audio_config_for(&pulse_loop.pulse))
+    {
         Ok(audio) => {
             println!("audio_runtime=started detail:cpal stream active");
             Some(audio)
@@ -326,71 +785,187 @@ fn main() {
     };
 
     let runtime_audio = runtime_audio;
+    set_runtime_render_debug_state(runtime_render_debug_state_for_loop(&pulse_loop));
     if let Err(err) = run_real_renderer_event_loop_with_frame_hook(move |t| {
+        let tick = pulse_loop.update(t);
+        set_runtime_render_debug_state(runtime_render_debug_state_for_loop(&pulse_loop));
+        if let Some(phase_name) = tick.phase_change {
+            println!("Phase Change: {}", phase_name);
+            println!("{}", runtime_diagnostics_report(&pulse_loop.pulse));
+            if let Some(audio) = runtime_audio.as_ref() {
+                audio.set_procedural_config(pulse_audio_config_for(&pulse_loop.pulse));
+            }
+        }
+        for event in tick.triggered_events {
+            println!("Timeline Event: {event}");
+        }
+        if !tick.active_scenes.is_empty() {
+            println!("Timeline Scenes: {}", tick.active_scenes.join(" | "));
+        }
+        println!(
+            "Timeline Visual Params: geom={:.2} scale={:.2} height={:.2} complexity={:.2} particles={:.2} fog={:.2} glow={:.2} stars={} logo={}",
+            tick.resolved_profile.geometry_density,
+            tick.resolved_profile.structure_scale,
+            tick.resolved_profile.structure_height,
+            tick.resolved_profile.structure_complexity,
+            tick.resolved_profile.particle_density,
+            tick.resolved_profile.fog_density,
+            tick.resolved_profile.glow_intensity,
+            tick.resolved_profile.starfield_enabled,
+            tick.resolved_profile.logo_enabled
+        );
+
         if let Some(audio) = runtime_audio.as_ref() {
-            let pulse = (t * std::f32::consts::TAU * 0.6).sin() * 0.5 + 0.5;
+            let pulse =
+                (pulse_loop.clock.time_seconds * std::f32::consts::TAU * 0.6).sin() * 0.5 + 0.5;
             audio.set_pulse(pulse);
         }
-    }) {
-        if !err.contains("real_graphics feature is disabled") {
-            eprintln!("render_real_loop=error detail:{err}");
-        }
+    }) && !err.contains("real_graphics feature is disabled")
+    {
+        eprintln!("render_real_loop=error detail:{err}");
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::runtime_diagnostics_report;
+    use super::{
+        DEFAULT_SEED, RuntimePulseLoop, available_pulse_names, create_pulse_at_time,
+        parse_runtime_options, runtime_diagnostics_report, runtime_render_debug_state_for_loop,
+    };
 
     #[test]
     fn diagnostics_report_matches_expected_snapshot() {
-        let expected = "Aurex runtime scaffold initialized.
-frame=1 tick=1
-camera_fov=60
-shape_count=3
-light_kind=Pulse bloom_intensity=0.25
-conductor_stage_count=7
-audio_backend_before=MockSilence audio_ready_before=true
-audio_backend_transition=Transitioned
-audio_backend_after=CpalPlanned audio_ready_after=false
-audio_probe=tick:1 pulse:0.854
-audio_m1_readiness=device_io:true stream_graph:true can_emit_sound:true
-ecs_entity_count=2
-render_bootstrap=Aurex-X 1280x720
-render_stage_count=3
-render_stages=RenderPrepare/Render/Present
-render_frame_id=1 render_stages_executed=3
-conductor_trace_stages=7
-render_stages_seen_by_conductor=3
-render_backend_before=Mock backend_ready_before=true
-render_backend_transition=Transitioned
-render_backend_after=WgpuPlanned backend_ready_after=false
-render_m1_readiness=windowing:true gpu:true can_present:true
-render_bootstrap_ready_steps=7/7
-render_bootstrap_step_map=InitWindow:true,InitWgpuInstance:true,InitSurface:true,RequestDevice:true,ConfigureSwapchain:true,UploadBootScreenQuad:true,DrawBootScreen:true
-render_bootstrap_executor_progress=7/7
-render_bootstrap_executor_last_step=DrawBootScreen
-render_real_bootstrap=FeatureDisabled detail:build without real_graphics feature
-boot_frame_count=12
-boot_first=tick:1 radius:1.021 glow:0.931 hue:36.79
-boot_last=tick:12 radius:1.040 glow:0.987 hue:103.46
-boot_phases=Ignition:5 PulseLock:3 Reveal:4
-boot_style_preset=NeonStorm
-boot_sequence_recipe=GrandReveal
-boot_screen_title=AUREX-X
-boot_screen_subtitle=Prime Pulse online
-boot_style_avg=glow:0.914 distortion:0.543 phase_t:0.375
-boot_intent_avg=bloom:0.894 fog:0.229 color_shift:98.395
-boot_intent_peak_bloom=1.179
-boot_postfx_avg=bloom:0.894 fog:0.229 distortion:0.543 color_shift:98.395
-boot_postfx_peak_bloom=1.179
-boot_screen_first=tick:1 progress:0.000 glow:0.566 glyphs:1
-boot_screen_latest=tick:12 progress:0.750 glow:1.108 glyphs:6
-boot_postfx_first=tick:1 bloom:0.752 fog:0.050
-boot_postfx_latest=tick:12 bloom:1.108 fog:0.560
-boot_raster_first=320x180 lit:17947 checksum:11461490184831736471
-boot_raster_latest=320x180 lit:19431 checksum:17951859828050323094";
+        let pulse = create_pulse_at_time("megacity", DEFAULT_SEED, 0.0);
+        let report = runtime_diagnostics_report(&pulse);
+        assert!(report.contains("Aurex runtime scaffold initialized."));
+        assert!(report.contains("render_stages=RenderPrepare/Render/Present"));
+        assert!(report.contains(&format!(
+            "pulse_showcase_count={}",
+            available_pulse_names().len()
+        )));
+        assert!(report.contains("Pulse: Electronic Megacity"));
+        assert!(report.contains("Theme: Electronic"));
+        assert!(report.contains("Rhythm snapshot: pulse="));
+        assert!(report.contains("Sequence Duration:"));
+        assert!(report.contains("Current Phase:"));
+    }
 
-        assert_eq!(runtime_diagnostics_report(), expected);
+    #[test]
+    fn runtime_options_support_known_pulse_names() {
+        let options = parse_runtime_options(vec![
+            "aurielle_intro".to_string(),
+            "--seed".to_string(),
+            "42".to_string(),
+        ])
+        .expect("aurielle_intro should be accepted");
+        assert_eq!(options.pulse_name, "aurielle_intro");
+        assert_eq!(options.seed, 42);
+    }
+
+    #[test]
+    fn runtime_options_default_to_megacity() {
+        let options =
+            parse_runtime_options(Vec::<String>::new()).expect("default options should parse");
+        assert_eq!(options.pulse_name, "megacity");
+        assert_eq!(options.seed, DEFAULT_SEED);
+    }
+
+    #[test]
+    fn runtime_options_reject_unknown_pulse_name() {
+        let err = parse_runtime_options(vec!["unknown".to_string()]).unwrap_err();
+        assert!(err.contains("Unknown pulse 'unknown'"));
+        assert!(err.contains("aurielle_intro"));
+    }
+
+    #[test]
+    fn phase_changes_over_simulated_elapsed_time() {
+        let mut pulse_loop = RuntimePulseLoop::new("aurielle_intro", DEFAULT_SEED);
+        let mut seen_transitions = Vec::new();
+        for t in [2.1, 6.2, 10.3, 13.5] {
+            let tick = pulse_loop.update(t);
+            if let Some(name) = tick.phase_change {
+                seen_transitions.push(name);
+            }
+        }
+
+        assert_eq!(
+            seen_transitions,
+            vec![
+                "Aurielle Appears".to_string(),
+                "Maestros Reveal".to_string(),
+                "Logo Formation".to_string(),
+                "Menu Transition".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn phase_clamps_to_final_phase_after_total_duration() {
+        let pulse = create_pulse_at_time("aurielle_intro", DEFAULT_SEED, 999.0);
+        assert_eq!(pulse.current_phase_name.as_deref(), Some("Menu Transition"));
+    }
+
+    #[test]
+    fn phase_mapping_is_deterministic_for_fixed_times() {
+        let first = create_pulse_at_time("aurielle_intro", DEFAULT_SEED, 6.2);
+        let second = create_pulse_at_time("aurielle_intro", DEFAULT_SEED, 6.2);
+        assert_eq!(first.current_phase_name, second.current_phase_name);
+        assert_eq!(first.modulated_output, second.modulated_output);
+    }
+
+    #[test]
+    fn timeline_scheduler_triggers_aurielle_reveal_event() {
+        let mut pulse_loop = RuntimePulseLoop::new("aurielle_intro", DEFAULT_SEED);
+        let tick = pulse_loop.update(16.1);
+        assert!(
+            tick.triggered_events
+                .iter()
+                .any(|event| event.contains("trigger:aurielle_reveal"))
+        );
+    }
+
+    #[test]
+    fn timeline_scene_layers_progress_with_events() {
+        let mut pulse_loop = RuntimePulseLoop::new("aurielle_intro", DEFAULT_SEED);
+        let _ = pulse_loop.update(9.2);
+        assert!(
+            pulse_loop
+                .scene_manager
+                .layers
+                .iter()
+                .any(|layer| layer.scene_id == "particle_swirl" || layer.scene_id == "rings")
+        );
+    }
+
+    #[test]
+    fn scene_transition_changes_visual_parameters_over_time() {
+        let mut pulse_loop = RuntimePulseLoop::new("aurielle_intro", DEFAULT_SEED);
+        let early = pulse_loop.update(6.1).resolved_profile;
+        let later = pulse_loop.update(9.8).resolved_profile;
+        assert_ne!(early.particle_density, later.particle_density);
+        assert_ne!(early.fog_density, later.fog_density);
+        assert_ne!(early.glow_intensity, later.glow_intensity);
+    }
+
+    #[test]
+    fn boot_active_flag_switches_to_pulse_active_after_handoff() {
+        let mut pulse_loop = RuntimePulseLoop::new("aurielle_intro", DEFAULT_SEED);
+        let _ = pulse_loop.update(0.5);
+        assert!(runtime_render_debug_state_for_loop(&pulse_loop).boot_active);
+        let _ = pulse_loop.update(2.0);
+        assert!(!runtime_render_debug_state_for_loop(&pulse_loop).boot_active);
+    }
+
+    #[test]
+    fn visual_profile_application_is_deterministic_for_same_time() {
+        let mut a = RuntimePulseLoop::new("aurielle_intro", DEFAULT_SEED);
+        let mut b = RuntimePulseLoop::new("aurielle_intro", DEFAULT_SEED);
+        let _ = a.update(9.8);
+        let _ = b.update(9.8);
+        assert_eq!(a.resolved_profile, b.resolved_profile);
+        assert_eq!(
+            a.pulse.world_blueprint.palette_hint,
+            b.pulse.world_blueprint.palette_hint
+        );
     }
 }
