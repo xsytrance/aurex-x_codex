@@ -1811,7 +1811,10 @@ fn fs_main() -> @location(0) vec4<f32> {
                                 "diagnostic_gpu_triangle_active=true skipping_cpu_texture_upload triangle_render_active=true"
                             );
                         }
-
+                        let disable_gpu_error_scopes =
+                            std::env::var("AUREX_DISABLE_GPU_ERROR_SCOPES")
+                                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                                .unwrap_or(false);
                         let capture_gpu_errors = render_mode_state == RuntimeRenderMode::Procedural
                             && !first_procedural_submission_captured
                             && !disable_gpu_error_scopes;
