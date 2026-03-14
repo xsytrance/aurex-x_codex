@@ -111,10 +111,9 @@ impl BootWorldState {
                     .iter()
                     .find(|d| d.pulse_refs.iter().any(|p| p == &portal.target_node))
                     .map(|d| d.prime)
+                    && let Some(tracker) = resonance_tracker.as_deref_mut()
                 {
-                    if let Some(tracker) = resonance_tracker.as_deref_mut() {
-                        tracker.record_pulse_launch(prime);
-                    }
+                    tracker.record_pulse_launch(prime);
                 }
             }
         }
