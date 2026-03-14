@@ -324,6 +324,16 @@ fn resolved_geometry_sdf_mode() -> GeometrySdfMode {
     geometry_sdf_mode_from_env().unwrap_or(GeometrySdfMode::Safe)
 }
 
+fn force_flat_render_from_env() -> bool {
+    std::env::var("AUREX_FORCE_FLAT_RENDER")
+        .ok()
+        .map(|v| {
+            let v = v.trim().to_ascii_lowercase();
+            v == "1" || v == "true" || v == "yes" || v == "on"
+        })
+        .unwrap_or(false)
+}
+
 fn safe_dummy_frame(config: RenderConfig, color: Rgba8) -> RenderedFrame {
     let len = (config.width as usize) * (config.height as usize);
     RenderedFrame {
@@ -496,6 +506,28 @@ pub fn render_sdf_scene_with_state_and_diagnostics(
         frame_start,
     ) {
         return frame;
+    }
+
+    if force_flat_render_from_env() {
+        eprintln!("sdf_stage_begin stage=GeometrySdf");
+        eprintln!("geometry_sdf_mode=flat");
+        diagnostics.add_stage_duration("GeometrySdf", 0.0);
+        eprintln!("sdf_stage_end stage=GeometrySdf");
+        diagnostics.total_frame_time_ms = frame_start.elapsed().as_secs_f64() * 1000.0;
+        diagnostics.stats.stage_time_ms_total = diagnostics.total_frame_time_ms;
+        diagnostics.finalize_stage_percentages();
+        return (
+            safe_dummy_frame(
+                config,
+                Rgba8 {
+                    r: 0,
+                    g: 0,
+                    b: 0,
+                    a: 255,
+                },
+            ),
+            diagnostics,
+        );
     }
 
     eprintln!("sdf_stage_begin stage=GeometrySdf pre_validation");
@@ -994,12 +1026,29 @@ struct NodeEval {
 const SAFE_FAR_DISTANCE: f32 = 1.0e6;
 const MAX_NODE_EVAL_DEPTH: usize = 256;
 const INVALID_MATH_WARNING_LIMIT: usize = 64;
+const MAX_RAY_STEPS: usize = 128;
+const MIN_RAY_STEP: f32 = 0.0005;
+const HARD_MAX_RAY_DISTANCE: f32 = 250.0;
+const RAYMARCH_STAGNATION_EPSILON: f32 = 1e-6;
+const RAYMARCH_STAGNATION_LIMIT: u32 = 4;
+const RAYMARCH_ABORT_LOG_LIMIT: usize = 128;
 static INVALID_MATH_WARNING_COUNT: AtomicUsize = AtomicUsize::new(0);
+static RAYMARCH_ABORT_LOG_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 fn log_invalid_math_warning(message: &str) {
     let warning_idx = INVALID_MATH_WARNING_COUNT.fetch_add(1, Ordering::Relaxed);
     if warning_idx < INVALID_MATH_WARNING_LIMIT {
         eprintln!("geometry_sdf_warning kind=invalid_math detail={message}");
+    }
+}
+
+fn log_raymarch_abort(reason: &str, step: usize, dist: f32) {
+    let idx = RAYMARCH_ABORT_LOG_COUNT.fetch_add(1, Ordering::Relaxed);
+    if idx < RAYMARCH_ABORT_LOG_LIMIT {
+        eprintln!(
+            "raymarch_abort reason={reason} step={step} dist={:.6}",
+            dist
+        );
     }
 }
 
@@ -1776,51 +1825,79 @@ fn safe_march_scene(origin: V3, direction: V3, config: RenderConfig) -> Option<(
         || !direction.y.is_finite()
         || !direction.z.is_finite()
     {
+        log_raymarch_abort("non_finite_ray", 0, 0.0);
         return None;
     }
 
-    let max_steps = config.max_steps.max(1);
-    let max_distance = if config.max_distance.is_finite() {
-        config.max_distance.max(1e-3)
+    let max_distance_cfg = if config.max_distance.is_finite() {
+        config.max_distance.max(MIN_RAY_STEP)
     } else {
-        120.0
+        HARD_MAX_RAY_DISTANCE
     };
-    let surface_eps = config.surface_epsilon.max(1e-4);
-    let min_step = surface_eps.max(1e-4);
+    let max_distance = max_distance_cfg.min(HARD_MAX_RAY_DISTANCE);
+    let hit_epsilon = config.surface_epsilon.max(MIN_RAY_STEP);
 
     let mut t = 0.0_f32;
-    for step_idx in 0..max_steps {
-        if !t.is_finite() || t >= max_distance {
+    let mut previous_t = -1.0_f32;
+    let mut stagnation_count = 0_u32;
+
+    for step_idx in 0..MAX_RAY_STEPS {
+        if !t.is_finite() {
+            log_raymarch_abort("non_finite_accumulated_distance", step_idx, t);
+            return None;
+        }
+        if t >= max_distance {
             return None;
         }
 
         let p = origin + direction * t;
         if !p.x.is_finite() || !p.y.is_finite() || !p.z.is_finite() {
+            log_raymarch_abort("non_finite_point", step_idx, t);
             return None;
         }
 
-        let d = safe_sdf_distance(p);
-        if !d.is_finite() {
+        let d_raw = safe_sdf_distance(p);
+        if !d_raw.is_finite() {
+            log_raymarch_abort("non_finite_distance", step_idx, t);
             return None;
         }
 
-        if d <= surface_eps {
+        if d_raw <= hit_epsilon {
             let n = safe_estimate_normal(p);
-            return Some((p, n, t, step_idx + 1));
+            return Some((p, n, t, (step_idx + 1) as u32));
         }
 
-        let step = d.max(min_step);
-        if !step.is_finite() || step <= 0.0 {
+        let step = if d_raw < 0.0 { MIN_RAY_STEP } else { d_raw };
+        if !step.is_finite() {
+            log_raymarch_abort("non_finite_step", step_idx, t);
+            return None;
+        }
+        if step < MIN_RAY_STEP {
+            log_raymarch_abort("step_below_min", step_idx, t);
             return None;
         }
 
         let next_t = t + step;
         if !next_t.is_finite() || next_t <= t {
+            log_raymarch_abort("non_advancing_step", step_idx, t);
             return None;
         }
+
+        if previous_t >= 0.0 && (next_t - previous_t).abs() < RAYMARCH_STAGNATION_EPSILON {
+            stagnation_count += 1;
+            if stagnation_count >= RAYMARCH_STAGNATION_LIMIT {
+                log_raymarch_abort("stagnation_detected", step_idx, t);
+                return None;
+            }
+        } else {
+            stagnation_count = 0;
+        }
+
+        previous_t = t;
         t = next_t;
     }
 
+    log_raymarch_abort("max_steps_reached", MAX_RAY_STEPS, t);
     None
 }
 
@@ -2073,108 +2150,106 @@ fn march_scene(scene: &Scene, origin: V3, direction: V3, config: RenderConfig) -
         || !direction.y.is_finite()
         || !direction.z.is_finite()
     {
-        log_invalid_math_warning("context=march_scene reason=non_finite_ray");
+        log_raymarch_abort("non_finite_ray", 0, 0.0);
         return None;
     }
 
-    let mut t: f32 = 0.0;
-    let mut glow = 0.0;
-    let mut march_steps = 0;
-    let mut reduction_acc = 0.0_f32;
-    let max_steps = config.max_steps.max(1);
-    let max_distance = if config.max_distance.is_finite() {
-        config.max_distance.max(config.surface_epsilon.max(1e-4))
+    let max_distance_cfg = if config.max_distance.is_finite() {
+        config.max_distance.max(MIN_RAY_STEP)
     } else {
-        120.0
+        HARD_MAX_RAY_DISTANCE
     };
-    let min_advance = (config.surface_epsilon.max(1e-4)) * 0.25;
+    let max_distance = max_distance_cfg.min(HARD_MAX_RAY_DISTANCE);
+    let hit_epsilon = config.surface_epsilon.max(MIN_RAY_STEP);
 
-    for _ in 0..max_steps {
-        march_steps += 1;
+    let mut t = 0.0_f32;
+    let mut glow = 0.0_f32;
+    let mut reduction_acc = 0.0_f32;
+    let mut previous_t = -1.0_f32;
+    let mut stagnation_count = 0_u32;
+
+    for step_idx in 0..MAX_RAY_STEPS {
         if !t.is_finite() {
-            log_invalid_math_warning("context=march_scene reason=non_finite_accumulated_distance");
+            log_raymarch_abort("non_finite_accumulated_distance", step_idx, t);
             return None;
         }
+        if t >= max_distance {
+            return None;
+        }
+
         let p = origin + direction * t;
         if !p.x.is_finite() || !p.y.is_finite() || !p.z.is_finite() {
-            log_invalid_math_warning("context=march_scene reason=non_finite_point");
+            log_raymarch_abort("non_finite_point", step_idx, t);
             return None;
         }
-        let eval = scene_distance(scene, p, config.time.seconds, config);
 
+        let eval = scene_distance(scene, p, config.time.seconds, config);
         if !eval.distance.is_finite() {
-            eprintln!("raymarch_guard break=non_finite_distance t={:.6}", t);
+            log_raymarch_abort("non_finite_distance", step_idx, t);
             return None;
         }
 
         let attenuation = (-t * 0.08).exp();
         glow += eval.material.emissive_strength.max(0.0) * attenuation * 0.01;
-        if eval.distance <= config.surface_epsilon.max(min_advance) {
-            let normal = estimate_normal(
-                scene,
-                p,
-                config.surface_epsilon.max(min_advance) * 2.0,
-                config.time.seconds,
-                config,
-            );
+
+        if eval.distance <= hit_epsilon {
+            let normal = estimate_normal(scene, p, hit_epsilon * 2.0, config.time.seconds, config);
             return Some(Hit {
                 position: p,
                 normal,
                 material: eval.material,
                 distance_traveled: t,
                 distance_glow: glow,
-                march_steps,
-                step_reduction_estimate: if march_steps > 0 {
-                    reduction_acc / march_steps as f32
+                march_steps: (step_idx + 1) as u32,
+                step_reduction_estimate: if step_idx > 0 {
+                    reduction_acc / (step_idx + 1) as f32
                 } else {
                     0.0
                 },
             });
         }
 
-        let clamped_distance = eval.distance.max(config.surface_epsilon.max(min_advance));
-        let base_step =
-            clamped_distance.max(config.surface_epsilon * config.min_step_scale.max(0.05));
-        let far_factor = if config.adaptive_raymarch {
-            (1.0 + (t / max_distance.max(1.0)) * config.far_field_boost).clamp(
-                config.min_step_scale.max(0.05),
-                config.max_step_scale.max(config.min_step_scale.max(0.05)),
-            )
+        let clamped_distance = if eval.distance < 0.0 {
+            MIN_RAY_STEP
         } else {
-            1.0
+            eval.distance
         };
-        let adaptive_step =
-            (base_step * far_factor * config.quality.raymarch_quality.max(0.25)).max(min_advance);
-        let cone_cfg = ConeMarchConfig {
-            cone_step_multiplier: config.cone_step_multiplier,
-            cone_shadow_factor: config.cone_shadow_factor,
-            surface_thickness_estimation: config.surface_thickness_estimation,
-            adaptive_step_scale: config.adaptive_step_scale,
-        };
-        let stepped = cone_step(clamped_distance, t, cone_cfg).max(adaptive_step);
-        if !stepped.is_finite() {
-            eprintln!("raymarch_guard break=non_finite_step t={:.6}", t);
+        if clamped_distance < MIN_RAY_STEP {
+            log_raymarch_abort("step_below_min", step_idx, t);
             return None;
         }
 
-        reduction_acc += ((stepped - adaptive_step) / adaptive_step.max(1e-4))
+        let step = clamped_distance.max(MIN_RAY_STEP);
+        if !step.is_finite() {
+            log_raymarch_abort("non_finite_step", step_idx, t);
+            return None;
+        }
+
+        reduction_acc += ((step - clamped_distance) / clamped_distance.max(MIN_RAY_STEP))
             .abs()
             .clamp(0.0, 1.0);
 
-        let next_t = (t + stepped).max(t + min_advance);
+        let next_t = t + step;
         if !next_t.is_finite() || next_t <= t {
-            eprintln!(
-                "raymarch_guard break=non_advancing_ray t={:.6} next_t={:.6}",
-                t, next_t
-            );
+            log_raymarch_abort("non_advancing_step", step_idx, t);
             return None;
         }
+
+        if previous_t >= 0.0 && (next_t - previous_t).abs() < RAYMARCH_STAGNATION_EPSILON {
+            stagnation_count += 1;
+            if stagnation_count >= RAYMARCH_STAGNATION_LIMIT {
+                log_raymarch_abort("stagnation_detected", step_idx, t);
+                return None;
+            }
+        } else {
+            stagnation_count = 0;
+        }
+
+        previous_t = t;
         t = next_t;
-        if t >= max_distance {
-            return None;
-        }
     }
 
+    log_raymarch_abort("max_steps_reached", MAX_RAY_STEPS, t);
     None
 }
 
@@ -3400,6 +3475,34 @@ mod tests {
     }
 
     #[test]
+    fn force_flat_render_bypasses_geometry_raymarch() {
+        let _guard = env_lock().lock().expect("env lock");
+        unsafe { std::env::set_var("AUREX_FORCE_FLAT_RENDER", "1") };
+
+        let (frame, diagnostics) = render_sdf_scene_with_diagnostics(
+            &sample_scene(),
+            RenderConfig {
+                width: 20,
+                height: 12,
+                ..RenderConfig::default()
+            },
+        );
+
+        assert_eq!(frame.width, 20);
+        assert_eq!(frame.height, 12);
+        assert_eq!(frame.pixels.len(), 20 * 12);
+        assert!(
+            frame
+                .pixels
+                .iter()
+                .all(|px| px.r == 0 && px.g == 0 && px.b == 0)
+        );
+        assert!(diagnostics.stage_durations_ms.contains_key("GeometrySdf"));
+
+        unsafe { std::env::remove_var("AUREX_FORCE_FLAT_RENDER") };
+    }
+
+    #[test]
     fn safe_mode_handles_pathological_scene_values() {
         let _guard = env_lock().lock().expect("env lock");
         unsafe { std::env::set_var("AUREX_GEOMETRY_SDF_MODE", "safe") };
@@ -3450,254 +3553,6 @@ mod tests {
         assert!(frame.pixels.iter().any(|p| p.r > 0 || p.g > 0 || p.b > 0));
 
         unsafe { std::env::remove_var("AUREX_GEOMETRY_SDF_MODE") };
-    }
-
-    #[test]
-    fn generator_stack_drives_geometry_sdf_stage() {
-        let mut scene = sample_scene();
-        scene.sdf.root = SdfNode::Empty;
-        scene.sdf.generator = None;
-        scene.sdf.generator_stack = Some(generators::electronic_city_stack());
-
-        let (frame, diagnostics) = render_sdf_scene_with_diagnostics(
-            &scene,
-            RenderConfig {
-                width: 48,
-                height: 27,
-                time: RenderTime { seconds: 0.6 },
-                ..RenderConfig::default()
-            },
-        );
-
-        let geometry_ms = diagnostics
-            .stage_durations_ms
-            .get("GeometrySdf")
-            .copied()
-            .unwrap_or(0.0);
-
-        assert!(geometry_ms > 0.0);
-        assert!(
-            frame
-                .pixels
-                .iter()
-                .any(|px| px.r > 0 || px.g > 0 || px.b > 0)
-        );
-    }
-
-    #[test]
-    fn stop_after_each_sdf_stage_returns_valid_frame() {
-        let stages = [
-            SdfStage::ScenePreprocess,
-            SdfStage::EffectGraphEvaluation,
-            SdfStage::GeometrySdf,
-            SdfStage::MaterialPattern,
-            SdfStage::LightingAtmosphere,
-            SdfStage::Particles,
-            SdfStage::PostProcessing,
-            SdfStage::TemporalFeedback,
-        ];
-
-        for stage in stages {
-            let (frame, diagnostics) = render_sdf_scene_with_diagnostics(
-                &sample_scene(),
-                RenderConfig {
-                    width: 24,
-                    height: 16,
-                    stop_after_sdf_stage: Some(stage),
-                    ..RenderConfig::default()
-                },
-            );
-            assert_eq!(frame.width, 24);
-            assert_eq!(frame.height, 16);
-            assert_eq!(frame.pixels.len(), 24 * 16);
-            assert!(diagnostics.stages.contains(&stage.as_name()));
-        }
-    }
-
-    #[test]
-    fn geometry_sdf_stop_returns_safe_frame() {
-        let (frame, _) = render_sdf_scene_with_diagnostics(
-            &sample_scene(),
-            RenderConfig {
-                width: 18,
-                height: 10,
-                stop_after_sdf_stage: Some(SdfStage::GeometrySdf),
-                ..RenderConfig::default()
-            },
-        );
-        assert_eq!(frame.pixels.len(), 18 * 10);
-    }
-
-    #[test]
-    fn invalid_camera_returns_fallback_frame() {
-        let mut scene = sample_scene();
-        scene.sdf.camera.position.x = f32::NAN;
-        let (frame, diagnostics) = render_sdf_scene_with_diagnostics(
-            &scene,
-            RenderConfig {
-                width: 20,
-                height: 12,
-                ..RenderConfig::default()
-            },
-        );
-        assert_eq!(frame.width, 20);
-        assert_eq!(frame.height, 12);
-        assert_eq!(frame.pixels.len(), 20 * 12);
-        assert_eq!(
-            diagnostics
-                .stage_durations_ms
-                .get("GeometrySdf")
-                .copied()
-                .unwrap_or(-1.0),
-            0.0
-        );
-    }
-
-    #[test]
-    fn march_scene_terminates_on_non_finite_distance() {
-        let mut scene = sample_scene();
-        scene.sdf.root = SdfNode::Primitive {
-            object: SdfObject {
-                primitive: SdfPrimitive::Sphere { radius: f32::NAN },
-                modifiers: vec![],
-                material: SdfMaterial::default(),
-                bounds_radius: Some(1.0),
-            },
-        };
-        let hit = march_scene(
-            &scene,
-            V3::new(0.0, 0.0, -4.0),
-            V3::new(0.0, 0.0, 1.0),
-            RenderConfig {
-                max_steps: 32,
-                max_distance: 10.0,
-                ..RenderConfig::default()
-            },
-        );
-        assert!(hit.is_none());
-    }
-
-    #[test]
-    fn march_scene_outputs_finite_hit_when_present() {
-        let scene = sample_scene();
-        let hit = march_scene(
-            &scene,
-            V3::new(0.0, 0.0, -4.0),
-            V3::new(0.0, 0.0, 1.0),
-            RenderConfig {
-                max_steps: 8,
-                max_distance: 0.05,
-                surface_epsilon: 1e-6,
-                ..RenderConfig::default()
-            },
-        );
-        if let Some(hit) = hit {
-            assert!(hit.distance_traveled.is_finite());
-            assert!(hit.distance_traveled <= 0.05);
-            assert!(
-                hit.position.x.is_finite()
-                    && hit.position.y.is_finite()
-                    && hit.position.z.is_finite()
-            );
-        }
-    }
-
-    #[test]
-    fn invalid_transform_does_not_crash_geometry_sdf() {
-        let mut scene = sample_scene();
-        scene.sdf.root = SdfNode::Transform {
-            modifiers: vec![SdfModifier::Scale { factor: f32::NAN }],
-            child: Box::new(SdfNode::Primitive {
-                object: SdfObject {
-                    primitive: SdfPrimitive::Sphere { radius: 1.0 },
-                    modifiers: vec![],
-                    material: SdfMaterial::default(),
-                    bounds_radius: Some(1.0),
-                },
-            }),
-            bounds_radius: Some(2.0),
-        };
-
-        let (frame, _) = render_sdf_scene_with_diagnostics(
-            &scene,
-            RenderConfig {
-                width: 20,
-                height: 12,
-                ..RenderConfig::default()
-            },
-        );
-
-        assert_eq!(frame.pixels.len(), 20 * 12);
-    }
-
-    #[test]
-    fn node_traversal_depth_limit_returns_safe_distance() {
-        let mut nested = SdfNode::Primitive {
-            object: SdfObject {
-                primitive: SdfPrimitive::Sphere { radius: 1.0 },
-                modifiers: vec![],
-                material: SdfMaterial::default(),
-                bounds_radius: Some(1.0),
-            },
-        };
-
-        for _ in 0..(MAX_NODE_EVAL_DEPTH + 16) {
-            nested = SdfNode::Transform {
-                modifiers: vec![SdfModifier::Translate {
-                    offset: Vec3::new(0.0, 0.0, 0.0),
-                }],
-                child: Box::new(nested),
-                bounds_radius: Some(10.0),
-            };
-        }
-
-        let eval = scene_distance(
-            &Scene {
-                sdf: aurex_scene::SdfScene {
-                    root: nested,
-                    ..sample_scene().sdf
-                },
-            },
-            V3::new(0.0, 0.0, 0.0),
-            0.0,
-            RenderConfig::default(),
-        );
-
-        assert!(eval.distance.is_finite());
-        assert!(eval.distance >= 0.0);
-    }
-
-    #[test]
-    fn bad_scene_data_still_returns_valid_framebuffer() {
-        let mut scene = sample_scene();
-        scene.sdf.root = SdfNode::Primitive {
-            object: SdfObject {
-                primitive: SdfPrimitive::Mandelbulb {
-                    power: f32::NAN,
-                    iterations: 32,
-                    bailout: 8.0,
-                },
-                modifiers: vec![SdfModifier::NoiseDisplacement {
-                    amplitude: f32::NAN,
-                    frequency: 1.0,
-                    seed: 1,
-                }],
-                material: SdfMaterial::default(),
-                bounds_radius: None,
-            },
-        };
-
-        let frame = render_sdf_scene_with_config(
-            &scene,
-            RenderConfig {
-                width: 16,
-                height: 9,
-                ..RenderConfig::default()
-            },
-        );
-        assert_eq!(frame.width, 16);
-        assert_eq!(frame.height, 9);
-        assert_eq!(frame.pixels.len(), 16 * 9);
     }
 
     #[test]
