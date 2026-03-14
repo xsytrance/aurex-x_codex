@@ -7,9 +7,12 @@ authors.workspace = true
 
 [dependencies]
 aurex_core = { path = "../aurex_core" }
+aurex_scene = { path = "../aurex_scene", optional = true }
+aurex_render_sdf = { path = "../aurex_render_sdf", optional = true }
+aurex_audio = { path = "../aurex_audio", optional = true }
 wgpu = { version = "25.0.2", optional = true }
 winit = { version = "0.30.12", optional = true }
 pollster = { version = "0.4", optional = true }
 
 [features]
-real_graphics = ["dep:wgpu", "dep:winit", "dep:pollster"]
+real_graphics = ["dep:wgpu", "dep:winit", "dep:pollster", "dep:aurex_scene", "dep:aurex_render_sdf", "dep:aurex_audio"]
