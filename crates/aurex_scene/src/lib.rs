@@ -137,7 +137,7 @@ fn default_time_scale() -> f32 {
     1.0
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct RhythmSpaceConfig {
     #[serde(default)]
     pub beat_geometry: bool,
@@ -147,17 +147,6 @@ pub struct RhythmSpaceConfig {
     pub particle_mode: Option<RhythmParticleMode>,
     #[serde(default)]
     pub time_warp: Option<TimeWarpConfig>,
-}
-
-impl Default for RhythmSpaceConfig {
-    fn default() -> Self {
-        Self {
-            beat_geometry: false,
-            echo_effect: false,
-            particle_mode: None,
-            time_warp: None,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -275,18 +264,13 @@ impl TimelineValue {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum InterpolationType {
+    #[default]
     Linear,
     EaseIn,
     EaseOut,
     Smoothstep,
-}
-
-impl Default for InterpolationType {
-    fn default() -> Self {
-        Self::Linear
-    }
 }
 
 impl InterpolationType {
@@ -407,8 +391,9 @@ pub struct SdfObject {
     pub bounds_radius: Option<f32>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub enum SdfNode {
+    #[default]
     Empty,
     Primitive {
         object: SdfObject,
@@ -441,12 +426,6 @@ pub enum SdfNode {
         #[serde(default)]
         weights: Vec<f32>,
     },
-}
-
-impl Default for SdfNode {
-    fn default() -> Self {
-        Self::Empty
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -594,8 +573,9 @@ pub struct KeyLight {
     pub color: Vec3,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum SdfMaterialType {
+    #[default]
     SolidColor,
     NeonGrid,
     Plasma,
@@ -607,8 +587,9 @@ pub enum SdfMaterialType {
     SpectralReactive,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum SdfPattern {
+    #[default]
     None,
     Bands,
     Rings,
@@ -644,18 +625,6 @@ fn default_roughness() -> f32 {
 
 fn default_fog_color() -> Vec3 {
     Vec3::new(0.08, 0.12, 0.18)
-}
-
-impl Default for SdfMaterialType {
-    fn default() -> Self {
-        Self::SolidColor
-    }
-}
-
-impl Default for SdfPattern {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 impl Default for SdfMaterial {
