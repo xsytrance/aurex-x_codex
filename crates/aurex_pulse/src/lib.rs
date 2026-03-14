@@ -16,6 +16,7 @@ mod tests {
 
     use crate::{
         boot_world::{BootWorldGenerator, BootWorldState, District, PulsePortal},
+        diagnostics::RuntimeConfidenceState,
         loader::load_pulse_from_str,
         pulse_graph::{
             PulseGraph, PulseGraphRunner, PulseNode, PulseTransition, PulseTransitionKind,
@@ -58,6 +59,12 @@ mod tests {
         assert_eq!(runner.state, PulseState::Running);
         let frame = runner.render(RenderConfig::default());
         assert_eq!(frame.width, RenderConfig::default().width);
+        assert_eq!(
+            runner.diagnostics.runtime_confidence,
+            RuntimeConfidenceState::ProceduralSafe
+        );
+        assert!(runner.diagnostics.handoff.transitioned_to_procedural);
+        assert!(runner.diagnostics.handoff.first_procedural_presented);
         runner.shutdown();
         assert_eq!(runner.state, PulseState::Shutdown);
     }
