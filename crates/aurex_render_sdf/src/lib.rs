@@ -115,7 +115,34 @@ pub struct RenderConfig {
     pub light_beam_strength: f32,
     pub quality: QualitySettings,
     pub output_diagnostics: bool,
+    pub geometry_mode: GeometrySdfMode,
     pub post: PostProcessConfig,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum GeometrySdfMode {
+    Flat,
+    #[default]
+    Safe,
+    Legacy,
+}
+
+impl GeometrySdfMode {
+    pub fn from_label(label: &str) -> Option<Self> {
+        match label.trim().to_ascii_lowercase().as_str() {
+            "flat" => Some(Self::Flat),
+            "safe" => Some(Self::Safe),
+            "legacy" => Some(Self::Legacy),
+            _ => None,
+        }
+    }
+
+    pub fn from_env() -> Self {
+        std::env::var("AUREX_GEOMETRY_SDF_MODE")
+            .ok()
+            .and_then(|value| Self::from_label(&value))
+            .unwrap_or_default()
+    }
 }
 
 impl Default for RenderConfig {
@@ -153,6 +180,7 @@ impl Default for RenderConfig {
             light_beam_strength: 0.5,
             quality: QualitySettings::default(),
             output_diagnostics: false,
+            geometry_mode: GeometrySdfMode::from_env(),
             post: PostProcessConfig::default(),
         }
     }
@@ -1695,8 +1723,42 @@ fn estimate_normal(scene: &Scene, p: V3, eps: f32, time: f32, config: RenderConf
 }
 
 fn scene_distance(scene: &Scene, point: V3, time: f32, config: RenderConfig) -> NodeEval {
+    if config.geometry_mode == GeometrySdfMode::Flat {
+        return NodeEval {
+            distance: f32::INFINITY,
+            material: SdfMaterial::default(),
+        };
+    }
+
     let field = sample_scene_fields(scene, point, time);
     let warped = point + V3::new(field.vector.x, field.vector.y, field.vector.z) * 0.08;
+
+    if config.geometry_mode == GeometrySdfMode::Safe {
+        let safe_sphere = NodeEval {
+            distance: warped.length() - 0.95,
+            material: SdfMaterial {
+                material_type: SdfMaterialType::Lambert,
+                emissive_strength: 0.1,
+                ..SdfMaterial::default()
+            },
+        };
+
+        let safe_plane = NodeEval {
+            distance: warped.y + 1.1,
+            material: SdfMaterial {
+                material_type: SdfMaterialType::Lambert,
+                base_color: Vec3::new(0.18, 0.2, 0.24),
+                ..SdfMaterial::default()
+            },
+        };
+
+        return if safe_sphere.distance <= safe_plane.distance {
+            safe_sphere
+        } else {
+            safe_plane
+        };
+    }
+
     if !matches!(scene.sdf.root, SdfNode::Empty) {
         evaluate_node(&scene.sdf.root, warped, scene.sdf.seed, time, None, config)
     } else {
@@ -2259,7 +2321,8 @@ impl std::ops::Div<f32> for V3 {
 #[cfg(test)]
 mod tests {
     use super::{
-        RenderConfig, RenderTime, evaluate_material, render_sdf_scene_with_config, smooth_min,
+        GeometrySdfMode, RenderConfig, RenderTime, evaluate_material, render_sdf_scene_with_config,
+        smooth_min,
     };
     use aurex_scene::{
         Scene, SdfCamera, SdfLighting, SdfMaterial, SdfMaterialType, SdfModifier, SdfNode,
@@ -2507,5 +2570,27 @@ mod tests {
         let hard = (-0.2f32).min(0.1);
         let smooth = smooth_min(-0.2, 0.1, 0.3);
         assert!(smooth <= hard + 0.05);
+    }
+
+    #[test]
+    fn geometry_mode_parser_handles_known_values() {
+        assert_eq!(
+            GeometrySdfMode::from_label("flat"),
+            Some(GeometrySdfMode::Flat)
+        );
+        assert_eq!(
+            GeometrySdfMode::from_label("safe"),
+            Some(GeometrySdfMode::Safe)
+        );
+        assert_eq!(
+            GeometrySdfMode::from_label("legacy"),
+            Some(GeometrySdfMode::Legacy)
+        );
+        assert_eq!(GeometrySdfMode::from_label("invalid"), None);
+    }
+
+    #[test]
+    fn render_config_defaults_to_safe_mode() {
+        assert_eq!(RenderConfig::default().geometry_mode, GeometrySdfMode::Safe);
     }
 }
