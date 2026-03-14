@@ -3,6 +3,7 @@ pub mod diagnostics;
 pub mod living_boot;
 pub mod loader;
 pub mod prime_pulse;
+pub mod pulse_blueprint;
 pub mod pulse_graph;
 pub mod resonance;
 pub mod runner;

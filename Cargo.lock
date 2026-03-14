@@ -202,6 +202,7 @@ name = "aurex_pulse"
 version = "0.1.0"
 dependencies = [
  "aurex_audio",
+ "aurex_midi",
  "aurex_music",
  "aurex_render_sdf",
  "aurex_scene",
