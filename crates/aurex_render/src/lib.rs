@@ -949,16 +949,41 @@ fn rasterize_procedural_scene(
     eprintln!("procedural setup complete");
 
     let _ = sdf_renderer_state_cell();
-    let (frame, diagnostics) = render_sdf_scene_with_diagnostics(
-        &scene,
-        SdfRenderConfig {
-            width,
-            height,
-            time: SdfRenderTime { seconds: elapsed },
-            output_diagnostics: true,
-            ..SdfRenderConfig::default()
-        },
-    );
+    let sdf_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        render_sdf_scene_with_diagnostics(
+            &scene,
+            SdfRenderConfig {
+                width,
+                height,
+                time: SdfRenderTime { seconds: elapsed },
+                output_diagnostics: true,
+                ..SdfRenderConfig::default()
+            },
+        )
+    }));
+    let (frame, diagnostics) = match sdf_result {
+        Ok(result) => result,
+        Err(_) => {
+            eprintln!("render_sdf_scene_with_diagnostics panicked; returning safe fallback frame");
+            (
+                aurex_render_sdf::RenderedFrame {
+                    width,
+                    height,
+                    pixels: vec![
+                        aurex_render_sdf::Rgba8 {
+                            r: 0,
+                            g: 0,
+                            b: 0,
+                            a: 255
+                        };
+                        (width as usize) * (height as usize)
+                    ],
+                    bloom_prepass: Some(vec![0.0; (width as usize) * (height as usize)]),
+                },
+                aurex_render_sdf::diagnostics::FrameDiagnostics::default(),
+            )
+        }
+    };
 
     let mut rgba = Vec::with_capacity(expected_len);
     for p in frame.pixels {
@@ -1213,6 +1238,68 @@ fn fs_main(inf: VsOut) -> @location(0) vec4<f32> {
             targets: &[Some(wgpu::ColorTargetState {
                 format: config.format,
                 blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        }),
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        multiview: None,
+        cache: None,
+    });
+
+    let diagnostic_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("Aurex-X Diagnostic Triangle Shader"),
+        source: wgpu::ShaderSource::Wgsl(
+            r#"
+struct VsOut {
+    @builtin(position) position: vec4<f32>,
+};
+
+@vertex
+fn vs_main(@builtin(vertex_index) vid: u32) -> VsOut {
+    var positions = array<vec2<f32>, 3>(
+        vec2<f32>(-1.0, -1.0),
+        vec2<f32>(3.0, -1.0),
+        vec2<f32>(-1.0, 3.0),
+    );
+    var out: VsOut;
+    out.position = vec4<f32>(positions[vid], 0.0, 1.0);
+    return out;
+}
+
+@fragment
+fn fs_main() -> @location(0) vec4<f32> {
+    return vec4<f32>(0.08, 0.22, 0.38, 1.0);
+}
+"#
+            .into(),
+        ),
+    });
+
+    let diagnostic_pipeline_layout =
+        device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Aurex-X Diagnostic Triangle Pipeline Layout"),
+            bind_group_layouts: &[],
+            push_constant_ranges: &[],
+        });
+
+    let diagnostic_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("Aurex-X Diagnostic Triangle Pipeline"),
+        layout: Some(&diagnostic_pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &diagnostic_shader,
+            entry_point: Some("vs_main"),
+            buffers: &[],
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &diagnostic_shader,
+            entry_point: Some("fs_main"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: config.format,
+                blend: Some(wgpu::BlendState::REPLACE),
                 write_mask: wgpu::ColorWrites::ALL,
             })],
             compilation_options: wgpu::PipelineCompilationOptions::default(),
@@ -1757,6 +1844,23 @@ fn fs_main() -> @location(0) vec4<f32> {
                             expected_bytes,
                         );
                         assert_eq!(
+                            cpu_frame.rgba.len(), expected_bytes,
+                            "cpu framebuffer byte length mismatch"
+                        );
+                        assert_eq!(
+                            bytes_per_row % 4,
+                            0,
+                            "bytes_per_row must align with RGBA8 block size"
+                        );
+                        assert!(config.width > 0 && config.height > 0);
+                        eprintln!(
+                            "framebuffer_diag width={} height={} bytes_per_row={} expected_bytes={} format=Rgba8UnormSrgb",
+                            config.width,
+                            config.height,
+                            bytes_per_row,
+                            expected_bytes,
+                        );
+                        assert_eq!(
                             bytes_per_row % 4,
                             0,
                             "bytes_per_row must align with RGBA8 block size"
@@ -1819,6 +1923,45 @@ fn fs_main() -> @location(0) vec4<f32> {
                             && !first_procedural_submission_captured
                             && !disable_gpu_error_scopes;
                         if disable_gpu_error_scopes {
+                            eprintln!("gpu_error_scopes_disabled=true");
+                        }
+                        if capture_gpu_errors {
+                            eprintln!("gpu_error_scope_push begin");
+                            device.push_error_scope(wgpu::ErrorFilter::Validation);
+                            device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
+                            eprintln!("gpu_error_scope_push end");
+                        }
+
+                        if !triangle_render_active {
+                            queue.write_texture(
+                                wgpu::TexelCopyTextureInfo {
+                                    texture: &boot_texture,
+                                    mip_level: 0,
+                                    origin: wgpu::Origin3d::ZERO,
+                                    aspect: wgpu::TextureAspect::All,
+                                },
+                                &cpu_frame.rgba,
+                                wgpu::TexelCopyBufferLayout {
+                                    offset: 0,
+                                    bytes_per_row: Some(bytes_per_row),
+                                    rows_per_image: Some(config.height),
+                                },
+                                wgpu::Extent3d {
+                                    width: config.width,
+                                    height: config.height,
+                                    depth_or_array_layers: 1,
+                                },
+                            );
+                        } else {
+                            eprintln!(
+                                "diagnostic_gpu_triangle_active=true skipping_cpu_texture_upload triangle_render_active=true"
+                            );
+                        }
+
+                        let capture_gpu_errors = render_mode_state == RuntimeRenderMode::Procedural
+                            && !first_procedural_submission_captured
+                            && gpu_error_scopes_enabled;
+                        if !gpu_error_scopes_enabled && verbose_runtime_logs {
                             eprintln!("gpu_error_scopes_disabled=true");
                         }
                         if capture_gpu_errors {
