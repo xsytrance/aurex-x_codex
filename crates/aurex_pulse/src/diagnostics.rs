@@ -30,7 +30,25 @@ pub struct PulseDiagnostics {
     pub prime_pulse_force_field_active: bool,
     pub prime_pulse_intensity: f32,
     pub prime_pulse_proximity: f32,
+    pub runtime_confidence: RuntimeConfidenceState,
+    pub handoff: HandoffDiagnostics,
     pub last_frame: Option<FrameDiagnostics>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum RuntimeConfidenceState {
+    #[default]
+    Boot,
+    ProceduralSafe,
+    ProceduralLegacy,
+    Fallback,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct HandoffDiagnostics {
+    pub transitioned_to_procedural: bool,
+    pub warmup_frames: u32,
+    pub first_procedural_presented: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
