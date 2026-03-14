@@ -1,3 +1,4 @@
+pub mod analysis;
 mod event_parser;
 mod note_builder;
 mod smf_reader;
@@ -8,6 +9,7 @@ use std::cmp::Ordering;
 
 use serde::{Deserialize, Serialize};
 
+pub use analysis::midi_analysis::{MidiAnalysis, PitchRange, analyze_timeline};
 pub use timeline::{
     ControlChangeEvent, MidiError, MidiTimeline, ProgramChangeEvent, TempoEvent, load_midi_timeline,
 };

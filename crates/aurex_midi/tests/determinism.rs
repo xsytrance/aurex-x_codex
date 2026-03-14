@@ -1,4 +1,4 @@
-use aurex_midi::load_midi_timeline;
+use aurex_midi::{analyze_timeline, load_midi_timeline};
 
 fn chunk(tag: [u8; 4], payload: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(8 + payload.len());
@@ -134,4 +134,45 @@ fn timeline_construction_is_stable() {
     );
     assert!(a.control_changes.windows(2).all(|w| w[0].tick <= w[1].tick));
     assert!(a.program_changes.windows(2).all(|w| w[0].tick <= w[1].tick));
+}
+
+#[test]
+fn analysis_is_deterministic() {
+    let bytes = format1_multitrack_midi();
+    let timeline = load_midi_timeline(&bytes).expect("format1 fixture should parse");
+
+    let a = analyze_timeline(&timeline);
+    let b = analyze_timeline(&timeline);
+    assert_eq!(a, b);
+}
+
+#[test]
+fn pitch_range_is_correct() {
+    let bytes = format1_multitrack_midi();
+    let timeline = load_midi_timeline(&bytes).expect("format1 fixture should parse");
+    let analysis = analyze_timeline(&timeline);
+
+    assert_eq!(analysis.pitch_range.min, 62);
+    assert_eq!(analysis.pitch_range.max, 65);
+}
+
+#[test]
+fn density_is_consistent() {
+    let bytes = format0_basic_midi();
+    let timeline = load_midi_timeline(&bytes).expect("format0 fixture should parse");
+    let analysis = analyze_timeline(&timeline);
+
+    assert!((analysis.bpm - 120.0).abs() < 0.001);
+    assert!((analysis.note_density - 1.0).abs() < 0.001);
+    assert!(analysis.rhythmic_intensity > 0.0);
+}
+
+#[test]
+fn beat_grid_is_monotonic() {
+    let bytes = format1_multitrack_midi();
+    let timeline = load_midi_timeline(&bytes).expect("format1 fixture should parse");
+    let analysis = analyze_timeline(&timeline);
+
+    assert!(!analysis.beat_grid.is_empty());
+    assert!(analysis.beat_grid.windows(2).all(|w| w[0] < w[1]));
 }
