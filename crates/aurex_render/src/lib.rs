@@ -284,12 +284,151 @@ fn sdf_renderer_state_cell() -> &'static Mutex<SdfRendererState> {
 }
 
 #[cfg(feature = "real_graphics")]
-fn build_runtime_sdf_scene(debug_state: &RuntimeRenderDebugState) -> Scene {
-    let stack: GeneratorStack = match debug_state.pulse_name.as_str() {
-        "megacity" => generators::electronic_city_stack(),
-        "jazz" => generators::jazz_improvisation_stack(),
-        "ambient" => generators::rock_mountain_stack(),
-        _ => generators::electronic_city_stack(),
+fn count_primitives(node: &SdfNode) -> usize {
+    match node {
+        SdfNode::Empty => 0,
+        SdfNode::Primitive { .. } => 1,
+        SdfNode::Group { children }
+        | SdfNode::Union { children }
+        | SdfNode::Intersect { children }
+        | SdfNode::Blend { children, .. }
+        | SdfNode::SmoothUnion { children, .. } => children.iter().map(count_primitives).sum(),
+        SdfNode::Transform { child, .. } => count_primitives(child),
+        SdfNode::Subtract { base, subtract } => {
+            count_primitives(base) + subtract.iter().map(count_primitives).sum::<usize>()
+        }
+    }
+}
+
+#[cfg(feature = "real_graphics")]
+fn vec3_finite(v: Vec3) -> bool {
+    v.x.is_finite() && v.y.is_finite() && v.z.is_finite()
+}
+
+#[cfg(feature = "real_graphics")]
+fn node_has_valid_modifiers(node: &SdfNode) -> bool {
+    use aurex_scene::SdfModifier;
+
+    fn mods_ok(modifiers: &[SdfModifier]) -> bool {
+        modifiers.iter().all(|m| match m {
+            SdfModifier::Repeat { cell } => vec3_finite(*cell),
+            SdfModifier::RepeatGrid { cell_size } => vec3_finite(*cell_size),
+            SdfModifier::RepeatAxis { spacing, .. } => spacing.is_finite() && *spacing > 0.0,
+            SdfModifier::RepeatPolar { sectors } => *sectors >= 1,
+            SdfModifier::RepeatSphere { radius } => radius.is_finite() && *radius > 0.0,
+            SdfModifier::FoldSpace | SdfModifier::MirrorFold => true,
+            SdfModifier::KaleidoscopeFold { segments } => *segments >= 1,
+            SdfModifier::Twist { strength } | SdfModifier::Bend { strength } => {
+                strength.is_finite() && strength.abs() <= 100.0
+            }
+            SdfModifier::Scale { factor } => factor.is_finite() && (0.02..=40.0).contains(factor),
+            SdfModifier::Rotate { axis, radians } => vec3_finite(*axis) && radians.is_finite(),
+            SdfModifier::Translate { offset } => vec3_finite(*offset),
+            SdfModifier::NoiseDisplacement {
+                amplitude,
+                frequency,
+                ..
+            } => {
+                amplitude.is_finite()
+                    && frequency.is_finite()
+                    && amplitude.abs() <= 20.0
+                    && *frequency > 0.0
+            }
+            SdfModifier::Mirror { normal, offset } => vec3_finite(*normal) && offset.is_finite(),
+        })
+    }
+
+    match node {
+        SdfNode::Empty => true,
+        SdfNode::Primitive { object } => mods_ok(&object.modifiers),
+        SdfNode::Transform {
+            modifiers,
+            child,
+            bounds_radius,
+        } => {
+            mods_ok(modifiers)
+                && bounds_radius
+                    .map(|r| r.is_finite() && r > 0.0)
+                    .unwrap_or(true)
+                && node_has_valid_modifiers(child)
+        }
+        SdfNode::Group { children }
+        | SdfNode::Union { children }
+        | SdfNode::Intersect { children }
+        | SdfNode::Blend { children, .. }
+        | SdfNode::SmoothUnion { children, .. } => children.iter().all(node_has_valid_modifiers),
+        SdfNode::Subtract { base, subtract } => {
+            node_has_valid_modifiers(base) && subtract.iter().all(node_has_valid_modifiers)
+        }
+    }
+}
+
+#[cfg(feature = "real_graphics")]
+fn fallback_runtime_scene(debug_state: &RuntimeRenderDebugState) -> Scene {
+    use aurex_scene::{SdfMaterial, SdfMaterialType, SdfObject, SdfPrimitive};
+
+    Scene {
+        sdf: aurex_scene::SdfScene {
+            camera: SdfCamera {
+                position: Vec3::new(0.0, 2.5, -9.0),
+                target: Vec3::new(0.0, 0.8, 0.0),
+                fov_degrees: 60.0,
+                aspect_ratio: 16.0 / 9.0,
+            },
+            lighting: SdfLighting {
+                ambient_light: 0.2,
+                key_lights: vec![aurex_scene::KeyLight {
+                    direction: Vec3::new(-0.4, -1.0, -0.4),
+                    intensity: 1.1,
+                    color: Vec3::new(1.0, 0.98, 0.95),
+                }],
+                fog_color: Vec3::new(0.06, 0.1, 0.18),
+                fog_density: (0.01 + debug_state.profile_fog_density * 0.03).clamp(0.0, 0.08),
+                fog_height_falloff: 0.05,
+                volumetric: Default::default(),
+            },
+            seed: 7,
+            objects: vec![],
+            root: SdfNode::Primitive {
+                object: SdfObject {
+                    primitive: SdfPrimitive::Sphere { radius: 1.4 },
+                    modifiers: vec![],
+                    material: SdfMaterial {
+                        material_type: SdfMaterialType::NeonGrid,
+                        ..SdfMaterial::default()
+                    },
+                    bounds_radius: Some(2.0),
+                },
+            },
+            timeline: None,
+            generator: None,
+            generator_stack: None,
+            fields: vec![],
+            patterns: vec![],
+            harmonics: None,
+            rhythm: None,
+            audio: Some(aurex_audio::default_demo_audio_config(7)),
+            effect_graph: None,
+            automation_tracks: vec![],
+            demo_sequence: None,
+            temporal_effects: vec![],
+            runtime_modulation: None,
+        },
+    }
+}
+
+#[cfg(feature = "real_graphics")]
+fn build_runtime_sdf_scene(debug_state: &RuntimeRenderDebugState, elapsed: f32) -> Scene {
+    let stack: GeneratorStack = match debug_state.scene_name.as_str() {
+        "rings" => generators::electronic_city_stack(),
+        "particle_swirl" => generators::jazz_improvisation_stack(),
+        "ambient_mist" => generators::rock_mountain_stack(),
+        _ => match debug_state.pulse_name.as_str() {
+            "megacity" => generators::electronic_city_stack(),
+            "jazz" => generators::jazz_improvisation_stack(),
+            "ambient" => generators::rock_mountain_stack(),
+            _ => generators::electronic_city_stack(),
+        },
     };
 
     let fog_density = (0.012 + debug_state.profile_fog_density * 0.08).clamp(0.0, 0.25);
@@ -300,14 +439,28 @@ fn build_runtime_sdf_scene(debug_state: &RuntimeRenderDebugState) -> Scene {
         harmonic_energy: debug_state.profile_geometry_density,
     };
 
+    let camera = SdfCamera {
+        position: Vec3::new(0.0, 4.0 + debug_state.profile_structure_height * 5.0, -22.0),
+        target: Vec3::new(0.0, 2.5, 0.0),
+        fov_degrees: 58.0,
+        aspect_ratio: 16.0 / 9.0,
+    };
+
+    let scene_fields = vec![];
+    let runtime_modulation = RuntimeModulationContext {
+        rhythm_field: Some(rhythm),
+    };
+    let root = generators::expand_generator_stack(
+        &stack,
+        2026,
+        elapsed,
+        &scene_fields,
+        runtime_modulation,
+    );
+
     Scene {
         sdf: aurex_scene::SdfScene {
-            camera: SdfCamera {
-                position: Vec3::new(0.0, 4.0 + debug_state.profile_structure_height * 5.0, -22.0),
-                target: Vec3::new(0.0, 2.5, 0.0),
-                fov_degrees: 58.0,
-                aspect_ratio: 16.0 / 9.0,
-            },
+            camera,
             lighting: SdfLighting {
                 ambient_light: 0.10 + debug_state.profile_glow_intensity * 0.25,
                 key_lights: vec![aurex_scene::KeyLight {
@@ -322,11 +475,11 @@ fn build_runtime_sdf_scene(debug_state: &RuntimeRenderDebugState) -> Scene {
             },
             seed: 2026,
             objects: vec![],
-            root: SdfNode::Empty,
+            root,
             timeline: None,
             generator: None,
-            generator_stack: Some(stack),
-            fields: vec![],
+            generator_stack: None,
+            fields: scene_fields,
             patterns: vec![],
             harmonics: None,
             rhythm: None,
@@ -335,10 +488,50 @@ fn build_runtime_sdf_scene(debug_state: &RuntimeRenderDebugState) -> Scene {
             automation_tracks: vec![],
             demo_sequence: None,
             temporal_effects: vec![],
-            runtime_modulation: Some(RuntimeModulationContext {
-                rhythm_field: Some(rhythm),
-            }),
+            runtime_modulation: Some(runtime_modulation),
         },
+    }
+}
+
+#[cfg(feature = "real_graphics")]
+fn validate_runtime_scene(
+    scene: Scene,
+    debug_state: &RuntimeRenderDebugState,
+) -> (Scene, bool, usize) {
+    let shape_count = count_primitives(&scene.sdf.root);
+    let cam = &scene.sdf.camera;
+    let cam_vec = Vec3::new(
+        cam.position.x - cam.target.x,
+        cam.position.y - cam.target.y,
+        cam.position.z - cam.target.z,
+    );
+    let cam_dist_sq = cam_vec.x * cam_vec.x + cam_vec.y * cam_vec.y + cam_vec.z * cam_vec.z;
+    let camera_safe = cam_dist_sq.is_finite() && cam_dist_sq > 4.0;
+
+    let scene_valid = shape_count > 0
+        && vec3_finite(cam.position)
+        && vec3_finite(cam.target)
+        && cam.fov_degrees.is_finite()
+        && (20.0..=120.0).contains(&cam.fov_degrees)
+        && cam.aspect_ratio.is_finite()
+        && cam.aspect_ratio > 0.1
+        && camera_safe
+        && node_has_valid_modifiers(&scene.sdf.root);
+
+    if scene_valid {
+        (scene, false, shape_count)
+    } else {
+        eprintln!(
+            "Procedural scene invalid → using fallback scene shape_count={} geometry_density={:.2} scale={:.2} height={:.2} complexity={:.2}",
+            shape_count,
+            debug_state.profile_geometry_density,
+            debug_state.profile_particle_density,
+            debug_state.profile_structure_height,
+            debug_state.profile_glow_intensity,
+        );
+        let fallback = fallback_runtime_scene(debug_state);
+        let fallback_shapes = count_primitives(&fallback.sdf.root);
+        (fallback, true, fallback_shapes)
     }
 }
 
@@ -349,7 +542,9 @@ fn rasterize_procedural_scene(
     elapsed: f32,
     debug_state: &RuntimeRenderDebugState,
 ) -> BootFramebuffer {
-    let scene = build_runtime_sdf_scene(debug_state);
+    let scene = build_runtime_sdf_scene(debug_state, elapsed);
+    let (scene, used_fallback, shape_count) = validate_runtime_scene(scene, debug_state);
+
     let _ = sdf_renderer_state_cell();
     let (frame, diagnostics) = render_sdf_scene_with_diagnostics(
         &scene,
@@ -362,15 +557,44 @@ fn rasterize_procedural_scene(
         },
     );
 
-    let mut rgba = Vec::with_capacity((width as usize) * (height as usize) * 4);
+    let expected_len = (width as usize) * (height as usize) * 4;
+    let mut rgba = Vec::with_capacity(expected_len);
     for p in frame.pixels {
         rgba.extend_from_slice(&[p.r, p.g, p.b, p.a]);
     }
 
-    if let Some(geom_ms) = diagnostics.stage_durations_ms.get("GeometrySdf") {
-        if *geom_ms <= 0.0 {
-            eprintln!("render_stage_warning=GeometrySdf duration was zero");
-        }
+    if used_fallback {
+        eprintln!(
+            "procedural_fallback_active=true shape_count={} geometry_sdf_ms={:.3}",
+            shape_count,
+            diagnostics
+                .stage_durations_ms
+                .get("GeometrySdf")
+                .copied()
+                .unwrap_or(0.0)
+        );
+    }
+
+    if let Some(geom_ms) = diagnostics.stage_durations_ms.get("GeometrySdf")
+        && *geom_ms <= 0.0
+    {
+        eprintln!("render_stage_warning=GeometrySdf duration was zero");
+    }
+
+    if rgba.len() != expected_len {
+        eprintln!(
+            "Procedural scene invalid → using fallback scene shape_count={} geometry_density={:.2} scale={:.2} height={:.2} complexity={:.2}",
+            shape_count,
+            debug_state.profile_geometry_density,
+            debug_state.profile_particle_density,
+            debug_state.profile_structure_height,
+            debug_state.profile_glow_intensity,
+        );
+        return BootFramebuffer {
+            width,
+            height,
+            rgba: vec![0; expected_len],
+        };
     }
 
     BootFramebuffer {
@@ -742,6 +966,23 @@ fn fs_main(inf: VsOut) -> @location(0) vec4<f32> {
                             config.height,
                             &debug_state,
                         );
+
+                        let expected_bytes = (config.width as usize) * (config.height as usize) * 4;
+                        if cpu_frame.rgba.len() != expected_bytes {
+                            eprintln!(
+                                "Procedural scene invalid → using fallback scene shape_count={} geometry_density={:.2} scale={:.2} height={:.2} complexity={:.2}",
+                                0,
+                                debug_state.profile_geometry_density,
+                                debug_state.profile_particle_density,
+                                debug_state.profile_structure_height,
+                                debug_state.profile_glow_intensity,
+                            );
+                            cpu_frame = BootFramebuffer {
+                                width: config.width,
+                                height: config.height,
+                                rgba: vec![0; expected_bytes],
+                            };
+                        }
 
                         queue.write_texture(
                             wgpu::TexelCopyTextureInfo {
@@ -2926,5 +3167,55 @@ mod tests {
 
         // Avoid leaking global state between tests.
         set_runtime_render_debug_state(original);
+    }
+    #[cfg(feature = "real_graphics")]
+    #[test]
+    fn invalid_runtime_scene_falls_back_without_crashing() {
+        let debug = RuntimeRenderDebugState {
+            pulse_name: "megacity".to_string(),
+            scene_name: "rings".to_string(),
+            theme_name: "Electronic".to_string(),
+            profile_name: "test".to_string(),
+            profile_geometry_density: 0.9,
+            profile_structure_height: 0.8,
+            profile_particle_density: 0.7,
+            profile_fog_density: 0.5,
+            profile_glow_intensity: 0.8,
+            starfield_enabled: false,
+            logo_enabled: false,
+            boot_active: false,
+        };
+
+        let mut scene = build_runtime_sdf_scene(&debug, 0.0);
+        scene.sdf.camera.position.x = f32::NAN;
+        let (safe, fallback, shape_count) = validate_runtime_scene(scene, &debug);
+
+        assert!(fallback);
+        assert!(shape_count > 0);
+        assert!(count_primitives(&safe.sdf.root) > 0);
+        assert!(safe.sdf.camera.position.x.is_finite());
+    }
+
+    #[cfg(feature = "real_graphics")]
+    #[test]
+    fn rings_scene_generates_non_empty_geometry() {
+        let debug = RuntimeRenderDebugState {
+            pulse_name: "aurielle_intro".to_string(),
+            scene_name: "rings".to_string(),
+            theme_name: "Electronic".to_string(),
+            profile_name: "rings".to_string(),
+            profile_geometry_density: 0.7,
+            profile_structure_height: 0.7,
+            profile_particle_density: 0.6,
+            profile_fog_density: 0.3,
+            profile_glow_intensity: 0.9,
+            starfield_enabled: false,
+            logo_enabled: false,
+            boot_active: false,
+        };
+
+        let scene = build_runtime_sdf_scene(&debug, 0.0);
+        assert!(count_primitives(&scene.sdf.root) > 0);
+        assert!(node_has_valid_modifiers(&scene.sdf.root));
     }
 }
