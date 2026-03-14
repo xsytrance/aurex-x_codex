@@ -60,6 +60,7 @@ where
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(untagged)]
+#[allow(clippy::large_enum_variant)]
 pub enum PulseSceneSource {
     Inline(Scene),
     ScenePath { scene_path: String },
