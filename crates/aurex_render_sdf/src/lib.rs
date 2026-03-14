@@ -913,7 +913,7 @@ fn scene_at_time(
         );
     }
 
-    if let Some(d) = diagnostics.as_deref_mut() {
+    if let Some(d) = diagnostics {
         d.add_stage_duration(
             "ScenePreprocess",
             preprocess_start.elapsed().as_secs_f64() * 1000.0,
@@ -930,45 +930,39 @@ fn apply_generator_keyframes(
 ) {
     if let Some(TimelineValue::Float { value }) =
         timeline.sample_keyframe_value("generator.tunnel.radius", t)
+        && let SceneGenerator::Tunnel(g) = generator
     {
-        if let SceneGenerator::Tunnel(g) = generator {
-            g.radius = value;
-        }
+        g.radius = value;
     }
     if let Some(TimelineValue::Float { value }) =
         timeline.sample_keyframe_value("generator.tunnel.twist", t)
+        && let SceneGenerator::Tunnel(g) = generator
     {
-        if let SceneGenerator::Tunnel(g) = generator {
-            g.twist = value;
-        }
+        g.twist = value;
     }
     if let Some(TimelineValue::Float { value }) =
         timeline.sample_keyframe_value("generator.temple.fractal_scale", t)
+        && let SceneGenerator::FractalTemple(g) = generator
     {
-        if let SceneGenerator::FractalTemple(g) = generator {
-            g.fractal_scale = value;
-        }
+        g.fractal_scale = value;
     }
     if let Some(TimelineValue::Float { value }) =
         timeline.sample_keyframe_value("generator.circuit.component_density", t)
+        && let SceneGenerator::CircuitBoard(g) = generator
     {
-        if let SceneGenerator::CircuitBoard(g) = generator {
-            g.component_density = value;
-        }
+        g.component_density = value;
     }
     if let Some(TimelineValue::Float { value }) =
         timeline.sample_keyframe_value("generator.galaxy.rotation_speed", t)
+        && let SceneGenerator::ParticleGalaxy(g) = generator
     {
-        if let SceneGenerator::ParticleGalaxy(g) = generator {
-            g.rotation_speed = value;
-        }
+        g.rotation_speed = value;
     }
     if let Some(TimelineValue::Float { value }) =
         timeline.sample_keyframe_value("generator.galaxy.radius", t)
+        && let SceneGenerator::ParticleGalaxy(g) = generator
     {
-        if let SceneGenerator::ParticleGalaxy(g) = generator {
-            g.radius = value;
-        }
+        g.radius = value;
     }
 }
 
@@ -1154,12 +1148,12 @@ fn apply_rhythm_space_to_scene(scene: &mut Scene, features: AudioFeatures, t: f3
                     g.radius *= 1.0 + beat_pulse * 0.08;
                 }
                 SceneGenerator::FractalTemple(g) => {
-                    let measure_gate = if features.current_beat % 4 == 0 {
+                    let measure_gate = if features.current_beat.is_multiple_of(4) {
                         1.0
                     } else {
                         0.0
                     };
-                    let phrase_gate = if features.current_beat % 16 == 0 {
+                    let phrase_gate = if features.current_beat.is_multiple_of(16) {
                         1.0
                     } else {
                         0.0
@@ -1233,12 +1227,12 @@ fn apply_rhythm_space_to_scene(scene: &mut Scene, features: AudioFeatures, t: f3
             .push(aurex_scene::fields::SceneField::Rhythm(
                 aurex_scene::fields::RhythmField {
                     beat_strength: (1.0 - features.beat_phase).max(0.0),
-                    measure_strength: if features.current_beat % 4 == 0 {
+                    measure_strength: if features.current_beat.is_multiple_of(4) {
                         1.0
                     } else {
                         0.35
                     },
-                    phrase_strength: if features.current_beat % 16 == 0 {
+                    phrase_strength: if features.current_beat.is_multiple_of(16) {
                         1.0
                     } else {
                         0.2
@@ -2265,11 +2259,12 @@ impl std::ops::Div<f32> for V3 {
 #[cfg(test)]
 mod tests {
     use super::{
-        RenderConfig, RenderTime, evaluate_material, render_sdf_scene_with_config, smooth_min,
+        RenderConfig, RenderTime, evaluate_material, render_sdf_scene_with_config,
+        render_sdf_scene_with_diagnostics, smooth_min,
     };
     use aurex_scene::{
         Scene, SdfCamera, SdfLighting, SdfMaterial, SdfMaterialType, SdfModifier, SdfNode,
-        SdfObject, SdfPattern, SdfPrimitive, Vec3,
+        SdfObject, SdfPattern, SdfPrimitive, Vec3, generators,
         patterns::{
             PatternBinding, PatternComposeOp, PatternLayer, PatternNetwork, PatternNode,
             PatternParams, PatternPreset,
@@ -2506,6 +2501,38 @@ mod tests {
             },
         );
         assert_ne!(with_fx.pixels, no_fx.pixels);
+    }
+
+    #[test]
+    fn generator_stack_drives_geometry_sdf_stage() {
+        let mut scene = sample_scene();
+        scene.sdf.root = SdfNode::Empty;
+        scene.sdf.generator = None;
+        scene.sdf.generator_stack = Some(generators::electronic_city_stack());
+
+        let (frame, diagnostics) = render_sdf_scene_with_diagnostics(
+            &scene,
+            RenderConfig {
+                width: 48,
+                height: 27,
+                time: RenderTime { seconds: 0.6 },
+                ..RenderConfig::default()
+            },
+        );
+
+        let geometry_ms = diagnostics
+            .stage_durations_ms
+            .get("GeometrySdf")
+            .copied()
+            .unwrap_or(0.0);
+
+        assert!(geometry_ms > 0.0);
+        assert!(
+            frame
+                .pixels
+                .iter()
+                .any(|px| px.r > 0 || px.g > 0 || px.b > 0)
+        );
     }
 
     #[test]
