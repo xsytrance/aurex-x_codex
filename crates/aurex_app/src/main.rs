@@ -29,7 +29,7 @@ use pulses::{
 };
 use timeline::{
     AudioAction, AudioCue, AudioTransport, EventScheduler, PulseTimeline, SceneManager,
-    TimelineClock, TimelineEvent, TimelineEventKind,
+    SceneVisualProfile, TimelineClock, TimelineEvent, TimelineEventKind, blend_scene_profiles,
     scripts::aurielle_intro::aurielle_intro_timeline,
 };
 
@@ -48,6 +48,7 @@ struct RuntimeTickReport {
     phase_change: Option<String>,
     triggered_events: Vec<String>,
     active_scenes: Vec<String>,
+    resolved_profile: SceneVisualProfile,
 }
 
 fn available_pulse_names() -> &'static [&'static str] {
@@ -128,6 +129,7 @@ struct RuntimePulseLoop {
     scheduler: EventScheduler,
     scene_manager: SceneManager,
     audio_transport: AudioTransport,
+    resolved_profile: SceneVisualProfile,
 }
 
 impl RuntimePulseLoop {
@@ -145,6 +147,7 @@ impl RuntimePulseLoop {
             scheduler: EventScheduler::new(),
             scene_manager: SceneManager::default(),
             audio_transport: AudioTransport::default(),
+            resolved_profile: SceneVisualProfile::default(),
         }
     }
 
@@ -202,6 +205,12 @@ impl RuntimePulseLoop {
         }
 
         self.scene_manager.update(elapsed_seconds);
+        self.resolved_profile = blend_scene_profiles(&self.scene_manager.layers);
+        apply_scene_profile_to_pulse(
+            &mut self.pulse,
+            self.resolved_profile,
+            &self.scene_manager.layers,
+        );
 
         let active_scenes = self
             .scene_manager
@@ -214,6 +223,7 @@ impl RuntimePulseLoop {
             phase_change,
             triggered_events,
             active_scenes,
+            resolved_profile: self.resolved_profile,
         }
     }
 }
@@ -252,7 +262,60 @@ fn timeline_summary_lines(pulse_loop: &RuntimePulseLoop) -> Vec<String> {
             "Timeline Active Audio Tracks: {}",
             pulse_loop.audio_transport.active_tracks.join(",")
         ),
+        format!(
+            "Timeline Visual Profile: geom={:.2} particles={:.2} fog={:.2} glow={:.2} stars={} logo={}",
+            pulse_loop.resolved_profile.geometry_density,
+            pulse_loop.resolved_profile.particle_density,
+            pulse_loop.resolved_profile.fog_density,
+            pulse_loop.resolved_profile.glow_intensity,
+            pulse_loop.resolved_profile.starfield_enabled,
+            pulse_loop.resolved_profile.logo_enabled
+        ),
     ]
+}
+
+fn apply_scene_profile_to_pulse(
+    pulse: &mut ExamplePulseConfig,
+    profile: SceneVisualProfile,
+    layers: &[timeline::scene_manager::SceneLayerState],
+) {
+    let primary_scene = layers
+        .iter()
+        .max_by(|a, b| a.weight.total_cmp(&b.weight))
+        .map(|l| l.scene_id.as_str())
+        .unwrap_or("scene_default");
+
+    pulse.world_blueprint.palette_hint = format!(
+        "{}|{}|stars:{}|logo:{}",
+        pulse.pulse_config.color_palette,
+        primary_scene,
+        profile.starfield_enabled,
+        profile.logo_enabled
+    );
+
+    pulse.generator_output.structures.density = profile.geometry_density;
+    pulse.generator_output.particles.density_multiplier = profile.particle_density;
+    pulse.generator_output.atmosphere.fog_density = profile.fog_density;
+    pulse.generator_output.lighting.flash_envelope = profile.glow_intensity;
+
+    pulse.modulated_output.structures.density = (pulse.modulated_output.structures.density * 0.5
+        + profile.geometry_density * 0.5)
+        .clamp(0.0, 1.0);
+    pulse.modulated_output.particles.density_multiplier =
+        (pulse.modulated_output.particles.density_multiplier * 0.4
+            + profile.particle_density * 0.6)
+            .clamp(0.0, 1.0);
+    pulse.modulated_output.atmosphere.fog_density =
+        (pulse.modulated_output.atmosphere.fog_density * 0.4 + profile.fog_density * 0.6)
+            .clamp(0.0, 1.0);
+    pulse.modulated_output.lighting.flash_envelope =
+        (pulse.modulated_output.lighting.flash_envelope * 0.3 + profile.glow_intensity * 0.7)
+            .clamp(0.0, 1.0);
+
+    pulse.rhythm_snapshot.intensity =
+        (pulse.rhythm_snapshot.intensity * 0.5 + profile.glow_intensity * 0.5).clamp(0.0, 1.0);
+    pulse.rhythm_snapshot.high_energy =
+        (pulse.rhythm_snapshot.high_energy * 0.5 + profile.particle_density * 0.5).clamp(0.0, 1.0);
 }
 
 fn runtime_diagnostics_report(selected_pulse: &ExamplePulseConfig) -> String {
@@ -641,6 +704,15 @@ fn main() {
         if !tick.active_scenes.is_empty() {
             println!("Timeline Scenes: {}", tick.active_scenes.join(" | "));
         }
+        println!(
+            "Timeline Visual Params: geom={:.2} particles={:.2} fog={:.2} glow={:.2} stars={} logo={}",
+            tick.resolved_profile.geometry_density,
+            tick.resolved_profile.particle_density,
+            tick.resolved_profile.fog_density,
+            tick.resolved_profile.glow_intensity,
+            tick.resolved_profile.starfield_enabled,
+            tick.resolved_profile.logo_enabled
+        );
 
         if let Some(audio) = runtime_audio.as_ref() {
             let pulse =
@@ -762,5 +834,15 @@ mod tests {
                 .iter()
                 .any(|layer| layer.scene_id == "particle_swirl" || layer.scene_id == "rings")
         );
+    }
+
+    #[test]
+    fn scene_transition_changes_visual_parameters_over_time() {
+        let mut pulse_loop = RuntimePulseLoop::new("aurielle_intro", DEFAULT_SEED);
+        let early = pulse_loop.update(6.1).resolved_profile;
+        let later = pulse_loop.update(9.8).resolved_profile;
+        assert_ne!(early.particle_density, later.particle_density);
+        assert_ne!(early.fog_density, later.fog_density);
+        assert_ne!(early.glow_intensity, later.glow_intensity);
     }
 }
