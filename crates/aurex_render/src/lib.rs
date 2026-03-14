@@ -1,3 +1,18 @@
+pub mod rhythm_field;
+
+use std::sync::{Mutex, OnceLock};
+
+#[cfg(feature = "real_graphics")]
+use aurex_render_sdf::{
+    RenderConfig as SdfRenderConfig, RenderTime as SdfRenderTime,
+    RendererState as SdfRendererState, render_sdf_scene_with_diagnostics,
+};
+#[cfg(feature = "real_graphics")]
+use aurex_scene::{
+    Scene, SdfCamera, SdfLighting, SdfNode, Vec3,
+    generators::{self, GeneratorStack, RhythmFieldContext, RuntimeModulationContext},
+};
+
 #[cfg(feature = "real_graphics")]
 use winit::{dpi::PhysicalSize, event_loop::EventLoop, window::Window};
 
@@ -209,6 +224,796 @@ pub fn run_real_renderer_event_loop() -> Result<(), String> {
     run_real_renderer_event_loop_with_frame_hook(|_| {})
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct RuntimeRenderDebugState {
+    pub pulse_name: String,
+    pub scene_name: String,
+    pub theme_name: String,
+    pub profile_name: String,
+    pub profile_geometry_density: f32,
+    pub profile_structure_height: f32,
+    pub profile_particle_density: f32,
+    pub profile_fog_density: f32,
+    pub profile_glow_intensity: f32,
+    pub starfield_enabled: bool,
+    pub logo_enabled: bool,
+    pub boot_active: bool,
+}
+
+impl Default for RuntimeRenderDebugState {
+    fn default() -> Self {
+        Self {
+            pulse_name: "unbound".to_string(),
+            scene_name: "unbound".to_string(),
+            theme_name: "unbound".to_string(),
+            profile_name: "default".to_string(),
+            profile_geometry_density: 0.5,
+            profile_structure_height: 0.5,
+            profile_particle_density: 0.5,
+            profile_fog_density: 0.4,
+            profile_glow_intensity: 0.5,
+            starfield_enabled: false,
+            logo_enabled: true,
+            boot_active: true,
+        }
+    }
+}
+
+fn runtime_render_state_cell() -> &'static Mutex<RuntimeRenderDebugState> {
+    static CELL: OnceLock<Mutex<RuntimeRenderDebugState>> = OnceLock::new();
+    CELL.get_or_init(|| Mutex::new(RuntimeRenderDebugState::default()))
+}
+
+pub fn set_runtime_render_debug_state(state: RuntimeRenderDebugState) {
+    if let Ok(mut lock) = runtime_render_state_cell().lock() {
+        *lock = state;
+    }
+}
+
+pub fn runtime_render_debug_state() -> RuntimeRenderDebugState {
+    runtime_render_state_cell()
+        .lock()
+        .map(|lock| lock.clone())
+        .unwrap_or_default()
+}
+
+#[cfg(feature = "real_graphics")]
+fn sdf_renderer_state_cell() -> &'static Mutex<SdfRendererState> {
+    static CELL: OnceLock<Mutex<SdfRendererState>> = OnceLock::new();
+    CELL.get_or_init(|| Mutex::new(SdfRendererState::default()))
+}
+
+#[cfg(feature = "real_graphics")]
+fn count_primitives(node: &SdfNode) -> usize {
+    match node {
+        SdfNode::Empty => 0,
+        SdfNode::Primitive { .. } => 1,
+        SdfNode::Group { children }
+        | SdfNode::Union { children }
+        | SdfNode::Intersect { children }
+        | SdfNode::Blend { children, .. }
+        | SdfNode::SmoothUnion { children, .. } => children.iter().map(count_primitives).sum(),
+        SdfNode::Transform { child, .. } => count_primitives(child),
+        SdfNode::Subtract { base, subtract } => {
+            count_primitives(base) + subtract.iter().map(count_primitives).sum::<usize>()
+        }
+    }
+}
+
+#[cfg(feature = "real_graphics")]
+fn vec3_finite(v: Vec3) -> bool {
+    v.x.is_finite() && v.y.is_finite() && v.z.is_finite()
+}
+
+#[cfg(feature = "real_graphics")]
+fn node_has_valid_modifiers(node: &SdfNode) -> bool {
+    use aurex_scene::SdfModifier;
+
+    fn mods_ok(modifiers: &[SdfModifier]) -> bool {
+        modifiers.iter().all(|m| match m {
+            SdfModifier::Repeat { cell } => vec3_finite(*cell),
+            SdfModifier::RepeatGrid { cell_size } => vec3_finite(*cell_size),
+            SdfModifier::RepeatAxis { spacing, .. } => spacing.is_finite() && *spacing > 0.0,
+            SdfModifier::RepeatPolar { sectors } => *sectors >= 1,
+            SdfModifier::RepeatSphere { radius } => radius.is_finite() && *radius > 0.0,
+            SdfModifier::FoldSpace | SdfModifier::MirrorFold => true,
+            SdfModifier::KaleidoscopeFold { segments } => *segments >= 1,
+            SdfModifier::Twist { strength } | SdfModifier::Bend { strength } => {
+                strength.is_finite() && strength.abs() <= 100.0
+            }
+            SdfModifier::Scale { factor } => factor.is_finite() && (0.02..=40.0).contains(factor),
+            SdfModifier::Rotate { axis, radians } => vec3_finite(*axis) && radians.is_finite(),
+            SdfModifier::Translate { offset } => vec3_finite(*offset),
+            SdfModifier::NoiseDisplacement {
+                amplitude,
+                frequency,
+                ..
+            } => {
+                amplitude.is_finite()
+                    && frequency.is_finite()
+                    && amplitude.abs() <= 20.0
+                    && *frequency > 0.0
+            }
+            SdfModifier::Mirror { normal, offset } => vec3_finite(*normal) && offset.is_finite(),
+        })
+    }
+
+    match node {
+        SdfNode::Empty => true,
+        SdfNode::Primitive { object } => mods_ok(&object.modifiers),
+        SdfNode::Transform {
+            modifiers,
+            child,
+            bounds_radius,
+        } => {
+            mods_ok(modifiers)
+                && bounds_radius
+                    .map(|r| r.is_finite() && r > 0.0)
+                    .unwrap_or(true)
+                && node_has_valid_modifiers(child)
+        }
+        SdfNode::Group { children }
+        | SdfNode::Union { children }
+        | SdfNode::Intersect { children }
+        | SdfNode::Blend { children, .. }
+        | SdfNode::SmoothUnion { children, .. } => children.iter().all(node_has_valid_modifiers),
+        SdfNode::Subtract { base, subtract } => {
+            node_has_valid_modifiers(base) && subtract.iter().all(node_has_valid_modifiers)
+        }
+    }
+}
+
+#[cfg(feature = "real_graphics")]
+fn fallback_runtime_scene(debug_state: &RuntimeRenderDebugState) -> Scene {
+    use aurex_scene::{SdfMaterial, SdfMaterialType, SdfObject, SdfPrimitive};
+
+    Scene {
+        sdf: aurex_scene::SdfScene {
+            camera: SdfCamera {
+                position: Vec3::new(0.0, 2.5, -9.0),
+                target: Vec3::new(0.0, 0.8, 0.0),
+                fov_degrees: 60.0,
+                aspect_ratio: 16.0 / 9.0,
+            },
+            lighting: SdfLighting {
+                ambient_light: 0.2,
+                key_lights: vec![aurex_scene::KeyLight {
+                    direction: Vec3::new(-0.4, -1.0, -0.4),
+                    intensity: 1.1,
+                    color: Vec3::new(1.0, 0.98, 0.95),
+                }],
+                fog_color: Vec3::new(0.06, 0.1, 0.18),
+                fog_density: (0.01 + debug_state.profile_fog_density * 0.03).clamp(0.0, 0.08),
+                fog_height_falloff: 0.05,
+                volumetric: Default::default(),
+            },
+            seed: 7,
+            objects: vec![],
+            root: SdfNode::Primitive {
+                object: SdfObject {
+                    primitive: SdfPrimitive::Sphere { radius: 1.4 },
+                    modifiers: vec![],
+                    material: SdfMaterial {
+                        material_type: SdfMaterialType::NeonGrid,
+                        ..SdfMaterial::default()
+                    },
+                    bounds_radius: Some(2.0),
+                },
+            },
+            timeline: None,
+            generator: None,
+            generator_stack: None,
+            fields: vec![],
+            patterns: vec![],
+            harmonics: None,
+            rhythm: None,
+            audio: Some(aurex_audio::default_demo_audio_config(7)),
+            effect_graph: None,
+            automation_tracks: vec![],
+            demo_sequence: None,
+            temporal_effects: vec![],
+            runtime_modulation: None,
+        },
+    }
+}
+
+#[cfg(feature = "real_graphics")]
+fn safe_first_procedural_state(debug_state: &RuntimeRenderDebugState) -> RuntimeRenderDebugState {
+    let mut safe = debug_state.clone();
+    safe.scene_name = "unbound".to_string();
+    safe.profile_geometry_density = 0.22;
+    safe.profile_particle_density = 0.08;
+    safe.profile_structure_height = 0.18;
+    safe.profile_fog_density = 0.10;
+    safe.profile_glow_intensity = 0.14;
+    safe.starfield_enabled = false;
+    safe.logo_enabled = false;
+    safe
+}
+
+#[cfg(feature = "real_graphics")]
+fn env_flag_true(key: &str) -> bool {
+    std::env::var(key)
+        .ok()
+        .map(|value| {
+            let lowered = value.to_ascii_lowercase();
+            matches!(lowered.as_str(), "1" | "true" | "yes" | "on")
+        })
+        .unwrap_or(false)
+}
+
+#[cfg(feature = "real_graphics")]
+fn disable_gpu_error_scopes_from_env() -> bool {
+    env_flag_true("AUREX_DISABLE_GPU_ERROR_SCOPES")
+}
+
+#[cfg(feature = "real_graphics")]
+fn log_only_procedural_transition_from_env() -> bool {
+    env_flag_true("AUREX_LOG_ONLY_PROCEDURAL_TRANSITION")
+}
+
+#[cfg(feature = "real_graphics")]
+fn warmup_frames_from_env() -> usize {
+    std::env::var("AUREX_PROCEDURAL_WARMUP_FRAMES")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(120)
+}
+
+#[cfg(feature = "real_graphics")]
+fn first_real_scene_override_from_env() -> Option<String> {
+    std::env::var("AUREX_FIRST_REAL_SCENE_OVERRIDE")
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+}
+
+#[cfg(feature = "real_graphics")]
+fn isolate_starfield_expansion_from_env() -> bool {
+    std::env::var("AUREX_ISOLATE_STARFIELD_EXPANSION")
+        .ok()
+        .map(|v| {
+            let lowered = v.to_ascii_lowercase();
+            matches!(lowered.as_str(), "1" | "true" | "yes" | "on")
+        })
+        .unwrap_or(false)
+}
+
+#[cfg(feature = "real_graphics")]
+fn diagnostic_gpu_triangle_from_env() -> bool {
+    std::env::var("AUREX_DIAGNOSTIC_GPU_TRIANGLE")
+        .ok()
+        .map(|v| {
+            let lowered = v.to_ascii_lowercase();
+            matches!(lowered.as_str(), "1" | "true" | "yes" | "on")
+        })
+        .unwrap_or(false)
+}
+
+#[cfg(feature = "real_graphics")]
+fn bypass_procedural_setup_from_env() -> bool {
+    std::env::var("AUREX_BYPASS_PROCEDURAL_SETUP")
+        .ok()
+        .map(|v| {
+            let lowered = v.to_ascii_lowercase();
+            matches!(lowered.as_str(), "1" | "true" | "yes" | "on")
+        })
+        .unwrap_or(false)
+}
+
+#[cfg(feature = "real_graphics")]
+fn should_short_circuit_procedural_setup(
+    procedural_renderer_active: bool,
+    bypass_procedural_setup: bool,
+) -> bool {
+    procedural_renderer_active && bypass_procedural_setup
+}
+
+#[cfg(feature = "real_graphics")]
+fn debug_state_has_safe_ranges(state: &RuntimeRenderDebugState) -> bool {
+    let ranges = [
+        state.profile_geometry_density,
+        state.profile_particle_density,
+        state.profile_structure_height,
+        state.profile_fog_density,
+        state.profile_glow_intensity,
+    ];
+    ranges
+        .iter()
+        .all(|v| v.is_finite() && (0.0..=1.0).contains(v))
+}
+
+#[cfg(feature = "real_graphics")]
+fn scene_camera_is_valid(scene: &Scene) -> bool {
+    let camera = &scene.sdf.camera;
+    [
+        camera.position.x,
+        camera.position.y,
+        camera.position.z,
+        camera.target.x,
+        camera.target.y,
+        camera.target.z,
+        camera.fov_degrees,
+        camera.aspect_ratio,
+    ]
+    .into_iter()
+    .all(f32::is_finite)
+        && camera.fov_degrees > 1.0
+        && camera.fov_degrees < 179.0
+        && camera.aspect_ratio > 0.01
+}
+
+#[cfg(feature = "real_graphics")]
+fn preflight_real_scene(debug_state: &RuntimeRenderDebugState, elapsed: f32) -> bool {
+    if !debug_state_has_safe_ranges(debug_state) {
+        return false;
+    }
+    let scene = build_runtime_sdf_scene(
+        debug_state,
+        elapsed,
+        ProceduralSetupControls {
+            stop_after: None,
+            skip_root_tree_build: false,
+            skip_procedural_camera: false,
+        },
+    );
+    let (validated, _, _) = validate_runtime_scene(scene, debug_state);
+    scene_camera_is_valid(&validated)
+}
+
+#[cfg(feature = "real_graphics")]
+fn build_runtime_sdf_scene(
+    debug_state: &RuntimeRenderDebugState,
+    elapsed: f32,
+    controls: ProceduralSetupControls,
+) -> Scene {
+    let stack: GeneratorStack = match debug_state.scene_name.as_str() {
+        "rings" => generators::electronic_city_stack(),
+        "particle_swirl" => generators::jazz_improvisation_stack(),
+        "ambient_mist" => generators::rock_mountain_stack(),
+        _ => match debug_state.pulse_name.as_str() {
+            "megacity" => generators::electronic_city_stack(),
+            "jazz" => generators::jazz_improvisation_stack(),
+            "ambient" => generators::rock_mountain_stack(),
+            _ => generators::electronic_city_stack(),
+        },
+    };
+
+    let fog_density = (0.012 + debug_state.profile_fog_density * 0.08).clamp(0.0, 0.25);
+    let rhythm = RhythmFieldContext {
+        beat_phase: debug_state.profile_particle_density,
+        beat_strength: debug_state.profile_glow_intensity,
+        bass_energy: debug_state.profile_structure_height,
+        harmonic_energy: debug_state.profile_geometry_density,
+    };
+
+    let camera = if controls.skip_procedural_camera {
+        SdfCamera {
+            position: Vec3::new(0.0, 2.5, -9.0),
+            target: Vec3::new(0.0, 0.8, 0.0),
+            fov_degrees: 60.0,
+            aspect_ratio: 16.0 / 9.0,
+        }
+    } else {
+        SdfCamera {
+            position: Vec3::new(0.0, 4.0 + debug_state.profile_structure_height * 5.0, -22.0),
+            target: Vec3::new(0.0, 2.5, 0.0),
+            fov_degrees: 58.0,
+            aspect_ratio: 16.0 / 9.0,
+        }
+    };
+
+    let scene_fields = vec![];
+    let runtime_modulation = RuntimeModulationContext {
+        rhythm_field: Some(rhythm),
+    };
+    let root = if controls.skip_root_tree_build {
+        fallback_runtime_scene(debug_state).sdf.root
+    } else {
+        generators::expand_generator_stack(&stack, 2026, elapsed, &scene_fields, runtime_modulation)
+    };
+
+    Scene {
+        sdf: aurex_scene::SdfScene {
+            camera,
+            lighting: SdfLighting {
+                ambient_light: 0.10 + debug_state.profile_glow_intensity * 0.25,
+                key_lights: vec![aurex_scene::KeyLight {
+                    direction: Vec3::new(-0.35, -1.0, -0.45),
+                    intensity: 0.85 + debug_state.profile_glow_intensity * 0.8,
+                    color: Vec3::new(0.95, 0.98, 1.0),
+                }],
+                fog_color: Vec3::new(0.05, 0.09, 0.16),
+                fog_density,
+                fog_height_falloff: 0.07,
+                volumetric: Default::default(),
+            },
+            seed: 2026,
+            objects: vec![],
+            root,
+            timeline: None,
+            generator: None,
+            generator_stack: None,
+            fields: scene_fields,
+            patterns: vec![],
+            harmonics: None,
+            rhythm: None,
+            audio: Some(aurex_audio::default_demo_audio_config(2026)),
+            effect_graph: None,
+            automation_tracks: vec![],
+            demo_sequence: None,
+            temporal_effects: vec![],
+            runtime_modulation: Some(runtime_modulation),
+        },
+    }
+}
+
+#[cfg(feature = "real_graphics")]
+fn validate_runtime_scene(
+    scene: Scene,
+    debug_state: &RuntimeRenderDebugState,
+) -> (Scene, bool, usize) {
+    let shape_count = count_primitives(&scene.sdf.root);
+    let cam = &scene.sdf.camera;
+    let cam_vec = Vec3::new(
+        cam.position.x - cam.target.x,
+        cam.position.y - cam.target.y,
+        cam.position.z - cam.target.z,
+    );
+    let cam_dist_sq = cam_vec.x * cam_vec.x + cam_vec.y * cam_vec.y + cam_vec.z * cam_vec.z;
+    let camera_safe = cam_dist_sq.is_finite() && cam_dist_sq > 4.0;
+
+    let scene_valid = shape_count > 0
+        && vec3_finite(cam.position)
+        && vec3_finite(cam.target)
+        && cam.fov_degrees.is_finite()
+        && (20.0..=120.0).contains(&cam.fov_degrees)
+        && cam.aspect_ratio.is_finite()
+        && cam.aspect_ratio > 0.1
+        && camera_safe
+        && node_has_valid_modifiers(&scene.sdf.root);
+
+    if scene_valid {
+        (scene, false, shape_count)
+    } else {
+        eprintln!(
+            "Procedural scene invalid → using fallback scene shape_count={} geometry_density={:.2} scale={:.2} height={:.2} complexity={:.2}",
+            shape_count,
+            debug_state.profile_geometry_density,
+            debug_state.profile_particle_density,
+            debug_state.profile_structure_height,
+            debug_state.profile_glow_intensity,
+        );
+        let fallback = fallback_runtime_scene(debug_state);
+        let fallback_shapes = count_primitives(&fallback.sdf.root);
+        (fallback, true, fallback_shapes)
+    }
+}
+
+#[cfg(feature = "real_graphics")]
+#[derive(Debug, Clone)]
+struct ProceduralFrameDiagnostics {
+    shape_count: usize,
+    used_fallback: bool,
+    camera_position: Vec3,
+    camera_target: Vec3,
+    scene_name: String,
+}
+
+#[cfg(feature = "real_graphics")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProceduralSetupStage {
+    ResolveScene,
+    ApplyProfile,
+    BuildWorld,
+    BuildGenerator,
+    BuildCamera,
+    BuildRootTree,
+    ValidateScene,
+}
+
+#[cfg(feature = "real_graphics")]
+impl ProceduralSetupStage {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::ResolveScene => "resolve_scene",
+            Self::ApplyProfile => "apply_profile",
+            Self::BuildWorld => "build_world",
+            Self::BuildGenerator => "build_generator",
+            Self::BuildCamera => "build_camera",
+            Self::BuildRootTree => "build_root_tree",
+            Self::ValidateScene => "validate_scene",
+        }
+    }
+
+    fn from_env(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "resolve_scene" => Some(Self::ResolveScene),
+            "apply_profile" => Some(Self::ApplyProfile),
+            "build_world" => Some(Self::BuildWorld),
+            "build_generator" => Some(Self::BuildGenerator),
+            "build_camera" => Some(Self::BuildCamera),
+            "build_root_tree" => Some(Self::BuildRootTree),
+            "validate_scene" => Some(Self::ValidateScene),
+            _ => None,
+        }
+    }
+}
+
+#[cfg(feature = "real_graphics")]
+#[derive(Debug, Clone, Copy)]
+struct ProceduralSetupControls {
+    stop_after: Option<ProceduralSetupStage>,
+    skip_root_tree_build: bool,
+    skip_procedural_camera: bool,
+}
+
+#[cfg(feature = "real_graphics")]
+fn procedural_setup_controls_from_env() -> ProceduralSetupControls {
+    let stop_after = std::env::var("AUREX_STOP_AFTER_PROCEDURAL_STAGE")
+        .ok()
+        .and_then(|value| ProceduralSetupStage::from_env(&value));
+
+    let skip_root_tree_build = std::env::var("AUREX_SKIP_ROOT_TREE_BUILD")
+        .ok()
+        .map(|value| {
+            let lowered = value.to_ascii_lowercase();
+            matches!(lowered.as_str(), "1" | "true" | "yes" | "on")
+        })
+        .unwrap_or(false);
+
+    let skip_procedural_camera = std::env::var("AUREX_SKIP_PROCEDURAL_CAMERA")
+        .ok()
+        .map(|value| {
+            let lowered = value.to_ascii_lowercase();
+            matches!(lowered.as_str(), "1" | "true" | "yes" | "on")
+        })
+        .unwrap_or(false);
+
+    ProceduralSetupControls {
+        stop_after,
+        skip_root_tree_build,
+        skip_procedural_camera,
+    }
+}
+
+#[cfg(feature = "real_graphics")]
+fn should_stop_after_stage(controls: ProceduralSetupControls, stage: ProceduralSetupStage) -> bool {
+    controls.stop_after == Some(stage)
+}
+
+#[cfg(feature = "real_graphics")]
+fn handoff_starts_now(handoff_ready: bool, procedural_handoff_started: bool) -> bool {
+    handoff_ready && !procedural_handoff_started
+}
+
+#[cfg(feature = "real_graphics")]
+fn warmup_active(warmup_frame_counter: usize, warmup_total_frames: usize) -> bool {
+    warmup_frame_counter < warmup_total_frames
+}
+
+#[cfg(feature = "real_graphics")]
+fn advance_warmup_counter(warmup_frame_counter: usize, warmup_total_frames: usize) -> usize {
+    if warmup_frame_counter < warmup_total_frames {
+        warmup_frame_counter + 1
+    } else {
+        warmup_frame_counter
+    }
+}
+
+#[cfg(feature = "real_graphics")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RuntimeRenderMode {
+    Boot,
+    Procedural,
+}
+
+#[cfg(feature = "real_graphics")]
+impl RuntimeRenderMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Boot => "BOOT",
+            Self::Procedural => "PROCEDURAL",
+        }
+    }
+}
+
+#[cfg(feature = "real_graphics")]
+fn should_execute_transition_side_effects(log_only_procedural_transition: bool) -> bool {
+    !log_only_procedural_transition
+}
+
+#[cfg(feature = "real_graphics")]
+fn transition_to_procedural_once(mode: &mut RuntimeRenderMode) -> bool {
+    if *mode == RuntimeRenderMode::Boot {
+        *mode = RuntimeRenderMode::Procedural;
+        true
+    } else {
+        false
+    }
+}
+
+#[cfg(feature = "real_graphics")]
+fn rasterize_procedural_scene(
+    width: u32,
+    height: u32,
+    elapsed: f32,
+    debug_state: &RuntimeRenderDebugState,
+) -> (BootFramebuffer, ProceduralFrameDiagnostics) {
+    let controls = procedural_setup_controls_from_env();
+    let expected_len = (width as usize) * (height as usize) * 4;
+    let stop_with_empty = |stage: ProceduralSetupStage| {
+        (
+            BootFramebuffer {
+                width,
+                height,
+                rgba: vec![0; expected_len],
+            },
+            ProceduralFrameDiagnostics {
+                shape_count: 0,
+                used_fallback: false,
+                camera_position: Vec3::new(0.0, 2.5, -9.0),
+                camera_target: Vec3::new(0.0, 0.8, 0.0),
+                scene_name: format!("{}:stopped@{}", debug_state.scene_name, stage.as_str()),
+            },
+        )
+    };
+
+    eprintln!("setup_stage_begin scene={}", debug_state.scene_name);
+    eprintln!("resolve active scene scene={}", debug_state.scene_name);
+    if should_stop_after_stage(controls, ProceduralSetupStage::ResolveScene) {
+        eprintln!(
+            "stop_after_stage reached={} procedural setup complete (stopped)",
+            ProceduralSetupStage::ResolveScene.as_str()
+        );
+        return stop_with_empty(ProceduralSetupStage::ResolveScene);
+    }
+
+    eprintln!(
+        "apply scene profile geom={:.2} particles={:.2} height={:.2} glow={:.2}",
+        debug_state.profile_geometry_density,
+        debug_state.profile_particle_density,
+        debug_state.profile_structure_height,
+        debug_state.profile_glow_intensity,
+    );
+    if should_stop_after_stage(controls, ProceduralSetupStage::ApplyProfile) {
+        eprintln!(
+            "stop_after_stage reached={} procedural setup complete (stopped)",
+            ProceduralSetupStage::ApplyProfile.as_str()
+        );
+        return stop_with_empty(ProceduralSetupStage::ApplyProfile);
+    }
+
+    eprintln!("build world blueprint pulse={}", debug_state.pulse_name);
+    if should_stop_after_stage(controls, ProceduralSetupStage::BuildWorld) {
+        eprintln!(
+            "stop_after_stage reached={} procedural setup complete (stopped)",
+            ProceduralSetupStage::BuildWorld.as_str()
+        );
+        return stop_with_empty(ProceduralSetupStage::BuildWorld);
+    }
+
+    eprintln!("build generator stack output");
+    if should_stop_after_stage(controls, ProceduralSetupStage::BuildGenerator) {
+        eprintln!(
+            "stop_after_stage reached={} procedural setup complete (stopped)",
+            ProceduralSetupStage::BuildGenerator.as_str()
+        );
+        return stop_with_empty(ProceduralSetupStage::BuildGenerator);
+    }
+
+    eprintln!(
+        "build/modulate pulse output skip_camera={} skip_root_tree={}",
+        controls.skip_procedural_camera, controls.skip_root_tree_build
+    );
+    eprintln!("build camera");
+    if should_stop_after_stage(controls, ProceduralSetupStage::BuildCamera) {
+        eprintln!(
+            "stop_after_stage reached={} procedural setup complete (stopped)",
+            ProceduralSetupStage::BuildCamera.as_str()
+        );
+        return stop_with_empty(ProceduralSetupStage::BuildCamera);
+    }
+
+    eprintln!("build scene/root tree");
+    if should_stop_after_stage(controls, ProceduralSetupStage::BuildRootTree) {
+        eprintln!(
+            "stop_after_stage reached={} procedural setup complete (stopped)",
+            ProceduralSetupStage::BuildRootTree.as_str()
+        );
+        return stop_with_empty(ProceduralSetupStage::BuildRootTree);
+    }
+
+    let scene = build_runtime_sdf_scene(debug_state, elapsed, controls);
+    eprintln!("validate scene");
+    if should_stop_after_stage(controls, ProceduralSetupStage::ValidateScene) {
+        eprintln!(
+            "stop_after_stage reached={} procedural setup complete (stopped)",
+            ProceduralSetupStage::ValidateScene.as_str()
+        );
+        return stop_with_empty(ProceduralSetupStage::ValidateScene);
+    }
+
+    let (scene, used_fallback, shape_count) = validate_runtime_scene(scene, debug_state);
+    eprintln!("procedural setup complete");
+
+    let _ = sdf_renderer_state_cell();
+    let (frame, diagnostics) = render_sdf_scene_with_diagnostics(
+        &scene,
+        SdfRenderConfig {
+            width,
+            height,
+            time: SdfRenderTime { seconds: elapsed },
+            output_diagnostics: true,
+            ..SdfRenderConfig::default()
+        },
+    );
+
+    let mut rgba = Vec::with_capacity(expected_len);
+    for p in frame.pixels {
+        rgba.extend_from_slice(&[p.r, p.g, p.b, p.a]);
+    }
+
+    if used_fallback {
+        eprintln!(
+            "procedural_fallback_active=true shape_count={} geometry_sdf_ms={:.3}",
+            shape_count,
+            diagnostics
+                .stage_durations_ms
+                .get("GeometrySdf")
+                .copied()
+                .unwrap_or(0.0)
+        );
+    }
+
+    if let Some(geom_ms) = diagnostics.stage_durations_ms.get("GeometrySdf")
+        && *geom_ms <= 0.0
+    {
+        eprintln!("render_stage_warning=GeometrySdf duration was zero");
+    }
+
+    if rgba.len() != expected_len {
+        eprintln!(
+            "Procedural scene invalid → using fallback scene shape_count={} geometry_density={:.2} scale={:.2} height={:.2} complexity={:.2}",
+            shape_count,
+            debug_state.profile_geometry_density,
+            debug_state.profile_particle_density,
+            debug_state.profile_structure_height,
+            debug_state.profile_glow_intensity,
+        );
+        return (
+            BootFramebuffer {
+                width,
+                height,
+                rgba: vec![0; expected_len],
+            },
+            ProceduralFrameDiagnostics {
+                shape_count,
+                used_fallback,
+                camera_position: scene.sdf.camera.position,
+                camera_target: scene.sdf.camera.target,
+                scene_name: debug_state.scene_name.clone(),
+            },
+        );
+    }
+
+    (
+        BootFramebuffer {
+            width,
+            height,
+            rgba,
+        },
+        ProceduralFrameDiagnostics {
+            shape_count,
+            used_fallback,
+            camera_position: scene.sdf.camera.position,
+            camera_target: scene.sdf.camera.target,
+            scene_name: debug_state.scene_name.clone(),
+        },
+    )
+}
+
 #[cfg(feature = "real_graphics")]
 pub fn run_real_renderer_event_loop_with_frame_hook<F>(mut on_frame: F) -> Result<(), String>
 where
@@ -292,9 +1097,25 @@ where
         .to_boot_screen_sequence("AUREX-X", "Prime Pulse online");
     let start_time = std::time::Instant::now();
     let mut last_frame_time = start_time;
-    let mut scene_particles = vec![Particle::default(); 220];
-    let mut particle_cursor = 0usize;
-    let starfield = build_starfield(200);
+    let mut render_mode_state = RuntimeRenderMode::Boot;
+    let mut procedural_activation_logged = false;
+    let procedural_warmup_frames = warmup_frames_from_env();
+    let first_real_scene_override = first_real_scene_override_from_env();
+    let isolate_starfield_expansion = isolate_starfield_expansion_from_env();
+    let mut procedural_handoff_start_logged = false;
+    let mut safe_warmup_complete_logged = false;
+    let mut post_handoff_procedural_frames = 0usize;
+    let mut first_real_scene_frame_seen = false;
+    let diagnostic_gpu_triangle = diagnostic_gpu_triangle_from_env();
+    let bypass_procedural_setup = bypass_procedural_setup_from_env();
+    let disable_gpu_error_scopes = disable_gpu_error_scopes_from_env();
+    let log_only_procedural_transition = log_only_procedural_transition_from_env();
+    let mut first_procedural_submission_captured = false;
+    let mut first_procedural_present_logged = false;
+    let mut last_boot_log_second: i32 = -1;
+    let _scene_particles = vec![Particle::default(); 220];
+    let _particle_cursor = 0usize;
+    let _starfield = build_starfield(200);
 
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("Aurex-X Boot Texture Shader"),
@@ -381,6 +1202,68 @@ fn fs_main(inf: VsOut) -> @location(0) vec4<f32> {
             targets: &[Some(wgpu::ColorTargetState {
                 format: config.format,
                 blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        }),
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        multiview: None,
+        cache: None,
+    });
+
+    let diagnostic_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("Aurex-X Diagnostic Triangle Shader"),
+        source: wgpu::ShaderSource::Wgsl(
+            r#"
+struct VsOut {
+    @builtin(position) position: vec4<f32>,
+};
+
+@vertex
+fn vs_main(@builtin(vertex_index) vid: u32) -> VsOut {
+    var positions = array<vec2<f32>, 3>(
+        vec2<f32>(-1.0, -1.0),
+        vec2<f32>(3.0, -1.0),
+        vec2<f32>(-1.0, 3.0),
+    );
+    var out: VsOut;
+    out.position = vec4<f32>(positions[vid], 0.0, 1.0);
+    return out;
+}
+
+@fragment
+fn fs_main() -> @location(0) vec4<f32> {
+    return vec4<f32>(0.08, 0.22, 0.38, 1.0);
+}
+"#
+            .into(),
+        ),
+    });
+
+    let diagnostic_pipeline_layout =
+        device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Aurex-X Diagnostic Triangle Pipeline Layout"),
+            bind_group_layouts: &[],
+            push_constant_ranges: &[],
+        });
+
+    let diagnostic_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("Aurex-X Diagnostic Triangle Pipeline"),
+        layout: Some(&diagnostic_pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &diagnostic_shader,
+            entry_point: Some("vs_main"),
+            buffers: &[],
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &diagnostic_shader,
+            entry_point: Some("fs_main"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: config.format,
+                blend: Some(wgpu::BlendState::REPLACE),
                 write_mask: wgpu::ColorWrites::ALL,
             })],
             compilation_options: wgpu::PipelineCompilationOptions::default(),
@@ -486,6 +1369,58 @@ fn fs_main(inf: VsOut) -> @location(0) vec4<f32> {
 
                         on_frame(start_time.elapsed().as_secs_f32());
 
+                        let stage_controls = procedural_setup_controls_from_env();
+
+                        let now = std::time::Instant::now();
+                        let elapsed = start_time.elapsed().as_secs_f32();
+                        let _dt = (now - last_frame_time).as_secs_f32().clamp(0.0, 0.05);
+                        last_frame_time = now;
+                        let debug_state = runtime_render_debug_state();
+                        let timeline_idx = ((elapsed * 24.0) as usize) % timeline_frames.len();
+                        let boot = &timeline_frames[timeline_idx];
+                        let screen = &boot_screen.frames[timeline_idx % boot_screen.frames.len()];
+
+                        let handoff_ready = elapsed >= 12.0;
+                        let handoff_begins_this_frame =
+                            handoff_starts_now(handoff_ready, procedural_handoff_start_logged);
+                        if handoff_begins_this_frame {
+                            eprintln!(
+                                "render_mode_handoff_ready t={:.2} active_scene={} boot_active={}",
+                                elapsed, debug_state.scene_name, debug_state.boot_active
+                            );
+                        }
+                        let handoff_active = procedural_handoff_start_logged || handoff_begins_this_frame;
+                        let procedural_path_active =
+                            render_mode_state == RuntimeRenderMode::Procedural || handoff_active;
+                        let render_mode = render_mode_state.as_str();
+
+                        if procedural_path_active && post_handoff_procedural_frames <= 5 {
+                            eprintln!(
+                                "mode_diag frame={} mode={} handoff_started={} warmup_active={} warmup_counter={} boot_active={} scene= {}",
+                                post_handoff_procedural_frames,
+                                render_mode,
+                                procedural_handoff_start_logged,
+                                warmup_active(post_handoff_procedural_frames, procedural_warmup_frames),
+                                post_handoff_procedural_frames,
+                                debug_state.boot_active,
+                                debug_state.scene_name
+                            );
+                        }
+
+                        let triangle_render_active = procedural_path_active
+                            && (diagnostic_gpu_triangle
+                                || bypass_procedural_setup
+                                || stage_controls.stop_after.is_some());
+                        eprintln!("swapchain_acquire begin");
+                        eprintln!(
+                            "swapchain_acquire_start mode={} diag_triangle={} bypass_setup={} triangle_render_active={} size={}x{}",
+                            render_mode,
+                            diagnostic_gpu_triangle,
+                            bypass_procedural_setup,
+                            triangle_render_active,
+                            config.width,
+                            config.height,
+                        );
                         let frame = match surface.get_current_texture() {
                             Ok(frame) => frame,
                             Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
@@ -499,83 +1434,367 @@ fn fs_main(inf: VsOut) -> @location(0) vec4<f32> {
                             Err(wgpu::SurfaceError::Timeout) => return,
                             Err(wgpu::SurfaceError::Other) => return,
                         };
+                        eprintln!("swapchain_acquire_ok");
+                        eprintln!("swapchain_acquire end");
 
-                        let now = std::time::Instant::now();
-                        let elapsed = start_time.elapsed().as_secs_f32();
-                        let dt = (now - last_frame_time).as_secs_f32().clamp(0.0, 0.05);
-                        last_frame_time = now;
-                        let runtime_pulse =
-                            (elapsed * std::f32::consts::TAU * 0.6).sin() * 0.5 + 0.5;
-                        let timeline_idx = ((elapsed * 24.0) as usize) % timeline_frames.len();
-                        let boot = &timeline_frames[timeline_idx];
-                        let screen = &boot_screen.frames[timeline_idx % boot_screen.frames.len()];
+                        if !procedural_path_active {
+                            let now_second = elapsed.floor() as i32;
+                            if now_second != last_boot_log_second {
+                                last_boot_log_second = now_second;
+                                eprintln!(
+                                    "Boot renderer active at t={:.2} mode={} handoff_ready={} active_scene={} boot_active={}",
+                                    elapsed,
+                                    render_mode,
+                                    handoff_ready,
+                                    debug_state.scene_name,
+                                    debug_state.boot_active,
+                                );
+                            }
+                        }
 
-                        let cpu_frame = if elapsed < 5.0 {
-                            let mut frame = rasterize_boot_frame(boot, config.width, config.height);
-                            overlay_boot_caption(
-                                &mut frame.rgba,
-                                config.width,
-                                config.height,
-                                screen,
-                            );
-                            frame
-                        } else if elapsed < 6.0 {
-                            let mut frame = rasterize_boot_frame(boot, config.width, config.height);
-                            overlay_boot_caption(
-                                &mut frame.rgba,
-                                config.width,
-                                config.height,
-                                screen,
-                            );
-                            let fade = (1.0 - (elapsed - 5.0)).clamp(0.0, 1.0);
-                            apply_fade_to_black(&mut frame.rgba, fade);
-                            frame
-                        } else if elapsed < 12.0 {
-                            rasterize_reveal_frame(config.width, config.height, elapsed - 6.0, boot)
+                        let mut cpu_frame = if !procedural_path_active {
+                            if debug_state.boot_active && elapsed < 5.0 {
+                                let mut frame =
+                                    rasterize_boot_frame(boot, config.width, config.height);
+                                overlay_boot_caption(
+                                    &mut frame.rgba,
+                                    config.width,
+                                    config.height,
+                                    screen,
+                                );
+                                frame
+                            } else if debug_state.boot_active && elapsed < 6.0 {
+                                let mut frame =
+                                    rasterize_boot_frame(boot, config.width, config.height);
+                                overlay_boot_caption(
+                                    &mut frame.rgba,
+                                    config.width,
+                                    config.height,
+                                    screen,
+                                );
+                                let fade = (1.0 - (elapsed - 5.0)).clamp(0.0, 1.0);
+                                apply_fade_to_black(&mut frame.rgba, fade);
+                                frame
+                            } else {
+                                rasterize_reveal_frame(
+                                    config.width,
+                                    config.height,
+                                    (elapsed - 6.0).max(0.0),
+                                    boot,
+                                )
+                            }
                         } else {
-                            let scene_time = elapsed - 12.0;
-                            let scene = select_demo_scene(scene_time);
-                            let local_t = local_scene_time(scene_time);
-                            rasterize_demo_scene(
+                            eprintln!(
+                                "first_procedural_frame_begin t={:.2} mode={} active_scene={}",
+                                elapsed,
+                                render_mode,
+                                debug_state.scene_name
+                            );
+                            eprintln!(
+                                "entering_procedural_handoff t={:.2} active_scene={}",
+                                elapsed, debug_state.scene_name
+                            );
+                            if handoff_begins_this_frame {
+                                procedural_handoff_start_logged = true;
+                                eprintln!(
+                                    "Procedural handoff start at t={:.2} active_scene={} boot_active={} warmup_frames={} isolate_starfield_expansion={} first_real_scene_override={}",
+                                    elapsed,
+                                    debug_state.scene_name,
+                                    debug_state.boot_active,
+                                    procedural_warmup_frames,
+                                    isolate_starfield_expansion,
+                                    first_real_scene_override.as_deref().unwrap_or("none"),
+                                );
+                            }
+
+                            let short_circuit_procedural_setup =
+                                should_short_circuit_procedural_setup(
+                                    render_mode_state == RuntimeRenderMode::Procedural,
+                                    bypass_procedural_setup,
+                                );
+
+                            if short_circuit_procedural_setup {
+                                eprintln!(
+                                    "diagnostic triangle short-circuit active reason={} bypass_flag={}",
+                                    "bypass_procedural_setup",
+                                    bypass_procedural_setup,
+                                );
+                                eprintln!(
+                                    "procedural scene build skipped active_scene={} warmup_skipped=true setup_skipped=true",
+                                    debug_state.scene_name,
+                                );
+                                post_handoff_procedural_frames =
+                                    advance_warmup_counter(post_handoff_procedural_frames, procedural_warmup_frames);
+                                BootFramebuffer {
+                                    width: config.width,
+                                    height: config.height,
+                                    rgba: vec![0; (config.width as usize) * (config.height as usize) * 4],
+                                }
+                            } else {
+
+                            let safe_warmup_active =
+                                warmup_active(post_handoff_procedural_frames, procedural_warmup_frames);
+                            if safe_warmup_active {
+                                if post_handoff_procedural_frames == 0
+                                    || post_handoff_procedural_frames % 30 == 0
+                                {
+                                    eprintln!(
+                                        "Safe procedural warmup active frame={} of {} active_scene={} using_safe_content=true",
+                                        post_handoff_procedural_frames + 1,
+                                        procedural_warmup_frames,
+                                        debug_state.scene_name,
+                                    );
+                                }
+                            } else if !safe_warmup_complete_logged {
+                                safe_warmup_complete_logged = true;
+                                eprintln!(
+                                    "Safe procedural warmup complete at t={:.2} frames={} active_scene={}",
+                                    elapsed,
+                                    post_handoff_procedural_frames,
+                                    debug_state.scene_name,
+                                );
+                            }
+
+                            let scene_time = if debug_state.boot_active {
+                                elapsed - 12.0
+                            } else {
+                                elapsed
+                            };
+                            let mut dynamic_scene_state = debug_state.clone();
+                            let mut using_safe_content = safe_warmup_active;
+                            let mut safe_reason = if safe_warmup_active {
+                                Some("warmup")
+                            } else {
+                                None
+                            };
+
+                            if !safe_warmup_active
+                                && isolate_starfield_expansion
+                                && debug_state.scene_name == "starfield_expansion"
+                            {
+                                using_safe_content = true;
+                                safe_reason = Some("starfield_isolation");
+                            }
+
+                            if !safe_warmup_active
+                                && !first_real_scene_frame_seen
+                                && !using_safe_content
+                            {
+                                if let Some(override_scene) = first_real_scene_override.as_ref() {
+                                    dynamic_scene_state.scene_name = override_scene.clone();
+                                }
+                                if !preflight_real_scene(&dynamic_scene_state, scene_time) {
+                                    using_safe_content = true;
+                                    safe_reason = Some("first_real_preflight_rejected");
+                                    eprintln!(
+                                        "First real procedural scene preflight rejected; continuing safe content active_scene={} rendered_scene={}",
+                                        debug_state.scene_name,
+                                        dynamic_scene_state.scene_name,
+                                    );
+                                }
+                                first_real_scene_frame_seen = true;
+                            }
+
+                            let safe_scene_state;
+                            let scene_state = if using_safe_content {
+                                safe_scene_state = safe_first_procedural_state(&debug_state);
+                                &safe_scene_state
+                            } else {
+                                &dynamic_scene_state
+                            };
+
+                            let (procedural, proc_diag) = rasterize_procedural_scene(
                                 config.width,
                                 config.height,
-                                scene,
-                                local_t,
-                                dt,
-                                runtime_pulse,
-                                &mut scene_particles,
-                                &mut particle_cursor,
-                                &starfield,
-                            )
+                                scene_time,
+                                scene_state,
+                            );
+                            if !procedural_activation_logged {
+                                procedural_activation_logged = true;
+                                eprintln!(
+                                    "Procedural renderer activated at t={:.2} mode={} handoff_ready={} active_scene={} boot_active={} forced_safe_frame={} scene={} shape_count={} geometry_density={:.2} scale={:.2} height={:.2} complexity={:.2} camera_pos=({:.2},{:.2},{:.2}) camera_target=({:.2},{:.2},{:.2}) fallback={}",
+                                    elapsed,
+                                    render_mode,
+                                    handoff_ready,
+                                    debug_state.scene_name,
+                                    debug_state.boot_active,
+                                    using_safe_content,
+                                    proc_diag.scene_name,
+                                    proc_diag.shape_count,
+                                    scene_state.profile_geometry_density,
+                                    scene_state.profile_particle_density,
+                                    scene_state.profile_structure_height,
+                                    scene_state.profile_glow_intensity,
+                                    proc_diag.camera_position.x,
+                                    proc_diag.camera_position.y,
+                                    proc_diag.camera_position.z,
+                                    proc_diag.camera_target.x,
+                                    proc_diag.camera_target.y,
+                                    proc_diag.camera_target.z,
+                                    proc_diag.used_fallback,
+                                );
+                            }
+
+                            let camera_finite = [
+                                proc_diag.camera_position.x,
+                                proc_diag.camera_position.y,
+                                proc_diag.camera_position.z,
+                                proc_diag.camera_target.x,
+                                proc_diag.camera_target.y,
+                                proc_diag.camera_target.z,
+                            ]
+                            .into_iter()
+                            .all(f32::is_finite);
+
+                            eprintln!(
+                                "Procedural frame diag t={:.2} warmup_active={} using_safe_content={} safe_reason={} real_scene_content={} active_scene={} rendered_scene={} shape_count={} camera_finite={} fallback={}",
+                                elapsed,
+                                safe_warmup_active,
+                                using_safe_content,
+                                safe_reason.unwrap_or("none"),
+                                !using_safe_content,
+                                debug_state.scene_name,
+                                proc_diag.scene_name,
+                                proc_diag.shape_count,
+                                camera_finite,
+                                proc_diag.used_fallback,
+                            );
+
+                                post_handoff_procedural_frames =
+                                    advance_warmup_counter(post_handoff_procedural_frames, procedural_warmup_frames);
+                                eprintln!(
+                                    "transition_to_procedural_once begin mode={} log_only_transition={}",
+                                    render_mode_state.as_str(),
+                                    log_only_procedural_transition,
+                                );
+                                if should_execute_transition_side_effects(
+                                    log_only_procedural_transition,
+                                ) {
+                                    if transition_to_procedural_once(&mut render_mode_state) {
+                                        eprintln!(
+                                            "render_mode_transition BOOT->PROCEDURAL t={:.2} scene={}",
+                                            elapsed, proc_diag.scene_name
+                                        );
+                                    }
+                                } else {
+                                    eprintln!(
+                                        "render_mode_transition skipped reason=log_only mode={} scene={}",
+                                        render_mode_state.as_str(),
+                                        proc_diag.scene_name
+                                    );
+                                }
+                                eprintln!(
+                                    "transition_to_procedural_once end mode={}",
+                                    render_mode_state.as_str()
+                                );
+                                procedural
+                            }
                         };
 
-                        queue.write_texture(
-                            wgpu::TexelCopyTextureInfo {
-                                texture: &boot_texture,
-                                mip_level: 0,
-                                origin: wgpu::Origin3d::ZERO,
-                                aspect: wgpu::TextureAspect::All,
-                            },
-                            &cpu_frame.rgba,
-                            wgpu::TexelCopyBufferLayout {
-                                offset: 0,
-                                bytes_per_row: Some(config.width * 4),
-                                rows_per_image: Some(config.height),
-                            },
-                            wgpu::Extent3d {
+                        overlay_runtime_debug(
+                            &mut cpu_frame.rgba,
+                            config.width,
+                            config.height,
+                            &debug_state,
+                            render_mode,
+                            handoff_ready,
+                        );
+
+                        let expected_bytes = (config.width as usize) * (config.height as usize) * 4;
+                        if cpu_frame.rgba.len() != expected_bytes {
+                            eprintln!(
+                                "Procedural scene invalid → using fallback scene shape_count={} geometry_density={:.2} scale={:.2} height={:.2} complexity={:.2}",
+                                0,
+                                debug_state.profile_geometry_density,
+                                debug_state.profile_particle_density,
+                                debug_state.profile_structure_height,
+                                debug_state.profile_glow_intensity,
+                            );
+                            cpu_frame = BootFramebuffer {
                                 width: config.width,
                                 height: config.height,
-                                depth_or_array_layers: 1,
-                            },
+                                rgba: vec![0; expected_bytes],
+                            };
+                        }
+
+                        let bytes_per_row = config.width * 4;
+                        let expected_bytes =
+                            (config.width as usize) * (config.height as usize) * 4usize;
+                        assert_eq!(
+                            cpu_frame.width, config.width,
+                            "cpu framebuffer width mismatch"
                         );
+                        assert_eq!(
+                            cpu_frame.height, config.height,
+                            "cpu framebuffer height mismatch"
+                        );
+                        assert_eq!(
+                            cpu_frame.rgba.len(), expected_bytes,
+                            "cpu framebuffer byte length mismatch"
+                        );
+                        assert_eq!(
+                            bytes_per_row % 4,
+                            0,
+                            "bytes_per_row must align with RGBA8 block size"
+                        );
+                        assert!(config.width > 0 && config.height > 0);
+                        eprintln!(
+                            "framebuffer_diag width={} height={} bytes_per_row={} expected_bytes={} format=Rgba8UnormSrgb",
+                            config.width,
+                            config.height,
+                            bytes_per_row,
+                            expected_bytes,
+                        );
+
+                        let capture_gpu_errors = render_mode_state == RuntimeRenderMode::Procedural
+                            && !first_procedural_submission_captured
+                            && !disable_gpu_error_scopes;
+                        if disable_gpu_error_scopes {
+                            eprintln!("gpu_error_scopes_disabled=true");
+                        }
+                        if capture_gpu_errors {
+                            eprintln!("gpu_error_scope_push begin");
+                            device.push_error_scope(wgpu::ErrorFilter::Validation);
+                            device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
+                            eprintln!("gpu_error_scope_push end");
+                        }
+
+                        if !triangle_render_active {
+                            queue.write_texture(
+                                wgpu::TexelCopyTextureInfo {
+                                    texture: &boot_texture,
+                                    mip_level: 0,
+                                    origin: wgpu::Origin3d::ZERO,
+                                    aspect: wgpu::TextureAspect::All,
+                                },
+                                &cpu_frame.rgba,
+                                wgpu::TexelCopyBufferLayout {
+                                    offset: 0,
+                                    bytes_per_row: Some(bytes_per_row),
+                                    rows_per_image: Some(config.height),
+                                },
+                                wgpu::Extent3d {
+                                    width: config.width,
+                                    height: config.height,
+                                    depth_or_array_layers: 1,
+                                },
+                            );
+                        } else {
+                            eprintln!(
+                                "diagnostic_gpu_triangle_active=true skipping_cpu_texture_upload triangle_render_active=true"
+                            );
+                        }
 
                         let swap_view = frame
                             .texture
                             .create_view(&wgpu::TextureViewDescriptor::default());
+                        eprintln!("encoder begin");
+                        eprintln!("command_encoder_create_start");
                         let mut encoder =
                             device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                                 label: Some("Aurex-X Boot Loop Encoder"),
                             });
+                        eprintln!("command_encoder_create_ok");
 
                         {
                             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -597,18 +1816,57 @@ fn fs_main(inf: VsOut) -> @location(0) vec4<f32> {
                                 occlusion_query_set: None,
                                 timestamp_writes: None,
                             });
-                            pass.set_pipeline(&pipeline);
-                            pass.set_bind_group(0, &boot_bind_group, &[]);
+                            eprintln!("encoder_begin");
+                            if triangle_render_active {
+                                pass.set_pipeline(&diagnostic_pipeline);
+                            } else {
+                                pass.set_pipeline(&pipeline);
+                                pass.set_bind_group(0, &boot_bind_group, &[]);
+                            }
                             pass.draw(0..3, 0..1);
                         }
 
+                        eprintln!("encoder end");
+                        eprintln!("queue_submit begin");
+                        eprintln!("queue_submit_start");
                         queue.submit([encoder.finish()]);
+                        eprintln!("queue_submit_ok");
+                        eprintln!("queue_submit end");
+
+                        if capture_gpu_errors {
+                            eprintln!("gpu_error_scope_pop begin");
+                            let oom = pollster::block_on(device.pop_error_scope());
+                            let validation = pollster::block_on(device.pop_error_scope());
+                            if let Some(err) = oom {
+                                eprintln!("gpu_error_scope_oom={err}");
+                            }
+                            if let Some(err) = validation {
+                                eprintln!("gpu_error_scope_validation={err}");
+                            }
+                            eprintln!("gpu_error_scope_pop end");
+                            first_procedural_submission_captured = true;
+                        }
+
+                        eprintln!("present begin");
+                        eprintln!("surface_present_start");
                         frame.present();
+                        eprintln!("surface_present_ok");
+                        eprintln!("present end");
+                        if render_mode_state == RuntimeRenderMode::Procedural {
+                            if !first_procedural_present_logged {
+                                first_procedural_present_logged = true;
+                                eprintln!("first_procedural_present frame={} scene={}", post_handoff_procedural_frames, debug_state.scene_name);
+                            } else {
+                                eprintln!("procedural_frame_count={} scene={}", post_handoff_procedural_frames, debug_state.scene_name);
+                            }
+                        }
                     }
                     _ => {}
                 },
                 Event::AboutToWait => {
+                    eprintln!("request_redraw begin");
                     window.request_redraw();
+                    eprintln!("request_redraw end");
                 }
                 _ => {}
             }
@@ -753,6 +2011,34 @@ fn select_demo_scene(t: f32) -> DemoScene {
 }
 
 #[cfg(feature = "real_graphics")]
+fn select_runtime_scene(t: f32, debug_state: &RuntimeRenderDebugState) -> DemoScene {
+    match debug_state.scene_name.as_str() {
+        "boot_pulse" => DemoScene::Visualizer,
+        "aurex_logo" => DemoScene::ReturnToTitle,
+        "rings" => DemoScene::PulseReactorChamber,
+        "particle_swirl" => DemoScene::ParticleStorm,
+        "starfield_expansion" => DemoScene::StarfieldWarp,
+        "aurielle_reveal" | "aurielle_reveal_scene" => DemoScene::PulseReactorChamber,
+        "megacity_skyline" => DemoScene::PulseReactorChamber,
+        "jazz_lounge" => DemoScene::ReturnToTitle,
+        "ambient_mist" => DemoScene::StarfieldWarp,
+        _ => {
+            if debug_state.pulse_name == "megacity" {
+                DemoScene::PulseReactorChamber
+            } else if debug_state.pulse_name == "ambient" {
+                DemoScene::StarfieldWarp
+            } else if debug_state.pulse_name == "jazz" {
+                DemoScene::ReturnToTitle
+            } else if debug_state.pulse_name == "aurielle_intro" {
+                DemoScene::ParticleStorm
+            } else {
+                select_demo_scene(t)
+            }
+        }
+    }
+}
+
+#[cfg(feature = "real_graphics")]
 fn local_scene_time(t: f32) -> f32 {
     let cycle = t.rem_euclid(63.0);
     if cycle < 10.0 {
@@ -792,6 +2078,7 @@ fn rasterize_demo_scene(
     cursor: &mut usize,
     stars: &[Star],
 ) -> BootFramebuffer {
+    let debug_state = runtime_render_debug_state();
     let mut frame = BootFramebuffer {
         width,
         height,
@@ -801,7 +2088,15 @@ fn rasterize_demo_scene(
         px[3] = 255;
     }
 
-    paint_scene_background(&mut frame.rgba, width, height, t, scene, pulse);
+    paint_scene_background(
+        &mut frame.rgba,
+        width,
+        height,
+        t,
+        scene,
+        pulse,
+        &debug_state,
+    );
     match scene {
         DemoScene::Visualizer => {
             draw_reactor_rings(&mut frame.rgba, width, height, t, pulse, 2);
@@ -821,18 +2116,31 @@ fn rasterize_demo_scene(
                 width,
                 height,
                 particles,
-                [255, 210, 145],
+                pulse_particle_color(&debug_state),
                 1.0,
             );
-            draw_title_centered(&mut frame.rgba, width, height, "AUREX-X", 4, pulse, t);
+            if debug_state.logo_enabled {
+                draw_title_centered(&mut frame.rgba, width, height, "AUREX-X", 4, pulse, t);
+            }
         }
         DemoScene::StarfieldWarp => {
-            draw_starfield(&mut frame.rgba, width, height, stars, t, pulse);
-            draw_title_centered(&mut frame.rgba, width, height, "AUREX-X", 3, pulse * 0.7, t);
+            if debug_state.starfield_enabled || debug_state.pulse_name == "ambient" {
+                draw_starfield(&mut frame.rgba, width, height, stars, t, pulse);
+            }
+            if debug_state.logo_enabled {
+                draw_title_centered(&mut frame.rgba, width, height, "AUREX-X", 3, pulse * 0.7, t);
+            }
         }
         DemoScene::PulseReactorChamber => {
-            draw_reactor_rings(&mut frame.rgba, width, height, t * 0.7, pulse, 4);
-            draw_title_centered(&mut frame.rgba, width, height, "AUREX-X", 5, pulse, t);
+            let ring_count = if debug_state.pulse_name == "megacity" {
+                6
+            } else {
+                4
+            };
+            draw_reactor_rings(&mut frame.rgba, width, height, t * 0.7, pulse, ring_count);
+            if debug_state.logo_enabled {
+                draw_title_centered(&mut frame.rgba, width, height, "AUREX-X", 5, pulse, t);
+            }
         }
         DemoScene::ParticleStorm => {
             update_particles(
@@ -852,10 +2160,12 @@ fn rasterize_demo_scene(
                 width,
                 height,
                 particles,
-                [180, 225, 255],
-                1.3,
+                pulse_particle_color(&debug_state),
+                1.0 + debug_state.profile_particle_density * 0.8,
             );
-            draw_title_centered(&mut frame.rgba, width, height, "AUREX-X", 3, pulse * 0.6, t);
+            if debug_state.logo_enabled {
+                draw_title_centered(&mut frame.rgba, width, height, "AUREX-X", 3, pulse * 0.6, t);
+            }
         }
         DemoScene::ReturnToTitle => {
             let fade = (1.0 - (t / 10.0)).clamp(0.0, 1.0);
@@ -875,10 +2185,12 @@ fn rasterize_demo_scene(
                 width,
                 height,
                 particles,
-                [120, 190, 255],
+                pulse_particle_color(&debug_state),
                 fade,
             );
-            draw_title_centered(&mut frame.rgba, width, height, "AUREX-X", 6, pulse, t * 0.6);
+            if debug_state.logo_enabled {
+                draw_title_centered(&mut frame.rgba, width, height, "AUREX-X", 6, pulse, t * 0.6);
+            }
         }
     }
 
@@ -893,6 +2205,7 @@ fn paint_scene_background(
     t: f32,
     scene: DemoScene,
     pulse: f32,
+    debug_state: &RuntimeRenderDebugState,
 ) {
     let (base_r, base_g, base_b) = match scene {
         DemoScene::Visualizer => (8.0, 16.0, 32.0),
@@ -901,18 +2214,48 @@ fn paint_scene_background(
         DemoScene::ParticleStorm => (7.0, 10.0, 22.0),
         DemoScene::ReturnToTitle => (4.0, 9.0, 18.0),
     };
+    let tint = pulse_tint(debug_state);
+
     for y in 0..height {
         for x in 0..width {
             let idx = ((y * width + x) * 4) as usize;
             let nx = x as f32 / width as f32;
             let ny = y as f32 / height as f32;
             let vignette = (1.0 - ((nx - 0.5).powi(2) + (ny - 0.5).powi(2)) * 1.8).clamp(0.0, 1.0);
+            let depth = (1.0 - ny).powf(1.0 + debug_state.profile_geometry_density * 1.5);
             let drift = ((nx * 5.0 + ny * 3.0 + t * 0.35).sin() * 0.5 + 0.5) * 8.0;
-            let glow = 1.0 + pulse * 0.25;
-            rgba[idx] = ((base_r + drift) * vignette * glow).clamp(0.0, 255.0) as u8;
-            rgba[idx + 1] = ((base_g + drift * 1.2) * vignette * glow).clamp(0.0, 255.0) as u8;
-            rgba[idx + 2] = ((base_b + drift * 1.4) * vignette * glow).clamp(0.0, 255.0) as u8;
+            let glow = 1.0 + pulse * (0.12 + debug_state.profile_glow_intensity * 0.28);
+            rgba[idx] = ((base_r + drift + tint[0]) * vignette * glow * (0.7 + depth * 0.3))
+                .clamp(0.0, 255.0) as u8;
+            rgba[idx + 1] =
+                ((base_g + drift * 1.2 + tint[1]) * vignette * glow * (0.7 + depth * 0.3))
+                    .clamp(0.0, 255.0) as u8;
+            rgba[idx + 2] =
+                ((base_b + drift * 1.4 + tint[2]) * vignette * glow * (0.7 + depth * 0.3))
+                    .clamp(0.0, 255.0) as u8;
         }
+    }
+}
+
+#[cfg(feature = "real_graphics")]
+fn pulse_tint(debug_state: &RuntimeRenderDebugState) -> [f32; 3] {
+    match debug_state.pulse_name.as_str() {
+        "aurielle_intro" => [28.0, 6.0, 34.0],
+        "megacity" => [0.0, 20.0, 38.0],
+        "jazz" => [45.0, 24.0, 8.0],
+        "ambient" => [8.0, 28.0, 22.0],
+        _ => [0.0, 0.0, 0.0],
+    }
+}
+
+#[cfg(feature = "real_graphics")]
+fn pulse_particle_color(debug_state: &RuntimeRenderDebugState) -> [u8; 3] {
+    match debug_state.pulse_name.as_str() {
+        "aurielle_intro" => [255, 120, 250],
+        "megacity" => [90, 220, 255],
+        "jazz" => [255, 210, 140],
+        "ambient" => [130, 220, 180],
+        _ => [180, 225, 255],
     }
 }
 
@@ -1201,6 +2544,51 @@ fn overlay_boot_caption(rgba: &mut [u8], width: u32, height: u32, frame: &BootSc
 }
 
 #[cfg(feature = "real_graphics")]
+fn overlay_runtime_debug(
+    rgba: &mut [u8],
+    width: u32,
+    height: u32,
+    state: &RuntimeRenderDebugState,
+    render_mode: &str,
+    handoff_ready: bool,
+) {
+    if width < 200 || height < 100 {
+        return;
+    }
+
+    let scale = 1;
+    let mut y = 10;
+    for line in [
+        format!("PULSE: {}", state.pulse_name),
+        format!("SCENE: {}", state.scene_name),
+        format!("RENDER_MODE: {render_mode}"),
+        format!("HANDOFF_READY: {handoff_ready}"),
+        format!("THEME: {}", state.theme_name),
+        format!("PROFILE: {}", state.profile_name),
+        format!(
+            "GEOM_DENSITY: {:.2} HEIGHT: {:.2} PARTICLES: {:.2}",
+            state.profile_geometry_density,
+            state.profile_structure_height,
+            state.profile_particle_density
+        ),
+        format!("BOOT_ACTIVE: {}", state.boot_active),
+    ] {
+        draw_text(
+            rgba,
+            width,
+            height,
+            &line,
+            10,
+            y,
+            scale,
+            [255, 255, 255],
+            1.0,
+        );
+        y += 12;
+    }
+}
+
+#[cfg(feature = "real_graphics")]
 fn text_pixel_width(text: &str, scale: i32) -> i32 {
     text.chars()
         .map(|c| if c == ' ' { 4 } else { 6 })
@@ -1255,17 +2643,41 @@ fn glyph_5x7(c: char) -> [u8; 7] {
         'A' => [
             0b01110, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001,
         ],
+        'B' => [
+            0b11110, 0b10001, 0b10001, 0b11110, 0b10001, 0b10001, 0b11110,
+        ],
+        'C' => [
+            0b01110, 0b10001, 0b10000, 0b10000, 0b10000, 0b10001, 0b01110,
+        ],
+        'D' => [
+            0b11110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b11110,
+        ],
         'E' => [
             0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b11111,
         ],
+        'F' => [
+            0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b10000,
+        ],
+        'G' => [
+            0b01110, 0b10001, 0b10000, 0b10111, 0b10001, 0b10001, 0b01110,
+        ],
+        'H' => [
+            0b10001, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001,
+        ],
         'I' => [
             0b11111, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b11111,
+        ],
+        'J' => [
+            0b11111, 0b00010, 0b00010, 0b00010, 0b10010, 0b10010, 0b01100,
+        ],
+        'K' => [
+            0b10001, 0b10010, 0b10100, 0b11000, 0b10100, 0b10010, 0b10001,
         ],
         'L' => [
             0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b11111,
         ],
         'M' => [
-            0b10001, 0b11011, 0b10101, 0b10001, 0b10001, 0b10001, 0b10001,
+            0b10001, 0b11011, 0b10101, 0b10101, 0b10001, 0b10001, 0b10001,
         ],
         'N' => [
             0b10001, 0b11001, 0b10101, 0b10011, 0b10001, 0b10001, 0b10001,
@@ -1276,20 +2688,80 @@ fn glyph_5x7(c: char) -> [u8; 7] {
         'P' => [
             0b11110, 0b10001, 0b10001, 0b11110, 0b10000, 0b10000, 0b10000,
         ],
+        'Q' => [
+            0b01110, 0b10001, 0b10001, 0b10001, 0b10101, 0b10010, 0b01101,
+        ],
         'R' => [
             0b11110, 0b10001, 0b10001, 0b11110, 0b10100, 0b10010, 0b10001,
         ],
         'S' => [
             0b01111, 0b10000, 0b10000, 0b01110, 0b00001, 0b00001, 0b11110,
         ],
+        'T' => [
+            0b11111, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100,
+        ],
         'U' => [
             0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110,
+        ],
+        'V' => [
+            0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01010, 0b00100,
+        ],
+        'W' => [
+            0b10001, 0b10001, 0b10001, 0b10101, 0b10101, 0b10101, 0b01010,
         ],
         'X' => [
             0b10001, 0b10001, 0b01010, 0b00100, 0b01010, 0b10001, 0b10001,
         ],
+        'Y' => [
+            0b10001, 0b10001, 0b01010, 0b00100, 0b00100, 0b00100, 0b00100,
+        ],
+        'Z' => [
+            0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b10000, 0b11111,
+        ],
+        '0' => [
+            0b01110, 0b10001, 0b10011, 0b10101, 0b11001, 0b10001, 0b01110,
+        ],
+        '1' => [
+            0b00100, 0b01100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110,
+        ],
+        '2' => [
+            0b01110, 0b10001, 0b00001, 0b00110, 0b01000, 0b10000, 0b11111,
+        ],
+        '3' => [
+            0b11110, 0b00001, 0b00001, 0b01110, 0b00001, 0b00001, 0b11110,
+        ],
+        '4' => [
+            0b00010, 0b00110, 0b01010, 0b10010, 0b11111, 0b00010, 0b00010,
+        ],
+        '5' => [
+            0b11111, 0b10000, 0b10000, 0b11110, 0b00001, 0b00001, 0b11110,
+        ],
+        '6' => [
+            0b00110, 0b01000, 0b10000, 0b11110, 0b10001, 0b10001, 0b01110,
+        ],
+        '7' => [
+            0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b01000, 0b01000,
+        ],
+        '8' => [
+            0b01110, 0b10001, 0b10001, 0b01110, 0b10001, 0b10001, 0b01110,
+        ],
+        '9' => [
+            0b01110, 0b10001, 0b10001, 0b01111, 0b00001, 0b00010, 0b11100,
+        ],
         '-' => [
             0b00000, 0b00000, 0b00000, 0b11111, 0b00000, 0b00000, 0b00000,
+        ],
+        ':' => [
+            0b00000, 0b00100, 0b00100, 0b00000, 0b00100, 0b00100, 0b00000,
+        ],
+        '.' => [
+            0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00110, 0b00110,
+        ],
+        '_' => [
+            0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b11111,
+        ],
+        '|' => [
+            0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100,
         ],
         _ => [0; 7],
     }
@@ -1517,6 +2989,7 @@ pub struct MockRenderer {
     config: RenderBootstrapConfig,
     frames_rendered: u64,
     backend_ready: bool,
+    current_rhythm_snapshot: Option<rhythm_field::RhythmFieldSnapshot>,
 }
 
 impl MockRenderer {
@@ -1526,6 +2999,7 @@ impl MockRenderer {
             config,
             frames_rendered: 0,
             backend_ready,
+            current_rhythm_snapshot: None,
         }
     }
 
@@ -1548,6 +3022,36 @@ impl MockRenderer {
         self.config.backend_mode = mode;
         self.backend_ready = mode == RenderBackendMode::Mock;
         BackendTransition::Transitioned
+    }
+
+    pub fn set_rhythm_snapshot(&mut self, snapshot: rhythm_field::RhythmFieldSnapshot) {
+        self.current_rhythm_snapshot = Some(snapshot);
+    }
+
+    pub fn clear_rhythm_snapshot(&mut self) {
+        self.current_rhythm_snapshot = None;
+    }
+
+    pub fn rhythm_snapshot(&self) -> Option<rhythm_field::RhythmFieldSnapshot> {
+        self.current_rhythm_snapshot
+    }
+
+    pub fn world_debug_summary(&self) -> String {
+        let mut lines = vec![
+            format!("frames_rendered={}", self.frames_rendered),
+            format!("backend_mode={:?}", self.config.backend_mode),
+            format!("backend_ready={}", self.backend_ready),
+        ];
+
+        if let Some(rhythm) = self.current_rhythm_snapshot {
+            lines.push("Rhythm:".to_string());
+            lines.push(format!("pulse={:.2}", rhythm.pulse));
+            lines.push(format!("bass={:.2}", rhythm.bass_energy));
+            lines.push(format!("intensity={:.2}", rhythm.intensity));
+            lines.push(format!("accent={:.2}", rhythm.accent));
+        }
+
+        lines.join("\n")
     }
 
     pub fn run_frame(&mut self, stages: &[RenderStage]) -> RenderFrameStats {
@@ -2422,6 +3926,31 @@ mod tests {
     }
 
     #[test]
+    fn renderer_summary_reports_rhythm_state() {
+        let mut renderer = MockRenderer::new(RenderBootstrapConfig::default());
+        let summary_without = renderer.world_debug_summary();
+        assert!(!summary_without.contains("Rhythm:"));
+
+        renderer.set_rhythm_snapshot(rhythm_field::RhythmFieldSnapshot {
+            beat_phase: 0.2,
+            bar_phase: 0.4,
+            pulse: 0.82,
+            bass_energy: 0.61,
+            mid_energy: 0.45,
+            high_energy: 0.33,
+            intensity: 0.74,
+            accent: 0.18,
+        });
+
+        let summary = renderer.world_debug_summary();
+        assert!(summary.contains("Rhythm:"));
+        assert!(summary.contains("pulse=0.82"));
+        assert!(summary.contains("bass=0.61"));
+        assert!(summary.contains("intensity=0.74"));
+        assert!(summary.contains("accent=0.18"));
+    }
+
+    #[test]
     fn rasterized_boot_frame_contains_visible_pixels() {
         let frame = BootFrame {
             frame_index: 3,
@@ -2437,5 +3966,194 @@ mod tests {
 
         assert!(lit > 0);
         assert!(lit < image.pixel_count());
+    }
+
+    #[test]
+    fn runtime_render_debug_state_round_trips() {
+        let original = runtime_render_debug_state();
+
+        let updated = RuntimeRenderDebugState {
+            pulse_name: "megacity".to_string(),
+            scene_name: "particle_swirl".to_string(),
+            theme_name: "neon_night".to_string(),
+            profile_name: "dense_reactor".to_string(),
+            profile_geometry_density: 0.9,
+            profile_structure_height: 0.85,
+            profile_particle_density: 0.8,
+            profile_fog_density: 0.2,
+            profile_glow_intensity: 0.7,
+            starfield_enabled: true,
+            logo_enabled: false,
+            boot_active: false,
+        };
+
+        set_runtime_render_debug_state(updated.clone());
+        let observed = runtime_render_debug_state();
+
+        assert_eq!(observed, updated);
+
+        // Avoid leaking global state between tests.
+        set_runtime_render_debug_state(original);
+    }
+
+    #[test]
+    #[cfg(feature = "real_graphics")]
+    fn diagnostic_short_circuit_requires_procedural_mode() {
+        assert!(!should_short_circuit_procedural_setup(false, false));
+        assert!(!should_short_circuit_procedural_setup(false, true));
+        assert!(should_short_circuit_procedural_setup(true, true));
+    }
+
+    #[test]
+    #[cfg(feature = "real_graphics")]
+    fn bypass_flag_short_circuits_procedural_setup() {
+        assert!(should_short_circuit_procedural_setup(true, true));
+    }
+
+    #[test]
+    #[cfg(feature = "real_graphics")]
+    fn procedural_setup_runs_normally_without_toggles() {
+        assert!(!should_short_circuit_procedural_setup(true, false));
+    }
+
+    #[test]
+    #[cfg(feature = "real_graphics")]
+    fn render_mode_transitions_to_procedural_only_once() {
+        let mut mode = RuntimeRenderMode::Boot;
+        assert!(transition_to_procedural_once(&mut mode));
+        assert_eq!(mode, RuntimeRenderMode::Procedural);
+        assert!(!transition_to_procedural_once(&mut mode));
+        assert_eq!(mode, RuntimeRenderMode::Procedural);
+    }
+
+    #[test]
+    #[cfg(feature = "real_graphics")]
+    fn procedural_mode_persists_after_setup_completion() {
+        let mut mode = RuntimeRenderMode::Boot;
+        let setup_completed = true;
+        if setup_completed {
+            transition_to_procedural_once(&mut mode);
+        }
+
+        for _ in 0..5 {
+            assert_eq!(mode, RuntimeRenderMode::Procedural);
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "real_graphics")]
+    fn boot_mode_does_not_reassert_after_procedural_activation() {
+        let mut mode = RuntimeRenderMode::Boot;
+        transition_to_procedural_once(&mut mode);
+
+        let handoff_ready = false;
+        let handoff_started = true;
+        assert!(!handoff_starts_now(handoff_ready, handoff_started));
+        assert_eq!(mode, RuntimeRenderMode::Procedural);
+    }
+
+    #[test]
+    #[cfg(feature = "real_graphics")]
+    fn transition_side_effects_can_be_disabled_for_log_only_mode() {
+        assert!(should_execute_transition_side_effects(false));
+        assert!(!should_execute_transition_side_effects(true));
+    }
+
+    #[test]
+    #[cfg(feature = "real_graphics")]
+    fn repeated_transition_attempts_are_non_recursive_and_idempotent() {
+        let mut mode = RuntimeRenderMode::Boot;
+        let mut transitioned = 0usize;
+        for _ in 0..32 {
+            if transition_to_procedural_once(&mut mode) {
+                transitioned += 1;
+            }
+        }
+        assert_eq!(transitioned, 1);
+        assert_eq!(mode, RuntimeRenderMode::Procedural);
+    }
+
+    #[test]
+    #[cfg(feature = "real_graphics")]
+    fn stop_after_stage_is_honored() {
+        let controls = ProceduralSetupControls {
+            stop_after: Some(ProceduralSetupStage::BuildGenerator),
+            skip_root_tree_build: false,
+            skip_procedural_camera: false,
+        };
+        assert!(should_stop_after_stage(
+            controls,
+            ProceduralSetupStage::BuildGenerator
+        ));
+        assert!(!should_stop_after_stage(
+            controls,
+            ProceduralSetupStage::BuildCamera
+        ));
+    }
+    #[cfg(feature = "real_graphics")]
+    #[test]
+    fn invalid_runtime_scene_falls_back_without_crashing() {
+        let debug = RuntimeRenderDebugState {
+            pulse_name: "megacity".to_string(),
+            scene_name: "rings".to_string(),
+            theme_name: "Electronic".to_string(),
+            profile_name: "test".to_string(),
+            profile_geometry_density: 0.9,
+            profile_structure_height: 0.8,
+            profile_particle_density: 0.7,
+            profile_fog_density: 0.5,
+            profile_glow_intensity: 0.8,
+            starfield_enabled: false,
+            logo_enabled: false,
+            boot_active: false,
+        };
+
+        let mut scene = build_runtime_sdf_scene(
+            &debug,
+            0.0,
+            ProceduralSetupControls {
+                stop_after: None,
+                skip_root_tree_build: false,
+                skip_procedural_camera: false,
+            },
+        );
+        scene.sdf.camera.position.x = f32::NAN;
+        let (safe, fallback, shape_count) = validate_runtime_scene(scene, &debug);
+
+        assert!(fallback);
+        assert!(shape_count > 0);
+        assert!(count_primitives(&safe.sdf.root) > 0);
+        assert!(safe.sdf.camera.position.x.is_finite());
+    }
+
+    #[cfg(feature = "real_graphics")]
+    #[test]
+    fn rings_scene_generates_non_empty_geometry() {
+        let debug = RuntimeRenderDebugState {
+            pulse_name: "aurielle_intro".to_string(),
+            scene_name: "rings".to_string(),
+            theme_name: "Electronic".to_string(),
+            profile_name: "rings".to_string(),
+            profile_geometry_density: 0.7,
+            profile_structure_height: 0.7,
+            profile_particle_density: 0.6,
+            profile_fog_density: 0.3,
+            profile_glow_intensity: 0.9,
+            starfield_enabled: false,
+            logo_enabled: false,
+            boot_active: false,
+        };
+
+        let scene = build_runtime_sdf_scene(
+            &debug,
+            0.0,
+            ProceduralSetupControls {
+                stop_after: None,
+                skip_root_tree_build: false,
+                skip_procedural_camera: false,
+            },
+        );
+        assert!(count_primitives(&scene.sdf.root) > 0);
+        assert!(node_has_valid_modifiers(&scene.sdf.root));
     }
 }
