@@ -3453,6 +3453,254 @@ mod tests {
     }
 
     #[test]
+    fn generator_stack_drives_geometry_sdf_stage() {
+        let mut scene = sample_scene();
+        scene.sdf.root = SdfNode::Empty;
+        scene.sdf.generator = None;
+        scene.sdf.generator_stack = Some(generators::electronic_city_stack());
+
+        let (frame, diagnostics) = render_sdf_scene_with_diagnostics(
+            &scene,
+            RenderConfig {
+                width: 48,
+                height: 27,
+                time: RenderTime { seconds: 0.6 },
+                ..RenderConfig::default()
+            },
+        );
+
+        let geometry_ms = diagnostics
+            .stage_durations_ms
+            .get("GeometrySdf")
+            .copied()
+            .unwrap_or(0.0);
+
+        assert!(geometry_ms > 0.0);
+        assert!(
+            frame
+                .pixels
+                .iter()
+                .any(|px| px.r > 0 || px.g > 0 || px.b > 0)
+        );
+    }
+
+    #[test]
+    fn stop_after_each_sdf_stage_returns_valid_frame() {
+        let stages = [
+            SdfStage::ScenePreprocess,
+            SdfStage::EffectGraphEvaluation,
+            SdfStage::GeometrySdf,
+            SdfStage::MaterialPattern,
+            SdfStage::LightingAtmosphere,
+            SdfStage::Particles,
+            SdfStage::PostProcessing,
+            SdfStage::TemporalFeedback,
+        ];
+
+        for stage in stages {
+            let (frame, diagnostics) = render_sdf_scene_with_diagnostics(
+                &sample_scene(),
+                RenderConfig {
+                    width: 24,
+                    height: 16,
+                    stop_after_sdf_stage: Some(stage),
+                    ..RenderConfig::default()
+                },
+            );
+            assert_eq!(frame.width, 24);
+            assert_eq!(frame.height, 16);
+            assert_eq!(frame.pixels.len(), 24 * 16);
+            assert!(diagnostics.stages.contains(&stage.as_name()));
+        }
+    }
+
+    #[test]
+    fn geometry_sdf_stop_returns_safe_frame() {
+        let (frame, _) = render_sdf_scene_with_diagnostics(
+            &sample_scene(),
+            RenderConfig {
+                width: 18,
+                height: 10,
+                stop_after_sdf_stage: Some(SdfStage::GeometrySdf),
+                ..RenderConfig::default()
+            },
+        );
+        assert_eq!(frame.pixels.len(), 18 * 10);
+    }
+
+    #[test]
+    fn invalid_camera_returns_fallback_frame() {
+        let mut scene = sample_scene();
+        scene.sdf.camera.position.x = f32::NAN;
+        let (frame, diagnostics) = render_sdf_scene_with_diagnostics(
+            &scene,
+            RenderConfig {
+                width: 20,
+                height: 12,
+                ..RenderConfig::default()
+            },
+        );
+        assert_eq!(frame.width, 20);
+        assert_eq!(frame.height, 12);
+        assert_eq!(frame.pixels.len(), 20 * 12);
+        assert_eq!(
+            diagnostics
+                .stage_durations_ms
+                .get("GeometrySdf")
+                .copied()
+                .unwrap_or(-1.0),
+            0.0
+        );
+    }
+
+    #[test]
+    fn march_scene_terminates_on_non_finite_distance() {
+        let mut scene = sample_scene();
+        scene.sdf.root = SdfNode::Primitive {
+            object: SdfObject {
+                primitive: SdfPrimitive::Sphere { radius: f32::NAN },
+                modifiers: vec![],
+                material: SdfMaterial::default(),
+                bounds_radius: Some(1.0),
+            },
+        };
+        let hit = march_scene(
+            &scene,
+            V3::new(0.0, 0.0, -4.0),
+            V3::new(0.0, 0.0, 1.0),
+            RenderConfig {
+                max_steps: 32,
+                max_distance: 10.0,
+                ..RenderConfig::default()
+            },
+        );
+        assert!(hit.is_none());
+    }
+
+    #[test]
+    fn march_scene_outputs_finite_hit_when_present() {
+        let scene = sample_scene();
+        let hit = march_scene(
+            &scene,
+            V3::new(0.0, 0.0, -4.0),
+            V3::new(0.0, 0.0, 1.0),
+            RenderConfig {
+                max_steps: 8,
+                max_distance: 0.05,
+                surface_epsilon: 1e-6,
+                ..RenderConfig::default()
+            },
+        );
+        if let Some(hit) = hit {
+            assert!(hit.distance_traveled.is_finite());
+            assert!(hit.distance_traveled <= 0.05);
+            assert!(
+                hit.position.x.is_finite()
+                    && hit.position.y.is_finite()
+                    && hit.position.z.is_finite()
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_transform_does_not_crash_geometry_sdf() {
+        let mut scene = sample_scene();
+        scene.sdf.root = SdfNode::Transform {
+            modifiers: vec![SdfModifier::Scale { factor: f32::NAN }],
+            child: Box::new(SdfNode::Primitive {
+                object: SdfObject {
+                    primitive: SdfPrimitive::Sphere { radius: 1.0 },
+                    modifiers: vec![],
+                    material: SdfMaterial::default(),
+                    bounds_radius: Some(1.0),
+                },
+            }),
+            bounds_radius: Some(2.0),
+        };
+
+        let (frame, _) = render_sdf_scene_with_diagnostics(
+            &scene,
+            RenderConfig {
+                width: 20,
+                height: 12,
+                ..RenderConfig::default()
+            },
+        );
+
+        assert_eq!(frame.pixels.len(), 20 * 12);
+    }
+
+    #[test]
+    fn node_traversal_depth_limit_returns_safe_distance() {
+        let mut nested = SdfNode::Primitive {
+            object: SdfObject {
+                primitive: SdfPrimitive::Sphere { radius: 1.0 },
+                modifiers: vec![],
+                material: SdfMaterial::default(),
+                bounds_radius: Some(1.0),
+            },
+        };
+
+        for _ in 0..(MAX_NODE_EVAL_DEPTH + 16) {
+            nested = SdfNode::Transform {
+                modifiers: vec![SdfModifier::Translate {
+                    offset: Vec3::new(0.0, 0.0, 0.0),
+                }],
+                child: Box::new(nested),
+                bounds_radius: Some(10.0),
+            };
+        }
+
+        let eval = scene_distance(
+            &Scene {
+                sdf: aurex_scene::SdfScene {
+                    root: nested,
+                    ..sample_scene().sdf
+                },
+            },
+            V3::new(0.0, 0.0, 0.0),
+            0.0,
+            RenderConfig::default(),
+        );
+
+        assert!(eval.distance.is_finite());
+        assert!(eval.distance >= 0.0);
+    }
+
+    #[test]
+    fn bad_scene_data_still_returns_valid_framebuffer() {
+        let mut scene = sample_scene();
+        scene.sdf.root = SdfNode::Primitive {
+            object: SdfObject {
+                primitive: SdfPrimitive::Mandelbulb {
+                    power: f32::NAN,
+                    iterations: 32,
+                    bailout: 8.0,
+                },
+                modifiers: vec![SdfModifier::NoiseDisplacement {
+                    amplitude: f32::NAN,
+                    frequency: 1.0,
+                    seed: 1,
+                }],
+                material: SdfMaterial::default(),
+                bounds_radius: None,
+            },
+        };
+
+        let frame = render_sdf_scene_with_config(
+            &scene,
+            RenderConfig {
+                width: 16,
+                height: 9,
+                ..RenderConfig::default()
+            },
+        );
+        assert_eq!(frame.width, 16);
+        assert_eq!(frame.height, 9);
+        assert_eq!(frame.pixels.len(), 16 * 9);
+    }
+
+    #[test]
     fn smooth_min_blends_distances() {
         let hard = (-0.2f32).min(0.1);
         let smooth = smooth_min(-0.2, 0.1, 0.3);
