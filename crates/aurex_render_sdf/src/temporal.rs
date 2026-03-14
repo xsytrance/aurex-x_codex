@@ -78,6 +78,7 @@ impl From<SceneTemporalEffect> for TemporalEffect {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn apply_temporal_feedback(
     current: &[V3],
     depth: &[f32],
@@ -158,7 +159,11 @@ fn apply_effect(
     dominant_frequency: f32,
 ) {
     let beat_gain = 1.0 + fx.beat_sync.max(0.0) * beat_phase;
-    let measure_gate = if current_measure % 2 == 0 { 1.0 } else { 0.9 };
+    let measure_gate = if current_measure.is_multiple_of(2) {
+        1.0
+    } else {
+        0.9
+    };
     let harmonic = (0.6 + harmonic_energy * 0.4).clamp(0.4, 1.8);
     let freq_factor = (dominant_frequency / 440.0).clamp(0.3, 2.0);
     let strength =

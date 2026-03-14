@@ -204,7 +204,10 @@ dependencies = [
 name = "aurex_render"
 version = "0.1.0"
 dependencies = [
+ "aurex_audio",
  "aurex_core",
+ "aurex_render_sdf",
+ "aurex_scene",
  "pollster",
  "wgpu",
  "winit",
