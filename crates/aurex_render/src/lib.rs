@@ -536,12 +536,22 @@ fn validate_runtime_scene(
 }
 
 #[cfg(feature = "real_graphics")]
+#[derive(Debug, Clone)]
+struct ProceduralFrameDiagnostics {
+    shape_count: usize,
+    used_fallback: bool,
+    camera_position: Vec3,
+    camera_target: Vec3,
+    scene_name: String,
+}
+
+#[cfg(feature = "real_graphics")]
 fn rasterize_procedural_scene(
     width: u32,
     height: u32,
     elapsed: f32,
     debug_state: &RuntimeRenderDebugState,
-) -> BootFramebuffer {
+) -> (BootFramebuffer, ProceduralFrameDiagnostics) {
     let scene = build_runtime_sdf_scene(debug_state, elapsed);
     let (scene, used_fallback, shape_count) = validate_runtime_scene(scene, debug_state);
 
@@ -590,18 +600,36 @@ fn rasterize_procedural_scene(
             debug_state.profile_structure_height,
             debug_state.profile_glow_intensity,
         );
-        return BootFramebuffer {
-            width,
-            height,
-            rgba: vec![0; expected_len],
-        };
+        return (
+            BootFramebuffer {
+                width,
+                height,
+                rgba: vec![0; expected_len],
+            },
+            ProceduralFrameDiagnostics {
+                shape_count,
+                used_fallback,
+                camera_position: scene.sdf.camera.position,
+                camera_target: scene.sdf.camera.target,
+                scene_name: debug_state.scene_name.clone(),
+            },
+        );
     }
 
-    BootFramebuffer {
-        width,
-        height,
-        rgba,
-    }
+    (
+        BootFramebuffer {
+            width,
+            height,
+            rgba,
+        },
+        ProceduralFrameDiagnostics {
+            shape_count,
+            used_fallback,
+            camera_position: scene.sdf.camera.position,
+            camera_target: scene.sdf.camera.target,
+            scene_name: debug_state.scene_name.clone(),
+        },
+    )
 }
 
 #[cfg(feature = "real_graphics")]
@@ -687,9 +715,11 @@ where
         .to_boot_screen_sequence("AUREX-X", "Prime Pulse online");
     let start_time = std::time::Instant::now();
     let mut last_frame_time = start_time;
-    let mut scene_particles = vec![Particle::default(); 220];
-    let mut particle_cursor = 0usize;
-    let starfield = build_starfield(200);
+    let mut procedural_renderer_active = false;
+    let mut procedural_activation_logged = false;
+    let _scene_particles = vec![Particle::default(); 220];
+    let _particle_cursor = 0usize;
+    let _starfield = build_starfield(200);
 
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("Aurex-X Boot Texture Shader"),
@@ -897,67 +927,81 @@ fn fs_main(inf: VsOut) -> @location(0) vec4<f32> {
 
                         let now = std::time::Instant::now();
                         let elapsed = start_time.elapsed().as_secs_f32();
-                        let dt = (now - last_frame_time).as_secs_f32().clamp(0.0, 0.05);
+                        let _dt = (now - last_frame_time).as_secs_f32().clamp(0.0, 0.05);
                         last_frame_time = now;
                         let debug_state = runtime_render_debug_state();
-                        let runtime_pulse =
-                            (elapsed * std::f32::consts::TAU * 0.6).sin() * 0.5 + 0.5;
                         let timeline_idx = ((elapsed * 24.0) as usize) % timeline_frames.len();
                         let boot = &timeline_frames[timeline_idx];
                         let screen = &boot_screen.frames[timeline_idx % boot_screen.frames.len()];
 
-                        let boot_active = debug_state.boot_active && elapsed < 6.0;
-                        let mut cpu_frame = if boot_active && elapsed < 5.0 {
-                            let mut frame = rasterize_boot_frame(boot, config.width, config.height);
-                            overlay_boot_caption(
-                                &mut frame.rgba,
-                                config.width,
-                                config.height,
-                                screen,
-                            );
-                            frame
-                        } else if elapsed < 6.0 {
-                            let mut frame = rasterize_boot_frame(boot, config.width, config.height);
-                            overlay_boot_caption(
-                                &mut frame.rgba,
-                                config.width,
-                                config.height,
-                                screen,
-                            );
-                            let fade = (1.0 - (elapsed - 5.0)).clamp(0.0, 1.0);
-                            apply_fade_to_black(&mut frame.rgba, fade);
-                            frame
-                        } else if debug_state.boot_active && elapsed < 12.0 {
-                            rasterize_reveal_frame(config.width, config.height, elapsed - 6.0, boot)
+                        let handoff_ready = !debug_state.boot_active || elapsed >= 12.0;
+                        if handoff_ready {
+                            procedural_renderer_active = true;
+                        }
+
+                        let mut cpu_frame = if !procedural_renderer_active {
+                            if debug_state.boot_active && elapsed < 5.0 {
+                                let mut frame =
+                                    rasterize_boot_frame(boot, config.width, config.height);
+                                overlay_boot_caption(
+                                    &mut frame.rgba,
+                                    config.width,
+                                    config.height,
+                                    screen,
+                                );
+                                frame
+                            } else if debug_state.boot_active && elapsed < 6.0 {
+                                let mut frame =
+                                    rasterize_boot_frame(boot, config.width, config.height);
+                                overlay_boot_caption(
+                                    &mut frame.rgba,
+                                    config.width,
+                                    config.height,
+                                    screen,
+                                );
+                                let fade = (1.0 - (elapsed - 5.0)).clamp(0.0, 1.0);
+                                apply_fade_to_black(&mut frame.rgba, fade);
+                                frame
+                            } else {
+                                rasterize_reveal_frame(
+                                    config.width,
+                                    config.height,
+                                    (elapsed - 6.0).max(0.0),
+                                    boot,
+                                )
+                            }
                         } else {
                             let scene_time = if debug_state.boot_active {
                                 elapsed - 12.0
                             } else {
                                 elapsed
                             };
-                            let scene = select_runtime_scene(scene_time, &debug_state);
-                            let local_t = local_scene_time(scene_time);
-                            let procedural = rasterize_procedural_scene(
+                            let (procedural, proc_diag) = rasterize_procedural_scene(
                                 config.width,
                                 config.height,
                                 scene_time,
                                 &debug_state,
                             );
-                            if procedural.rgba.iter().any(|v| *v != 0) {
-                                procedural
-                            } else {
-                                rasterize_demo_scene(
-                                    config.width,
-                                    config.height,
-                                    scene,
-                                    local_t,
-                                    dt,
-                                    runtime_pulse,
-                                    &mut scene_particles,
-                                    &mut particle_cursor,
-                                    &starfield,
-                                )
+                            if !procedural_activation_logged {
+                                procedural_activation_logged = true;
+                                eprintln!(
+                                    "Procedural renderer activated scene={} shape_count={} geometry_density={:.2} scale={:.2} height={:.2} complexity={:.2} camera_pos=({:.2},{:.2},{:.2}) camera_target=({:.2},{:.2},{:.2}) fallback={}",
+                                    proc_diag.scene_name,
+                                    proc_diag.shape_count,
+                                    debug_state.profile_geometry_density,
+                                    debug_state.profile_particle_density,
+                                    debug_state.profile_structure_height,
+                                    debug_state.profile_glow_intensity,
+                                    proc_diag.camera_position.x,
+                                    proc_diag.camera_position.y,
+                                    proc_diag.camera_position.z,
+                                    proc_diag.camera_target.x,
+                                    proc_diag.camera_target.y,
+                                    proc_diag.camera_target.z,
+                                    proc_diag.used_fallback,
+                                );
                             }
+                            procedural
                         };
 
                         overlay_runtime_debug(
