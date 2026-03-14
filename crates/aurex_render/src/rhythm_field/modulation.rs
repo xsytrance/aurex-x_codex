@@ -27,6 +27,9 @@ impl Default for TerrainLayerParams {
 pub struct StructureLayerParams {
     pub density: f32,
     pub emissive: f32,
+    pub structure_scale: f32,
+    pub structure_height: f32,
+    pub structure_complexity: f32,
 }
 
 impl Default for StructureLayerParams {
@@ -34,6 +37,9 @@ impl Default for StructureLayerParams {
         Self {
             density: 0.5,
             emissive: 0.35,
+            structure_scale: 0.5,
+            structure_height: 0.5,
+            structure_complexity: 0.5,
         }
     }
 }
@@ -148,6 +154,21 @@ pub fn apply_rhythm_modulation(
             stack_output.structures.emissive,
             snapshot.accent,
             0.25 * w.structures,
+        ),
+        structure_scale: bounded_add(
+            stack_output.structures.structure_scale,
+            snapshot.bass_energy,
+            0.10 * w.structures,
+        ),
+        structure_height: bounded_add(
+            stack_output.structures.structure_height,
+            snapshot.intensity,
+            0.12 * w.structures,
+        ),
+        structure_complexity: bounded_add(
+            stack_output.structures.structure_complexity,
+            snapshot.high_energy,
+            0.14 * w.structures,
         ),
     };
 

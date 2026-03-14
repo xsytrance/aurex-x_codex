@@ -14,6 +14,10 @@ pub struct WorldBlueprint {
     pub theme: VisualTheme,
     pub palette_hint: String,
     pub camera_motion: String,
+    pub geometry_density: f32,
+    pub structure_scale: f32,
+    pub structure_height: f32,
+    pub structure_complexity: f32,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -119,14 +123,17 @@ impl PulseBuilder {
             config = apply_phase_overrides(&config, phase);
         }
 
+        let generator_output = build_generator_output(&config);
         let world_blueprint = WorldBlueprint {
             name: config.name.clone(),
             theme: config.theme,
             palette_hint: config.color_palette.clone(),
             camera_motion: camera_motion_label(config.camera_rig).to_string(),
+            geometry_density: generator_output.structures.density,
+            structure_scale: generator_output.structures.structure_scale,
+            structure_height: generator_output.structures.structure_height,
+            structure_complexity: generator_output.structures.structure_complexity,
         };
-
-        let generator_output = build_generator_output(&config);
         let sequencer_state = build_sequencer_state(config.theme);
         let rhythm_snapshot = sample_rhythm_field(config.seed, base_time, sequencer_state);
 
@@ -151,6 +158,8 @@ impl PulseBuilder {
 
 fn build_generator_output(config: &PulseConfig) -> GeneratorStackOutput {
     let density = structure_density_for_set(config.structure_set);
+    let (structure_scale, structure_height, structure_complexity) =
+        structure_shape_for_set(config.structure_set, config.geometry_style);
     let particle_intensity = config.particle_density_multiplier;
 
     let terrain = match config.geometry_style {
@@ -218,6 +227,9 @@ fn build_generator_output(config: &PulseConfig) -> GeneratorStackOutput {
         structures: StructureLayerParams {
             density,
             emissive: (0.14 + density * 0.68).clamp(0.0, 1.0),
+            structure_scale,
+            structure_height,
+            structure_complexity,
         },
         atmosphere,
         lighting,
@@ -250,6 +262,18 @@ fn blend_stack_output(
         structures: StructureLayerParams {
             density: lerp(base.structures.density, modulated.structures.density),
             emissive: lerp(base.structures.emissive, modulated.structures.emissive),
+            structure_scale: lerp(
+                base.structures.structure_scale,
+                modulated.structures.structure_scale,
+            ),
+            structure_height: lerp(
+                base.structures.structure_height,
+                modulated.structures.structure_height,
+            ),
+            structure_complexity: lerp(
+                base.structures.structure_complexity,
+                modulated.structures.structure_complexity,
+            ),
         },
         atmosphere: AtmosphereLayerParams {
             hue_drift: lerp(base.atmosphere.hue_drift, modulated.atmosphere.hue_drift),
@@ -276,6 +300,20 @@ fn blend_stack_output(
             drift: lerp(base.camera_hints.drift, modulated.camera_hints.drift),
             fov_bias: lerp(base.camera_hints.fov_bias, modulated.camera_hints.fov_bias),
         },
+    }
+}
+
+fn structure_shape_for_set(set: StructureSet, style: GeometryStyle) -> (f32, f32, f32) {
+    match (set, style) {
+        (StructureSet::Dense, GeometryStyle::City) => (0.82, 0.90, 0.86),
+        (StructureSet::Dense, GeometryStyle::Lounge) => (0.72, 0.70, 0.74),
+        (StructureSet::Dense, GeometryStyle::Dreamscape) => (0.68, 0.62, 0.66),
+        (StructureSet::Sparse, GeometryStyle::City) => (0.62, 0.76, 0.64),
+        (StructureSet::Sparse, GeometryStyle::Lounge) => (0.58, 0.52, 0.56),
+        (StructureSet::Sparse, GeometryStyle::Dreamscape) => (0.52, 0.42, 0.50),
+        (StructureSet::Minimal, GeometryStyle::City) => (0.46, 0.50, 0.44),
+        (StructureSet::Minimal, GeometryStyle::Lounge) => (0.40, 0.34, 0.38),
+        (StructureSet::Minimal, GeometryStyle::Dreamscape) => (0.34, 0.24, 0.30),
     }
 }
 

@@ -277,8 +277,11 @@ fn timeline_summary_lines(pulse_loop: &RuntimePulseLoop) -> Vec<String> {
             pulse_loop.audio_transport.active_tracks.join(",")
         ),
         format!(
-            "Timeline Visual Profile: geom={:.2} particles={:.2} fog={:.2} glow={:.2} stars={} logo={}",
+            "Timeline Visual Profile: geom={:.2} scale={:.2} height={:.2} complexity={:.2} particles={:.2} fog={:.2} glow={:.2} stars={} logo={}",
             pulse_loop.resolved_profile.geometry_density,
+            pulse_loop.resolved_profile.structure_scale,
+            pulse_loop.resolved_profile.structure_height,
+            pulse_loop.resolved_profile.structure_complexity,
             pulse_loop.resolved_profile.particle_density,
             pulse_loop.resolved_profile.fog_density,
             pulse_loop.resolved_profile.glow_intensity,
@@ -306,8 +309,15 @@ fn apply_scene_profile_to_pulse(
         profile.starfield_enabled,
         profile.logo_enabled
     );
+    pulse.world_blueprint.geometry_density = profile.geometry_density;
+    pulse.world_blueprint.structure_scale = profile.structure_scale;
+    pulse.world_blueprint.structure_height = profile.structure_height;
+    pulse.world_blueprint.structure_complexity = profile.structure_complexity;
 
     pulse.generator_output.structures.density = profile.geometry_density;
+    pulse.generator_output.structures.structure_scale = profile.structure_scale;
+    pulse.generator_output.structures.structure_height = profile.structure_height;
+    pulse.generator_output.structures.structure_complexity = profile.structure_complexity;
     pulse.generator_output.particles.density_multiplier = profile.particle_density;
     pulse.generator_output.atmosphere.fog_density = profile.fog_density;
     pulse.generator_output.lighting.flash_envelope = profile.glow_intensity;
@@ -315,6 +325,17 @@ fn apply_scene_profile_to_pulse(
     pulse.modulated_output.structures.density = (pulse.modulated_output.structures.density * 0.5
         + profile.geometry_density * 0.5)
         .clamp(0.0, 1.0);
+    pulse.modulated_output.structures.structure_scale =
+        (pulse.modulated_output.structures.structure_scale * 0.4 + profile.structure_scale * 0.6)
+            .clamp(0.0, 1.0);
+    pulse.modulated_output.structures.structure_height =
+        (pulse.modulated_output.structures.structure_height * 0.35
+            + profile.structure_height * 0.65)
+            .clamp(0.0, 1.0);
+    pulse.modulated_output.structures.structure_complexity =
+        (pulse.modulated_output.structures.structure_complexity * 0.45
+            + profile.structure_complexity * 0.55)
+            .clamp(0.0, 1.0);
     pulse.modulated_output.particles.density_multiplier =
         (pulse.modulated_output.particles.density_multiplier * 0.4
             + profile.particle_density * 0.6)
@@ -346,13 +367,14 @@ fn runtime_render_debug_state_for_loop(pulse_loop: &RuntimePulseLoop) -> Runtime
         scene_name: dominant_scene,
         theme_name: format!("{:?}", pulse_loop.pulse.world_blueprint.theme),
         profile_name: format!(
-            "geom:{:.2}|particles:{:.2}|fog:{:.2}|glow:{:.2}",
+            "geom:{:.2}|scale:{:.2}|height:{:.2}|particles:{:.2}",
             pulse_loop.resolved_profile.geometry_density,
-            pulse_loop.resolved_profile.particle_density,
-            pulse_loop.resolved_profile.fog_density,
-            pulse_loop.resolved_profile.glow_intensity
+            pulse_loop.resolved_profile.structure_scale,
+            pulse_loop.resolved_profile.structure_height,
+            pulse_loop.resolved_profile.particle_density
         ),
         profile_geometry_density: pulse_loop.resolved_profile.geometry_density,
+        profile_structure_height: pulse_loop.resolved_profile.structure_height,
         profile_particle_density: pulse_loop.resolved_profile.particle_density,
         profile_fog_density: pulse_loop.resolved_profile.fog_density,
         profile_glow_intensity: pulse_loop.resolved_profile.glow_intensity,
@@ -596,8 +618,21 @@ fn runtime_diagnostics_report(selected_pulse: &ExamplePulseConfig) -> String {
         selected_pulse.pulse_config.structure_set
     ));
     lines.push(format!(
-        "Geometry: structures_density={:.3}",
-        selected_pulse.modulated_output.structures.density
+        "WorldBlueprint Geometry: density={:.3} scale={:.3} height={:.3} complexity={:.3}",
+        selected_pulse.world_blueprint.geometry_density,
+        selected_pulse.world_blueprint.structure_scale,
+        selected_pulse.world_blueprint.structure_height,
+        selected_pulse.world_blueprint.structure_complexity
+    ));
+    lines.push(format!(
+        "Geometry: structures_density={:.3} scale={:.3} height={:.3} complexity={:.3}",
+        selected_pulse.modulated_output.structures.density,
+        selected_pulse.modulated_output.structures.structure_scale,
+        selected_pulse.modulated_output.structures.structure_height,
+        selected_pulse
+            .modulated_output
+            .structures
+            .structure_complexity
     ));
     lines.push(format!(
         "Atmosphere: fog_density={:.3}",
@@ -751,8 +786,11 @@ fn main() {
             println!("Timeline Scenes: {}", tick.active_scenes.join(" | "));
         }
         println!(
-            "Timeline Visual Params: geom={:.2} particles={:.2} fog={:.2} glow={:.2} stars={} logo={}",
+            "Timeline Visual Params: geom={:.2} scale={:.2} height={:.2} complexity={:.2} particles={:.2} fog={:.2} glow={:.2} stars={} logo={}",
             tick.resolved_profile.geometry_density,
+            tick.resolved_profile.structure_scale,
+            tick.resolved_profile.structure_height,
+            tick.resolved_profile.structure_complexity,
             tick.resolved_profile.particle_density,
             tick.resolved_profile.fog_density,
             tick.resolved_profile.glow_intensity,

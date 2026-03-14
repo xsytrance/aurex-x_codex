@@ -220,6 +220,7 @@ pub struct RuntimeRenderDebugState {
     pub theme_name: String,
     pub profile_name: String,
     pub profile_geometry_density: f32,
+    pub profile_structure_height: f32,
     pub profile_particle_density: f32,
     pub profile_fog_density: f32,
     pub profile_glow_intensity: f32,
@@ -236,6 +237,7 @@ impl Default for RuntimeRenderDebugState {
             theme_name: "unbound".to_string(),
             profile_name: "default".to_string(),
             profile_geometry_density: 0.5,
+            profile_structure_height: 0.5,
             profile_particle_density: 0.5,
             profile_fog_density: 0.4,
             profile_glow_intensity: 0.5,
@@ -1371,6 +1373,12 @@ fn overlay_runtime_debug(
         format!("SCENE: {}", state.scene_name),
         format!("THEME: {}", state.theme_name),
         format!("PROFILE: {}", state.profile_name),
+        format!(
+            "GEOM_DENSITY: {:.2} HEIGHT: {:.2} PARTICLES: {:.2}",
+            state.profile_geometry_density,
+            state.profile_structure_height,
+            state.profile_particle_density
+        ),
         format!("BOOT_ACTIVE: {}", state.boot_active),
     ] {
         draw_text(
@@ -2694,6 +2702,7 @@ mod tests {
             theme_name: "neon_night".to_string(),
             profile_name: "dense_reactor".to_string(),
             profile_geometry_density: 0.9,
+            profile_structure_height: 0.85,
             profile_particle_density: 0.8,
             profile_fog_density: 0.2,
             profile_glow_intensity: 0.7,

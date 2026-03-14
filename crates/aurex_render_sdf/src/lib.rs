@@ -2259,11 +2259,12 @@ impl std::ops::Div<f32> for V3 {
 #[cfg(test)]
 mod tests {
     use super::{
-        RenderConfig, RenderTime, evaluate_material, render_sdf_scene_with_config, smooth_min,
+        RenderConfig, RenderTime, evaluate_material, render_sdf_scene_with_config,
+        render_sdf_scene_with_diagnostics, smooth_min,
     };
     use aurex_scene::{
         Scene, SdfCamera, SdfLighting, SdfMaterial, SdfMaterialType, SdfModifier, SdfNode,
-        SdfObject, SdfPattern, SdfPrimitive, Vec3,
+        SdfObject, SdfPattern, SdfPrimitive, Vec3, generators,
         patterns::{
             PatternBinding, PatternComposeOp, PatternLayer, PatternNetwork, PatternNode,
             PatternParams, PatternPreset,
@@ -2500,6 +2501,38 @@ mod tests {
             },
         );
         assert_ne!(with_fx.pixels, no_fx.pixels);
+    }
+
+    #[test]
+    fn generator_stack_drives_geometry_sdf_stage() {
+        let mut scene = sample_scene();
+        scene.sdf.root = SdfNode::Empty;
+        scene.sdf.generator = None;
+        scene.sdf.generator_stack = Some(generators::electronic_city_stack());
+
+        let (frame, diagnostics) = render_sdf_scene_with_diagnostics(
+            &scene,
+            RenderConfig {
+                width: 48,
+                height: 27,
+                time: RenderTime { seconds: 0.6 },
+                ..RenderConfig::default()
+            },
+        );
+
+        let geometry_ms = diagnostics
+            .stage_durations_ms
+            .get("GeometrySdf")
+            .copied()
+            .unwrap_or(0.0);
+
+        assert!(geometry_ms > 0.0);
+        assert!(
+            frame
+                .pixels
+                .iter()
+                .any(|px| px.r > 0 || px.g > 0 || px.b > 0)
+        );
     }
 
     #[test]
