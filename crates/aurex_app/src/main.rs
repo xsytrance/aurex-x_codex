@@ -403,6 +403,32 @@ fn should_unlock_audio(post_handoff_frames: usize, warmup_frames: usize) -> bool
     post_handoff_frames >= warmup_frames
 }
 
+fn env_flag_true(value: &str) -> bool {
+    let lowered = value.trim().to_ascii_lowercase();
+    matches!(lowered.as_str(), "1" | "true" | "yes" | "on")
+}
+
+fn audio_enabled_from_env() -> bool {
+    !audio_disabled_from_env_value(std::env::var("AUREX_DISABLE_AUDIO").ok().as_deref())
+}
+
+fn audio_disabled_from_env_value(value: Option<&str>) -> bool {
+    value.map(env_flag_true).unwrap_or(false)
+}
+
+fn should_attempt_audio_unlock(
+    audio_enabled: bool,
+    handoff_ready: bool,
+    pulse_audio_unlocked: bool,
+    post_handoff_frames: usize,
+    warmup_frames: usize,
+) -> bool {
+    audio_enabled
+        && handoff_ready
+        && !pulse_audio_unlocked
+        && should_unlock_audio(post_handoff_frames, warmup_frames)
+}
+
 fn boot_audio_config(seed: u32) -> ProceduralAudioConfig {
     let mut cfg = default_demo_audio_config(seed);
     cfg.tempo = 96.0;
@@ -796,15 +822,25 @@ fn main() {
         println!("{line}");
     }
 
-    let runtime_audio = match start_runtime_pulse_output(boot_audio_config(options.seed as u32)) {
-        Ok(audio) => {
-            println!("audio_runtime=started detail:cpal stream active");
-            Some(audio)
+    let audio_enabled = audio_enabled_from_env();
+    if !audio_enabled {
+        println!("Audio runtime disabled by env");
+        println!("audio_enabled=false");
+    }
+
+    let runtime_audio = if audio_enabled {
+        match start_runtime_pulse_output(boot_audio_config(options.seed as u32)) {
+            Ok(audio) => {
+                println!("audio_runtime=started detail:cpal stream active");
+                Some(audio)
+            }
+            Err(err) => {
+                eprintln!("audio_runtime=error detail:{err}");
+                None
+            }
         }
-        Err(err) => {
-            eprintln!("audio_runtime=error detail:{err}");
-            None
-        }
+    } else {
+        None
     };
 
     let procedural_warmup_frames = procedural_warmup_frames_from_env();
@@ -845,10 +881,13 @@ fn main() {
             }
         }
 
-        if handoff_ready
-            && !pulse_audio_unlocked
-            && should_unlock_audio(post_handoff_frames, procedural_warmup_frames)
-        {
+        if should_attempt_audio_unlock(
+            audio_enabled,
+            handoff_ready,
+            pulse_audio_unlocked,
+            post_handoff_frames,
+            procedural_warmup_frames,
+        ) {
             pulse_audio_unlocked = true;
             if let Some(audio) = runtime_audio.as_ref() {
                 audio.set_procedural_config(pulse_audio_config_for(&pulse_loop.pulse));
@@ -904,9 +943,10 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::{
-        BOOT_HANDOFF_SECONDS, DEFAULT_SEED, RuntimePulseLoop, available_pulse_names,
-        create_pulse_at_time, parse_runtime_options, runtime_diagnostics_report,
-        runtime_handoff_ready, runtime_render_debug_state_for_loop, should_unlock_audio,
+        BOOT_HANDOFF_SECONDS, DEFAULT_SEED, RuntimePulseLoop, audio_disabled_from_env_value,
+        available_pulse_names, create_pulse_at_time, env_flag_true, parse_runtime_options,
+        runtime_diagnostics_report, runtime_handoff_ready, runtime_render_debug_state_for_loop,
+        should_attempt_audio_unlock, should_unlock_audio,
     };
 
     #[test]
@@ -1047,6 +1087,30 @@ mod tests {
         assert!(!should_unlock_audio(119, 120));
         assert!(should_unlock_audio(120, 120));
         assert!(should_unlock_audio(121, 120));
+    }
+
+    #[test]
+    fn disable_audio_env_toggle_is_parsed() {
+        assert!(env_flag_true("1"));
+        assert!(env_flag_true("true"));
+        assert!(env_flag_true("YES"));
+        assert!(!env_flag_true("0"));
+        assert!(!env_flag_true("false"));
+    }
+
+    #[test]
+    fn unlock_is_never_attempted_when_audio_disabled() {
+        assert!(!should_attempt_audio_unlock(true, true, true, 120, 120));
+        assert!(!should_attempt_audio_unlock(false, true, false, 120, 120));
+        assert!(should_attempt_audio_unlock(true, true, false, 120, 120));
+    }
+
+    #[test]
+    fn audio_disable_env_value_drives_disable_state() {
+        assert!(audio_disabled_from_env_value(Some("1")));
+        assert!(audio_disabled_from_env_value(Some("true")));
+        assert!(!audio_disabled_from_env_value(Some("0")));
+        assert!(!audio_disabled_from_env_value(None));
     }
 
     #[test]
