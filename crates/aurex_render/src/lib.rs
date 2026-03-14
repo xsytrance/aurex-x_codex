@@ -418,6 +418,20 @@ fn fallback_runtime_scene(debug_state: &RuntimeRenderDebugState) -> Scene {
 }
 
 #[cfg(feature = "real_graphics")]
+fn safe_first_procedural_state(debug_state: &RuntimeRenderDebugState) -> RuntimeRenderDebugState {
+    let mut safe = debug_state.clone();
+    safe.scene_name = "unbound".to_string();
+    safe.profile_geometry_density = 0.22;
+    safe.profile_particle_density = 0.08;
+    safe.profile_structure_height = 0.18;
+    safe.profile_fog_density = 0.10;
+    safe.profile_glow_intensity = 0.14;
+    safe.starfield_enabled = false;
+    safe.logo_enabled = false;
+    safe
+}
+
+#[cfg(feature = "real_graphics")]
 fn build_runtime_sdf_scene(debug_state: &RuntimeRenderDebugState, elapsed: f32) -> Scene {
     let stack: GeneratorStack = match debug_state.scene_name.as_str() {
         "rings" => generators::electronic_city_stack(),
@@ -717,6 +731,7 @@ where
     let mut last_frame_time = start_time;
     let mut procedural_renderer_active = false;
     let mut procedural_activation_logged = false;
+    let mut last_boot_log_second: i32 = -1;
     let _scene_particles = vec![Particle::default(); 220];
     let _particle_cursor = 0usize;
     let _starfield = build_starfield(200);
@@ -934,9 +949,30 @@ fn fs_main(inf: VsOut) -> @location(0) vec4<f32> {
                         let boot = &timeline_frames[timeline_idx];
                         let screen = &boot_screen.frames[timeline_idx % boot_screen.frames.len()];
 
-                        let handoff_ready = !debug_state.boot_active || elapsed >= 12.0;
+                        let handoff_ready = !debug_state.boot_active && elapsed >= 12.0;
                         if handoff_ready {
                             procedural_renderer_active = true;
+                        }
+
+                        let render_mode = if procedural_renderer_active {
+                            "PROCEDURAL"
+                        } else {
+                            "BOOT"
+                        };
+
+                        if !procedural_renderer_active {
+                            let now_second = elapsed.floor() as i32;
+                            if now_second != last_boot_log_second {
+                                last_boot_log_second = now_second;
+                                eprintln!(
+                                    "Boot renderer active at t={:.2} mode={} handoff_ready={} active_scene={} boot_active={}",
+                                    elapsed,
+                                    render_mode,
+                                    handoff_ready,
+                                    debug_state.scene_name,
+                                    debug_state.boot_active,
+                                );
+                            }
                         }
 
                         let mut cpu_frame = if !procedural_renderer_active {
@@ -976,22 +1012,37 @@ fn fs_main(inf: VsOut) -> @location(0) vec4<f32> {
                             } else {
                                 elapsed
                             };
+                            let force_safe_first_frame = !procedural_activation_logged;
+                            let first_frame_state;
+                            let scene_state = if force_safe_first_frame {
+                                first_frame_state = safe_first_procedural_state(&debug_state);
+                                &first_frame_state
+                            } else {
+                                &debug_state
+                            };
+
                             let (procedural, proc_diag) = rasterize_procedural_scene(
                                 config.width,
                                 config.height,
                                 scene_time,
-                                &debug_state,
+                                scene_state,
                             );
                             if !procedural_activation_logged {
                                 procedural_activation_logged = true;
                                 eprintln!(
-                                    "Procedural renderer activated scene={} shape_count={} geometry_density={:.2} scale={:.2} height={:.2} complexity={:.2} camera_pos=({:.2},{:.2},{:.2}) camera_target=({:.2},{:.2},{:.2}) fallback={}",
+                                    "Procedural renderer activated at t={:.2} mode={} handoff_ready={} active_scene={} boot_active={} forced_safe_frame={} scene={} shape_count={} geometry_density={:.2} scale={:.2} height={:.2} complexity={:.2} camera_pos=({:.2},{:.2},{:.2}) camera_target=({:.2},{:.2},{:.2}) fallback={}",
+                                    elapsed,
+                                    render_mode,
+                                    handoff_ready,
+                                    debug_state.scene_name,
+                                    debug_state.boot_active,
+                                    force_safe_first_frame,
                                     proc_diag.scene_name,
                                     proc_diag.shape_count,
-                                    debug_state.profile_geometry_density,
-                                    debug_state.profile_particle_density,
-                                    debug_state.profile_structure_height,
-                                    debug_state.profile_glow_intensity,
+                                    scene_state.profile_geometry_density,
+                                    scene_state.profile_particle_density,
+                                    scene_state.profile_structure_height,
+                                    scene_state.profile_glow_intensity,
                                     proc_diag.camera_position.x,
                                     proc_diag.camera_position.y,
                                     proc_diag.camera_position.z,
@@ -1009,6 +1060,8 @@ fn fs_main(inf: VsOut) -> @location(0) vec4<f32> {
                             config.width,
                             config.height,
                             &debug_state,
+                            render_mode,
+                            handoff_ready,
                         );
 
                         let expected_bytes = (config.width as usize) * (config.height as usize) * 4;
@@ -1770,6 +1823,8 @@ fn overlay_runtime_debug(
     width: u32,
     height: u32,
     state: &RuntimeRenderDebugState,
+    render_mode: &str,
+    handoff_ready: bool,
 ) {
     if width < 200 || height < 100 {
         return;
@@ -1780,6 +1835,8 @@ fn overlay_runtime_debug(
     for line in [
         format!("PULSE: {}", state.pulse_name),
         format!("SCENE: {}", state.scene_name),
+        format!("RENDER_MODE: {render_mode}"),
+        format!("HANDOFF_READY: {handoff_ready}"),
         format!("THEME: {}", state.theme_name),
         format!("PROFILE: {}", state.profile_name),
         format!(

@@ -36,6 +36,7 @@ use timeline::{
 
 const DEFAULT_PULSE_NAME: &str = "megacity";
 const DEFAULT_SEED: u64 = 2026;
+const BOOT_HANDOFF_SECONDS: f32 = 12.0;
 const AVAILABLE_PULSE_NAMES: [&str; 4] = ["megacity", "jazz", "ambient", "aurielle_intro"];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -381,8 +382,18 @@ fn runtime_render_debug_state_for_loop(pulse_loop: &RuntimePulseLoop) -> Runtime
         profile_glow_intensity: pulse_loop.resolved_profile.glow_intensity,
         starfield_enabled: pulse_loop.resolved_profile.starfield_enabled,
         logo_enabled: pulse_loop.resolved_profile.logo_enabled,
-        boot_active: pulse_loop.clock.time_seconds < 1.25,
+        boot_active: pulse_loop.clock.time_seconds < BOOT_HANDOFF_SECONDS,
     }
+}
+
+fn runtime_handoff_ready(pulse_loop: &RuntimePulseLoop) -> bool {
+    pulse_loop.clock.time_seconds >= BOOT_HANDOFF_SECONDS
+}
+
+fn boot_audio_config(seed: u32) -> ProceduralAudioConfig {
+    let mut cfg = default_demo_audio_config(seed);
+    cfg.tempo = 96.0;
+    cfg
 }
 
 fn pulse_audio_config_for(pulse: &ExamplePulseConfig) -> ProceduralAudioConfig {
@@ -772,8 +783,7 @@ fn main() {
         println!("{line}");
     }
 
-    let runtime_audio = match start_runtime_pulse_output(pulse_audio_config_for(&pulse_loop.pulse))
-    {
+    let runtime_audio = match start_runtime_pulse_output(boot_audio_config(options.seed as u32)) {
         Ok(audio) => {
             println!("audio_runtime=started detail:cpal stream active");
             Some(audio)
@@ -785,14 +795,32 @@ fn main() {
     };
 
     let runtime_audio = runtime_audio;
+    let mut pulse_audio_unlocked = false;
     set_runtime_render_debug_state(runtime_render_debug_state_for_loop(&pulse_loop));
     if let Err(err) = run_real_renderer_event_loop_with_frame_hook(move |t| {
         let tick = pulse_loop.update(t);
-        set_runtime_render_debug_state(runtime_render_debug_state_for_loop(&pulse_loop));
+        let render_debug_state = runtime_render_debug_state_for_loop(&pulse_loop);
+        let handoff_ready = runtime_handoff_ready(&pulse_loop);
+        set_runtime_render_debug_state(render_debug_state.clone());
+
+        if handoff_ready && !pulse_audio_unlocked {
+            pulse_audio_unlocked = true;
+            if let Some(audio) = runtime_audio.as_ref() {
+                audio.set_procedural_config(pulse_audio_config_for(&pulse_loop.pulse));
+                println!(
+                    "Audio procedural config unlocked at t={:.2} handoff_ready={} active_scene={} boot_active={}",
+                    pulse_loop.clock.time_seconds,
+                    handoff_ready,
+                    render_debug_state.scene_name,
+                    render_debug_state.boot_active,
+                );
+            }
+        }
+
         if let Some(phase_name) = tick.phase_change {
             println!("Phase Change: {}", phase_name);
             println!("{}", runtime_diagnostics_report(&pulse_loop.pulse));
-            if let Some(audio) = runtime_audio.as_ref() {
+            if pulse_audio_unlocked && let Some(audio) = runtime_audio.as_ref() {
                 audio.set_procedural_config(pulse_audio_config_for(&pulse_loop.pulse));
             }
         }
@@ -952,7 +980,7 @@ mod tests {
         let mut pulse_loop = RuntimePulseLoop::new("aurielle_intro", DEFAULT_SEED);
         let _ = pulse_loop.update(0.5);
         assert!(runtime_render_debug_state_for_loop(&pulse_loop).boot_active);
-        let _ = pulse_loop.update(2.0);
+        let _ = pulse_loop.update(12.1);
         assert!(!runtime_render_debug_state_for_loop(&pulse_loop).boot_active);
     }
 
