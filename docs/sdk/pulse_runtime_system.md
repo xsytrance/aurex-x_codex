@@ -21,6 +21,12 @@ Pulse runtime **orchestrates existing systems** rather than replacing them:
 - existing generator/effect graph/automation/timeline/demo/camera stack
 - existing renderer diagnostics
 
+## Planner bridge
+Pulse orchestration currently treats planning outputs as upstream inputs:
+- `WorldBlueprint` captures high-level world intent.
+- `GeneratorStack` deterministically expands it into scene parameters consumed by rendering.
+- `RenderTheme` is the style bridge between ExperiencePlanner intent and renderer-facing configuration.
+
 ## Rendering pipeline
 Pulse runtime invokes the existing renderer pipeline unchanged:
 - ScenePreprocess
@@ -106,3 +112,15 @@ Runtime outputs:
 - modulation hooks (`prime_pulse_intensity`, `prime_pulse_proximity`)
 
 This remains logic/diagnostics only (no renderer stage changes, no heavy world mutation yet).
+
+## Pulse Timeline System (app runtime integration)
+`crates/aurex_app` now includes a lightweight timeline orchestration layer for scripted intros (for example `aurielle_intro`):
+
+- `TimelineClock` (deterministic fixed-step global time)
+- `PulseTimeline` (ordered timestamped events)
+- `EventScheduler` (fire-once event triggering)
+- `SceneManager` (scene layers + transition progression)
+- `TransitionEngine` primitives (`fade`, `crossfade`, `dissolve`, `additive overlay`)
+- `AudioTransport` (timestamped play/stop/one-shot cues)
+
+This system coordinates scene activation, transitions, reveal triggers, and audio cues from one clock while preserving the existing renderer pipeline stage order.
