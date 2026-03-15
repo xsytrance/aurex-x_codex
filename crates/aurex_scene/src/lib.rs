@@ -10,6 +10,7 @@ pub mod harmonics;
 pub mod patterns;
 pub mod scene_generator;
 pub mod transition;
+pub mod typography_generator;
 
 use aurex_audio::ProceduralAudioConfig;
 use serde::{Deserialize, Serialize};
