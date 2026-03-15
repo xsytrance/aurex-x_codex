@@ -112,50 +112,46 @@ fn main() {
 }
 
 fn run_boot_mode() {
-    println!("=== BOOT MODE ACTIVE ===");
     println!("Boot mode started. Type 'exit' (or 'esc') + Enter to quit.");
     println!("Library screen controls: empty line/'enter' triggers demo placeholder.");
 
     let mut boot_runtime = BootRuntime::new(2026);
-
-    // Create a runner so the renderer has something to render
-    let scene = boot_runtime.scene.clone();
-
-    let mut runner = PulseRunner::load(
-        PulseDefinition {
-            metadata: PulseMetadata {
-                title: "AUREX Boot".to_string(),
-                author: "Aurex".to_string(),
-                description: "Boot cinematic".to_string(),
-                tags: vec!["boot".to_string()],
-                seed: scene.sdf.seed,
-                pulse_kind: PulseKind::VisualMusic,
-                duration_hint: None,
-                interactivity: Interactivity::Passive,
-                prime_affinity: None,
-            },
-            pulse_kind: PulseKind::VisualMusic,
-            scene: PulseSceneSource::Inline(scene),
-            audio: None,
-            timeline: None,
-            generators: vec![],
-            music: None,
-            boot_world: None,
-            parameters: Default::default(),
-        },
-        None,
-    )
-    .expect("boot runner failed");
-
-    runner.initialize();
-
     let input_rx = spawn_input_listener();
-
     let should_exit = Arc::new(AtomicBool::new(false));
     let should_exit_hook = Arc::clone(&should_exit);
 
-    let mut last_time = 0.0_f32;
+    let definition = PulseDefinition {
+        metadata: PulseMetadata {
+            title: "Aurex-X Boot Runtime".to_string(),
+            author: "Aurex".to_string(),
+            description: "Deterministic cinematic boot and library screen".to_string(),
+            tags: vec!["boot".to_string(), "library".to_string()],
+            seed: boot_runtime.scene.sdf.seed,
+            pulse_kind: PulseKind::VisualMusic,
+            duration_hint: Some(30.0),
+            interactivity: Interactivity::Hybrid,
+            prime_affinity: None,
+        },
+        pulse_kind: PulseKind::VisualMusic,
+        scene: PulseSceneSource::Inline(boot_runtime.scene.clone()),
+        audio: None,
+        timeline: None,
+        generators: vec![],
+        music: None,
+        boot_world: None,
+        parameters: Default::default(),
+    };
 
+    let mut runner = match PulseRunner::load(definition, None) {
+        Ok(r) => r,
+        Err(err) => {
+            eprintln!("boot_runtime=error detail:{err}");
+            return;
+        }
+    };
+    runner.initialize();
+
+    let mut last_time = 0.0_f32;
     if let Err(err) = run_real_renderer_event_loop_with_frame_hook(move |t| {
         let dt = (t - last_time).max(0.0);
         last_time = t;
@@ -163,7 +159,6 @@ fn run_boot_mode() {
         while let Ok(cmd) = input_rx.try_recv() {
             match cmd {
                 InputCommand::Exit => should_exit_hook.store(true, Ordering::Relaxed),
-
                 InputCommand::LaunchDemoPulse => {
                     if boot_runtime.screen_mode() == BootScreenMode::Library {
                         println!("[ Launch Demo Pulse ] placeholder activated.");
@@ -177,12 +172,8 @@ fn run_boot_mode() {
         }
 
         boot_runtime.update(dt);
-        boot_runtime.scene.sdf.objects.clear();
-
-        // Replace the scene entirely
         runner.scene = boot_runtime.scene.clone();
-
-        // Render it
+        runner.update(dt);
         let _frame = runner.render(RenderConfig::default());
 
         if boot_runtime.screen_mode() == BootScreenMode::Library {
@@ -263,6 +254,7 @@ mod tests {
             parse_runtime_options(vec!["boot".to_string()]).expect("boot mode should parse");
         assert_eq!(options.mode, RuntimeMode::Boot);
     }
+}
 
     #[test]
     fn runtime_supports_midi_demo_mode() {
