@@ -5,7 +5,7 @@ use aurex_scene::{
     typography_generator::TypographyGenerator,
 };
 
-const STAR_COUNT: usize = 2400;
+const STAR_COUNT: usize = 420;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BootScreenMode {
@@ -241,43 +241,44 @@ impl BootRuntime {
         let visible_stars = ((self.stars.len() as f32) * fade).round() as usize;
 
         let mut children = Vec::with_capacity(visible_stars + self.planets.len() * 2 + 280);
+        let mut objects = Vec::with_capacity(visible_stars + self.planets.len() * 2 + 1);
 
-        children.push(SdfNode::Primitive {
-            object: SdfObject {
-                primitive: SdfPrimitive::Sphere { radius: 2.0 },
-                modifiers: vec![],
-                material: SdfMaterial {
-                    material_type: SdfMaterialType::SolidColor,
-                    base_color: Vec3::new(0.9, 0.4, 0.5),
-                    emissive_strength: 0.35,
-                    ..SdfMaterial::default()
-                },
-                bounds_radius: Some(2.5),
+        let debug_sphere = SdfObject {
+            primitive: SdfPrimitive::Sphere { radius: 2.0 },
+            modifiers: vec![],
+            material: SdfMaterial {
+                material_type: SdfMaterialType::SolidColor,
+                base_color: Vec3::new(0.9, 0.4, 0.5),
+                emissive_strength: 0.35,
+                ..SdfMaterial::default()
             },
+            bounds_radius: Some(2.5),
+        };
+        children.push(SdfNode::Primitive {
+            object: debug_sphere.clone(),
         });
+        objects.push(debug_sphere);
 
         for star in self.stars.iter().take(visible_stars) {
-            children.push(SdfNode::Transform {
+            let star_object = SdfObject {
+                primitive: SdfPrimitive::Sphere {
+                    radius: star.radius,
+                },
                 modifiers: vec![SdfModifier::Translate {
                     offset: Vec3::new(star.position[0], star.position[1], star.position[2]),
                 }],
-                child: Box::new(SdfNode::Primitive {
-                    object: SdfObject {
-                        primitive: SdfPrimitive::Sphere {
-                            radius: star.radius,
-                        },
-                        modifiers: vec![],
-                        material: SdfMaterial {
-                            material_type: SdfMaterialType::SolidColor,
-                            base_color: Vec3::new(0.8, 0.9, 1.0),
-                            emissive_strength: star.emissive * fade,
-                            ..SdfMaterial::default()
-                        },
-                        bounds_radius: Some(star.radius * 4.0),
-                    },
-                }),
+                material: SdfMaterial {
+                    material_type: SdfMaterialType::SolidColor,
+                    base_color: Vec3::new(0.8, 0.9, 1.0),
+                    emissive_strength: star.emissive * fade,
+                    ..SdfMaterial::default()
+                },
                 bounds_radius: Some(star.radius * 4.0),
+            };
+            children.push(SdfNode::Primitive {
+                object: star_object.clone(),
             });
+            objects.push(star_object);
         }
 
         if stage != BootStage::StarfieldFadeIn {
@@ -289,68 +290,48 @@ impl BootRuntime {
                 let y = planet.height;
                 let radius = planet.radius * (0.4 + 0.6 * appear);
 
-                children.push(SdfNode::Transform {
+                let planet_core = SdfObject {
+                    primitive: SdfPrimitive::Sphere { radius },
                     modifiers: vec![SdfModifier::Translate {
                         offset: Vec3::new(x, y, z),
                     }],
-                    child: Box::new(SdfNode::Primitive {
-                        object: SdfObject {
-                            primitive: SdfPrimitive::Sphere { radius },
-                            modifiers: vec![],
-                            material: SdfMaterial {
-                                material_type: SdfMaterialType::SolidColor,
-                                base_color: Vec3::new(
-                                    planet.color[0],
-                                    planet.color[1],
-                                    planet.color[2],
-                                ),
-                                emissive_strength: 0.05 + appear * 0.06,
-                                ..SdfMaterial::default()
-                            },
-                            bounds_radius: Some(radius + 0.2),
-                        },
-                    }),
+                    material: SdfMaterial {
+                        material_type: SdfMaterialType::SolidColor,
+                        base_color: Vec3::new(planet.color[0], planet.color[1], planet.color[2]),
+                        emissive_strength: 0.05 + appear * 0.06,
+                        ..SdfMaterial::default()
+                    },
                     bounds_radius: Some(radius + 0.2),
+                };
+                children.push(SdfNode::Primitive {
+                    object: planet_core.clone(),
                 });
+                objects.push(planet_core);
 
-                children.push(SdfNode::Transform {
+                let planet_glow = SdfObject {
+                    primitive: SdfPrimitive::Sphere {
+                        radius: radius * 1.08,
+                    },
                     modifiers: vec![SdfModifier::Translate {
                         offset: Vec3::new(x, y, z),
                     }],
-                    child: Box::new(SdfNode::Primitive {
-                        object: SdfObject {
-                            primitive: SdfPrimitive::Sphere {
-                                radius: radius * 1.08,
-                            },
-                            modifiers: vec![],
-                            material: SdfMaterial {
-                                material_type: SdfMaterialType::SolidColor,
-                                base_color: Vec3::new(0.28, 0.36, 0.55),
-                                emissive_strength: 0.02 + appear * 0.03,
-                                ..SdfMaterial::default()
-                            },
-                            bounds_radius: Some(radius * 1.12),
-                        },
-                    }),
+                    material: SdfMaterial {
+                        material_type: SdfMaterialType::SolidColor,
+                        base_color: Vec3::new(0.28, 0.36, 0.55),
+                        emissive_strength: 0.02 + appear * 0.03,
+                        ..SdfMaterial::default()
+                    },
                     bounds_radius: Some(radius * 1.12),
+                };
+                children.push(SdfNode::Primitive {
+                    object: planet_glow.clone(),
                 });
+                objects.push(planet_glow);
             }
         }
 
         self.scene.sdf.root = SdfNode::Union { children };
-        self.scene.sdf.objects = vec![SdfObject {
-            primitive: SdfPrimitive::Sphere { radius: 2.0 },
-            modifiers: vec![SdfModifier::Translate {
-                offset: Vec3::new(0.0, 0.0, 0.0),
-            }],
-            material: SdfMaterial {
-                material_type: SdfMaterialType::SolidColor,
-                base_color: Vec3::new(0.85, 0.45, 0.5),
-                emissive_strength: 0.3,
-                ..SdfMaterial::default()
-            },
-            bounds_radius: Some(2.5),
-        }];
+        self.scene.sdf.objects = objects;
         self.particle_swarm.apply_to_scene(&mut self.scene);
     }
 }
