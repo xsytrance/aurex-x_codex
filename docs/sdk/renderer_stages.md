@@ -22,3 +22,13 @@ Each stage records elapsed time in diagnostics:
 - `FrameDiagnostics.total_frame_time_ms`
 
 When `AUREX_DIAGNOSTICS=1`, the example runner prints stage duration and percentage of total frame time for each stage.
+
+## GeometrySdf operational modes
+
+GeometrySdf now has an explicit mode contract used during stabilization:
+
+- `flat`
+- `safe` (default)
+- `legacy`
+
+See `docs/sdk/runtime_debug_flags.md` for environment controls and defaults.

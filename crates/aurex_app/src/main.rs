@@ -1,6 +1,7 @@
 mod pulse_builder;
 mod pulse_sequence;
 mod pulses;
+mod runtime_flags;
 mod timeline;
 
 use aurex_audio::{
@@ -10,6 +11,11 @@ use aurex_conductor::{ConductorClock, ConductorStage, MAIN_LOOP_STAGES, execute_
 use aurex_ecs::{CommandBuffer, EcsCommand, EcsWorld, EntityId, Transform2p5D};
 use aurex_lighting::{LightDescriptor, LightKind};
 use aurex_postfx::BloomSettings;
+use aurex_pulse::{
+    PulseRuntime,
+    runner::PulseRunner,
+    schema::{Interactivity, PulseDefinition, PulseKind, PulseMetadata, PulseSceneSource},
+};
 use aurex_render::{
     BootAnimationConfig, BootAnimator, BootPostFxTrack, BootSequenceRecipe, BootStylePreset,
     BootStyleProfile, CameraRig, MockRenderer, RENDER_MAIN_STAGES, RenderBackendMode,
@@ -17,6 +23,7 @@ use aurex_render::{
     RenderStage, attempt_real_renderer_bootstrap, rasterize_boot_frame,
     run_real_renderer_event_loop_with_frame_hook,
 };
+use aurex_render_sdf::RenderConfig;
 use aurex_shape_synth::{PrimitiveType, ShapeDescriptor};
 use pulses::{
     ExamplePulseConfig,
@@ -27,6 +34,7 @@ use pulses::{
     },
     jazz_atmosphere::create_jazz_atmosphere_pulse,
 };
+use runtime_flags::RuntimeDebugFlags;
 use timeline::{
     AudioAction, AudioCue, AudioTransport, EventScheduler, PulseTimeline, SceneManager,
     SceneVisualProfile, TimelineClock, TimelineEvent, TimelineEventKind, blend_scene_profiles,
@@ -38,9 +46,14 @@ const DEFAULT_SEED: u64 = 2026;
 const AVAILABLE_PULSE_NAMES: [&str; 4] = ["megacity", "jazz", "ambient", "aurielle_intro"];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+enum RuntimeMode {
+    Pulse { pulse_name: String, seed: u64 },
+    MidiDemo { midi_path: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct RuntimeOptions {
-    pulse_name: String,
-    seed: u64,
+    mode: RuntimeMode,
 }
 
 #[derive(Debug, Clone)]
@@ -58,6 +71,7 @@ fn available_pulse_names() -> &'static [&'static str] {
 fn parse_runtime_options(args: impl IntoIterator<Item = String>) -> Result<RuntimeOptions, String> {
     let mut pulse_name: Option<String> = None;
     let mut seed = DEFAULT_SEED;
+    let mut positional = Vec::new();
 
     let mut iter = args.into_iter();
     while let Some(arg) = iter.next() {
@@ -76,15 +90,35 @@ fn parse_runtime_options(args: impl IntoIterator<Item = String>) -> Result<Runti
                 ));
             }
             value => {
-                if pulse_name.is_some() {
-                    return Err(
-                        "Too many positional arguments. Usage: cargo run -- [pulse] [--seed <u64>]"
-                            .to_string(),
-                    );
-                }
-                pulse_name = Some(value.to_string());
+                positional.push(value.to_string());
             }
         }
+    }
+
+    if positional.first().map(String::as_str) == Some("midi_demo") {
+        let midi_path = positional
+            .get(1)
+            .ok_or_else(|| {
+                "Missing MIDI path. Usage: cargo run -p aurex_app -- midi_demo <path.mid>"
+                    .to_string()
+            })?
+            .to_string();
+        if positional.len() > 2 {
+            return Err("Too many positional arguments for midi_demo".to_string());
+        }
+        return Ok(RuntimeOptions {
+            mode: RuntimeMode::MidiDemo { midi_path },
+        });
+    }
+
+    if positional.len() > 1 {
+        return Err(
+            "Too many positional arguments. Usage: cargo run -- [pulse] [--seed <u64>]".to_string(),
+        );
+    }
+
+    if let Some(name) = positional.first() {
+        pulse_name = Some(name.clone());
     }
 
     let pulse_name = pulse_name.unwrap_or_else(|| DEFAULT_PULSE_NAME.to_string());
@@ -95,7 +129,9 @@ fn parse_runtime_options(args: impl IntoIterator<Item = String>) -> Result<Runti
         ));
     }
 
-    Ok(RuntimeOptions { pulse_name, seed })
+    Ok(RuntimeOptions {
+        mode: RuntimeMode::Pulse { pulse_name, seed },
+    })
 }
 
 fn create_initial_pulse(pulse_name: &str, seed: u64) -> ExamplePulseConfig {
@@ -656,6 +692,8 @@ fn runtime_diagnostics_report(selected_pulse: &ExamplePulseConfig) -> String {
 }
 
 fn main() {
+    let debug_flags = RuntimeDebugFlags::from_env();
+
     let options = match parse_runtime_options(std::env::args().skip(1)) {
         Ok(options) => options,
         Err(err) => {
@@ -664,10 +702,73 @@ fn main() {
         }
     };
 
-    let mut pulse_loop = RuntimePulseLoop::new(&options.pulse_name, options.seed);
+    if let RuntimeMode::MidiDemo { midi_path } = &options.mode {
+        match PulseRuntime::load_runtime_from_midi_file(std::path::Path::new(midi_path)) {
+            Ok(mut runtime) => {
+                runtime.print_debug();
+                let scene = runtime.generate_scene();
+                let mut runner = match PulseRunner::load(
+                    PulseDefinition {
+                        metadata: PulseMetadata {
+                            title: "MIDI Demo Runtime".to_string(),
+                            author: "Aurex".to_string(),
+                            description: "Music-driven procedural runtime scene".to_string(),
+                            tags: vec!["midi_demo".to_string()],
+                            seed: scene.sdf.seed,
+                            pulse_kind: PulseKind::VisualMusic,
+                            duration_hint: None,
+                            interactivity: Interactivity::Passive,
+                            prime_affinity: None,
+                        },
+                        pulse_kind: PulseKind::VisualMusic,
+                        scene: PulseSceneSource::Inline(scene),
+                        audio: None,
+                        timeline: None,
+                        generators: vec![],
+                        music: None,
+                        boot_world: None,
+                        parameters: Default::default(),
+                    },
+                    None,
+                ) {
+                    Ok(r) => r,
+                    Err(err) => {
+                        eprintln!("midi_demo_runtime=error detail:{err}");
+                        return;
+                    }
+                };
+
+                runner.initialize();
+                let mut last_time = 0.0_f32;
+                if let Err(err) = run_real_renderer_event_loop_with_frame_hook(move |t| {
+                    let delta = (t - last_time).max(0.0);
+                    last_time = t;
+                    runner.update(delta);
+                    let _beat = runtime.update_scene_for_frame(&mut runner.scene, delta);
+                    let _frame = runner.render(RenderConfig::default());
+                }) && !err.contains("real_graphics feature is disabled")
+                {
+                    eprintln!("render_real_loop=error detail:{err}");
+                }
+                return;
+            }
+            Err(err) => {
+                eprintln!("midi_demo_runtime=error detail:{err}");
+                return;
+            }
+        }
+    }
+
+    let (pulse_name, seed) = match &options.mode {
+        RuntimeMode::Pulse { pulse_name, seed } => (pulse_name.as_str(), *seed),
+        RuntimeMode::MidiDemo { .. } => unreachable!("midi mode handled above"),
+    };
+
+    let mut pulse_loop = RuntimePulseLoop::new(pulse_name, seed);
     let pulse = pulse_loop.pulse.clone();
 
     println!("Launching Pulse: {}", pulse.pulse_name);
+    println!("runtime_debug_flags={}", debug_flags.summary());
     if let Some(duration) = pulse.sequence_duration_seconds {
         println!("Sequence Duration: {:.1}s", duration);
     }
@@ -728,7 +829,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::{
-        DEFAULT_SEED, RuntimePulseLoop, available_pulse_names, create_pulse_at_time,
+        DEFAULT_SEED, RuntimeMode, RuntimePulseLoop, available_pulse_names, create_pulse_at_time,
         parse_runtime_options, runtime_diagnostics_report,
     };
 
@@ -757,16 +858,37 @@ mod tests {
             "42".to_string(),
         ])
         .expect("aurielle_intro should be accepted");
-        assert_eq!(options.pulse_name, "aurielle_intro");
-        assert_eq!(options.seed, 42);
+        match options.mode {
+            RuntimeMode::Pulse { pulse_name, seed } => {
+                assert_eq!(pulse_name, "aurielle_intro");
+                assert_eq!(seed, 42);
+            }
+            RuntimeMode::MidiDemo { .. } => panic!("expected pulse mode"),
+        }
     }
 
     #[test]
     fn runtime_options_default_to_megacity() {
         let options =
             parse_runtime_options(Vec::<String>::new()).expect("default options should parse");
-        assert_eq!(options.pulse_name, "megacity");
-        assert_eq!(options.seed, DEFAULT_SEED);
+        match options.mode {
+            RuntimeMode::Pulse { pulse_name, seed } => {
+                assert_eq!(pulse_name, "megacity");
+                assert_eq!(seed, DEFAULT_SEED);
+            }
+            RuntimeMode::MidiDemo { .. } => panic!("expected pulse mode"),
+        }
+    }
+
+    #[test]
+    fn runtime_options_support_midi_demo_mode() {
+        let options =
+            parse_runtime_options(vec!["midi_demo".to_string(), "example.mid".to_string()])
+                .expect("midi_demo mode should parse");
+        match options.mode {
+            RuntimeMode::MidiDemo { midi_path } => assert_eq!(midi_path, "example.mid"),
+            RuntimeMode::Pulse { .. } => panic!("expected midi demo mode"),
+        }
     }
 
     #[test]
