@@ -1,3 +1,4 @@
+pub mod beat_driver;
 pub mod boot_world;
 pub mod diagnostics;
 pub mod living_boot;

@@ -704,7 +704,7 @@ fn main() {
 
     if let RuntimeMode::MidiDemo { midi_path } = &options.mode {
         match PulseRuntime::load_runtime_from_midi_file(std::path::Path::new(midi_path)) {
-            Ok(runtime) => {
+            Ok(mut runtime) => {
                 runtime.print_debug();
                 let scene = runtime.generate_scene();
                 let mut runner = match PulseRunner::load(
@@ -744,6 +744,7 @@ fn main() {
                     let delta = (t - last_time).max(0.0);
                     last_time = t;
                     runner.update(delta);
+                    let _beat = runtime.update_scene_for_frame(&mut runner.scene, delta);
                     let _frame = runner.render(RenderConfig::default());
                 }) && !err.contains("real_graphics feature is disabled")
                 {

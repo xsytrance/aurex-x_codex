@@ -3,10 +3,12 @@ use std::path::Path;
 use aurex_midi::{analyze_timeline, load_midi_timeline};
 use aurex_scene::{Scene, scene_generator};
 
+use crate::beat_driver::{BeatDriver, apply_beat_pulse};
 use crate::pulse_blueprint::{PulseBlueprint, blueprint_from_midi_analysis};
 
 pub struct PulseRuntime {
     pub blueprint: PulseBlueprint,
+    beat_driver: BeatDriver,
 }
 
 impl PulseRuntime {
@@ -14,7 +16,11 @@ impl PulseRuntime {
         let timeline = load_midi_timeline(bytes)?;
         let analysis = analyze_timeline(&timeline);
         let blueprint = blueprint_from_midi_analysis(&analysis);
-        Ok(Self { blueprint })
+        let beat_driver = BeatDriver::new(&blueprint);
+        Ok(Self {
+            blueprint,
+            beat_driver,
+        })
     }
 
     pub fn generate_scene(&self) -> Scene {
@@ -36,6 +42,18 @@ impl PulseRuntime {
         println!("Density level: {:.3}", self.blueprint.density_level);
         println!("Energy level: {:.3}", self.blueprint.energy_level);
         println!("Beat count: {}", self.blueprint.beat_ticks.len());
+    }
+
+    pub fn update_scene_for_frame(&mut self, scene: &mut Scene, delta_seconds: f32) -> bool {
+        if self.beat_driver.update(delta_seconds) {
+            apply_beat_pulse(scene, self.blueprint.energy_level);
+            return true;
+        }
+        false
+    }
+
+    pub fn current_beat(&self) -> usize {
+        self.beat_driver.current_beat()
     }
 
     pub fn load_runtime_from_midi_file(
