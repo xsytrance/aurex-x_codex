@@ -152,6 +152,7 @@ fn run_boot_mode() {
     runner.initialize();
 
     let mut last_time = 0.0_f32;
+    let mut library_banner_printed = false;
     if let Err(err) = run_real_renderer_event_loop_with_frame_hook(move |t| {
         let dt = (t - last_time).max(0.0);
         last_time = t;
@@ -179,9 +180,9 @@ fn run_boot_mode() {
             ..RenderConfig::default()
         });
 
-        if boot_runtime.screen_mode() == BootScreenMode::Library {
+        if boot_runtime.screen_mode() == BootScreenMode::Library && !library_banner_printed {
             println!("AUREX-X\n[ Launch Demo Pulse ]\n[ Settings ]\nExit");
-            should_exit_hook.store(true, Ordering::Relaxed);
+            library_banner_printed = true;
         }
     }) {
         eprintln!("boot_runtime=error detail:{err}");
@@ -262,14 +263,16 @@ mod tests {
     }
 }
 
-#[test]
-fn runtime_supports_midi_demo_mode() {
-    let options = parse_runtime_options(vec!["midi_demo".to_string(), "example.mid".to_string()])
-        .expect("midi_demo mode should parse");
-    assert_eq!(
-        options.mode,
-        RuntimeMode::MidiDemo {
-            midi_path: "example.mid".to_string()
-        }
-    );
+    #[test]
+    fn runtime_supports_midi_demo_mode() {
+        let options =
+            parse_runtime_options(vec!["midi_demo".to_string(), "example.mid".to_string()])
+                .expect("midi_demo mode should parse");
+        assert_eq!(
+            options.mode,
+            RuntimeMode::MidiDemo {
+                midi_path: "example.mid".to_string()
+            }
+        );
+    }
 }

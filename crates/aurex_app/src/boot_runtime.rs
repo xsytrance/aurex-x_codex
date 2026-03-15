@@ -1,11 +1,10 @@
-use aurex_pulse::{camera_rig::CameraRig, demo_sequencer::DemoSequencer};
 use aurex_scene::{
     KeyLight, Scene, SdfCamera, SdfLighting, SdfMaterial, SdfMaterialType, SdfModifier, SdfNode,
-    SdfObject, SdfPrimitive, SdfScene, Vec3, particle_swarm::ParticleSwarm,
-    typography_generator::TypographyGenerator,
+    SdfObject, SdfPrimitive, SdfScene, Vec3,
 };
 
-const STAR_COUNT: usize = 420;
+const MAX_BOOT_OBJECTS: usize = 100;
+const BOOT_TO_LIBRARY_SECONDS: f32 = 3.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BootScreenMode {
@@ -13,101 +12,65 @@ pub enum BootScreenMode {
     Library,
 }
 
-#[derive(Debug, Clone, Copy)]
-struct Star {
-    position: [f32; 3],
-    radius: f32,
-    emissive: f32,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct Planet {
-    radius: f32,
-    orbit_radius: f32,
-    orbit_speed: f32,
-    phase: f32,
-    height: f32,
-    color: [f32; 3],
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BootStage {
-    StarfieldFadeIn,
-    PlanetsAppear,
-    SpaceDrift,
+    SphereScene,
+    Library,
 }
 
 pub struct BootRuntime {
     pub scene: Scene,
-    pub particle_swarm: ParticleSwarm,
-    pub camera_rig: CameraRig,
-    pub demo_sequencer: DemoSequencer,
-    pub typography_generator: TypographyGenerator,
     pub boot_timer: f32,
     screen_mode: BootScreenMode,
-    stars: Vec<Star>,
-    planets: Vec<Planet>,
     last_debug_second: i32,
 }
 
 impl BootRuntime {
     pub fn new(seed: u64) -> Self {
-        let stars = generate_stars(seed, STAR_COUNT);
-        let planets = generate_planets(seed);
-        let scene = Scene {
-            sdf: SdfScene {
-                camera: SdfCamera {
-                    position: Vec3::new(0.0, 0.0, 12.0),
-                    target: Vec3::new(0.0, 0.0, 0.0),
-                    fov_degrees: 60.0,
-                    aspect_ratio: 16.0 / 9.0,
-                },
-                lighting: SdfLighting {
-                    ambient_light: 0.08,
-                    key_lights: vec![KeyLight {
-                        direction: Vec3::new(0.5, -1.0, -0.5),
-                        intensity: 3.0,
-                        color: Vec3::new(1.0, 0.96, 0.9),
-                    }],
-                    fog_color: Vec3::new(0.01, 0.02, 0.04),
-                    fog_density: 0.002,
-                    fog_height_falloff: 0.06,
-                    volumetric: Default::default(),
-                },
-                seed: seed as u32,
-                objects: vec![],
-                root: SdfNode::Union {
-                    children: Vec::new(),
-                },
-                timeline: None,
-                generator: None,
-                generator_stack: None,
-                fields: vec![],
-                patterns: vec![],
-                harmonics: None,
-                rhythm: None,
-                audio: None,
-                effect_graph: None,
-                automation_tracks: vec![],
-                demo_sequence: None,
-                temporal_effects: vec![],
-                runtime_modulation: None,
-            },
-        };
-
         let mut runtime = Self {
-            scene,
-            particle_swarm: ParticleSwarm::new(seed.wrapping_add(11), 256),
-            camera_rig: CameraRig::new(),
-            demo_sequencer: DemoSequencer::new(),
-            typography_generator: TypographyGenerator::new(seed),
+            scene: Scene {
+                sdf: SdfScene {
+                    camera: SdfCamera {
+                        position: Vec3::new(0.0, 0.0, 12.0),
+                        target: Vec3::new(0.0, 0.0, 0.0),
+                        fov_degrees: 60.0,
+                        aspect_ratio: 16.0 / 9.0,
+                    },
+                    lighting: SdfLighting {
+                        ambient_light: 0.12,
+                        key_lights: vec![KeyLight {
+                            direction: Vec3::new(0.5, -1.0, -0.5),
+                            intensity: 3.0,
+                            color: Vec3::new(1.0, 0.98, 0.92),
+                        }],
+                        fog_color: Vec3::new(0.01, 0.01, 0.02),
+                        fog_density: 0.001,
+                        fog_height_falloff: 0.05,
+                        volumetric: Default::default(),
+                    },
+                    seed: seed as u32,
+                    objects: Vec::new(),
+                    root: SdfNode::Empty,
+                    timeline: None,
+                    generator: None,
+                    generator_stack: None,
+                    fields: vec![],
+                    patterns: vec![],
+                    harmonics: None,
+                    rhythm: None,
+                    audio: None,
+                    effect_graph: None,
+                    automation_tracks: vec![],
+                    demo_sequence: None,
+                    temporal_effects: vec![],
+                    runtime_modulation: None,
+                },
+            },
             boot_timer: 0.0,
             screen_mode: BootScreenMode::Cinematic,
-            stars,
-            planets,
             last_debug_second: -1,
         };
-        runtime.particle_swarm.clear_targets();
+
         runtime.rebuild_scene();
         runtime
     }
@@ -120,314 +83,130 @@ impl BootRuntime {
         let dt = delta_seconds.max(0.0);
         self.boot_timer += dt;
 
-        if self.screen_mode == BootScreenMode::Library {
-            return;
-        }
-
-        let _ = self.demo_sequencer.update(dt);
-        self.update_camera();
-        self.update_lighting();
-
-        self.particle_swarm.update(dt * 0.4);
-        self.rebuild_scene();
-
-        let second = self.boot_timer.floor() as i32;
-        if second != self.last_debug_second {
-            self.last_debug_second = second;
-            println!(
-                "boot objects: {} root_nodes: {} stage: {:?}",
-                self.scene.sdf.objects.len(),
-                match &self.scene.sdf.root {
-                    SdfNode::Union { children } => children.len(),
-                    _ => 1,
-                },
-                self.stage()
-            );
-        }
-
-        if self.boot_timer >= 24.0 {
+        if self.screen_mode == BootScreenMode::Cinematic
+            && self.boot_timer >= BOOT_TO_LIBRARY_SECONDS
+        {
             self.enter_library_mode();
         }
+
+        self.update_camera();
+        self.update_lighting();
+        self.rebuild_scene();
+        self.log_once_per_second();
     }
 
     pub fn enter_library_mode(&mut self) {
         self.screen_mode = BootScreenMode::Library;
-
-        let mut lib_scene = Scene {
-            sdf: SdfScene {
-                camera: SdfCamera {
-                    position: Vec3::new(0.0, 6.0, -14.0),
-                    target: Vec3::new(0.0, 0.5, 0.0),
-                    fov_degrees: 60.0,
-                    aspect_ratio: 16.0 / 9.0,
-                },
-                lighting: SdfLighting {
-                    ambient_light: 0.3,
-                    key_lights: vec![KeyLight {
-                        direction: Vec3::new(0.5, -1.0, -0.5),
-                        intensity: 3.0,
-                        color: Vec3::new(1.0, 0.96, 0.9),
-                    }],
-                    fog_color: Vec3::new(0.03, 0.03, 0.04),
-                    fog_density: 0.01,
-                    fog_height_falloff: 0.08,
-                    volumetric: Default::default(),
-                },
-                seed: self.scene.sdf.seed,
-                objects: vec![],
-                root: SdfNode::Union { children: vec![] },
-                timeline: None,
-                generator: None,
-                generator_stack: None,
-                fields: vec![],
-                patterns: vec![],
-                harmonics: None,
-                rhythm: None,
-                audio: None,
-                effect_graph: None,
-                automation_tracks: vec![],
-                demo_sequence: None,
-                temporal_effects: vec![],
-                runtime_modulation: None,
-            },
-        };
-        self.typography_generator
-            .apply_word_to_scene(&mut lib_scene, "AUREX-X");
-
-        let mut children = match lib_scene.sdf.root {
-            SdfNode::Union { children } => children,
-            _ => vec![],
-        };
-        children.push(menu_bar(
-            Vec3::new(0.0, 0.6, -1.8),
-            Vec3::new(6.0, 0.3, 0.4),
-            Vec3::new(0.28, 0.32, 0.42),
-        ));
-        self.scene.sdf.root = SdfNode::Union { children };
-        self.scene.sdf.camera = lib_scene.sdf.camera;
-        self.scene.sdf.lighting = lib_scene.sdf.lighting;
     }
 
     fn stage(&self) -> BootStage {
-        if self.boot_timer < 3.0 {
-            BootStage::StarfieldFadeIn
-        } else if self.boot_timer < 8.0 {
-            BootStage::PlanetsAppear
-        } else {
-            BootStage::SpaceDrift
+        match self.screen_mode {
+            BootScreenMode::Cinematic => BootStage::SphereScene,
+            BootScreenMode::Library => BootStage::Library,
         }
     }
 
     fn update_camera(&mut self) {
-        let t = self.boot_timer;
-        self.camera_rig.orbit_radius = 12.0 + (t * 0.07).sin() * 1.2;
-        self.camera_rig.orbit_speed = 0.12;
-        self.camera_rig.position[1] = 1.8 + (t * 0.05).sin() * 0.8;
-        self.camera_rig.target = [0.0, 0.0, 0.0];
-        self.camera_rig.update(1.0 / 60.0);
-        self.camera_rig.apply_to_scene(&mut self.scene);
-        self.scene.sdf.camera.position.z = self.scene.sdf.camera.position.z.abs();
+        self.scene.sdf.camera.target = Vec3::new(0.0, 0.0, 0.0);
+        self.scene.sdf.camera.position = match self.screen_mode {
+            BootScreenMode::Cinematic => {
+                let t = self.boot_timer;
+                Vec3::new((t * 0.2).cos() * 1.0, (t * 0.17).sin() * 0.4, 12.0)
+            }
+            BootScreenMode::Library => Vec3::new(0.0, 0.0, 12.0),
+        };
     }
 
     fn update_lighting(&mut self) {
-        let fade = (self.boot_timer / 3.0).clamp(0.0, 1.0);
-        self.scene.sdf.lighting.ambient_light = 0.02 + 0.12 * fade;
-        self.scene.sdf.lighting.fog_density = 0.001 + 0.003 * fade;
+        if let Some(light) = self.scene.sdf.lighting.key_lights.first_mut() {
+            light.direction = Vec3::new(0.5, -1.0, -0.5);
+            light.intensity = 3.0;
+            light.color = Vec3::new(1.0, 0.98, 0.92);
+        } else {
+            self.scene.sdf.lighting.key_lights.push(KeyLight {
+                direction: Vec3::new(0.5, -1.0, -0.5),
+                intensity: 3.0,
+                color: Vec3::new(1.0, 0.98, 0.92),
+            });
+        }
+
+        self.scene.sdf.lighting.ambient_light = match self.screen_mode {
+            BootScreenMode::Cinematic => 0.12,
+            BootScreenMode::Library => 0.2,
+        };
     }
 
     fn rebuild_scene(&mut self) {
-        let stage = self.stage();
-        let fade = (self.boot_timer / 3.0).clamp(0.0, 1.0);
-        let visible_stars = ((self.stars.len() as f32) * fade).round() as usize;
+        self.scene.sdf.objects.clear();
 
-        let mut children = Vec::with_capacity(visible_stars + self.planets.len() * 2 + 280);
-        let mut objects = Vec::with_capacity(visible_stars + self.planets.len() * 2 + 1);
-
-        let debug_sphere = SdfObject {
+        let main_sphere = SdfObject {
             primitive: SdfPrimitive::Sphere { radius: 2.0 },
             modifiers: vec![],
             material: SdfMaterial {
                 material_type: SdfMaterialType::SolidColor,
-                base_color: Vec3::new(0.9, 0.4, 0.5),
-                emissive_strength: 0.35,
+                base_color: Vec3::new(0.75, 0.82, 0.95),
+                emissive_strength: 0.08,
                 ..SdfMaterial::default()
             },
-            bounds_radius: Some(2.5),
+            bounds_radius: Some(2.1),
         };
-        children.push(SdfNode::Primitive {
-            object: debug_sphere.clone(),
-        });
-        objects.push(debug_sphere);
+        self.scene.sdf.objects.push(main_sphere.clone());
 
-        for star in self.stars.iter().take(visible_stars) {
-            let star_object = SdfObject {
-                primitive: SdfPrimitive::Sphere {
-                    radius: star.radius,
+        if self.screen_mode == BootScreenMode::Library {
+            self.scene.sdf.objects.push(SdfObject {
+                primitive: SdfPrimitive::Box {
+                    size: Vec3::new(6.0, 0.35, 0.2),
                 },
                 modifiers: vec![SdfModifier::Translate {
-                    offset: Vec3::new(star.position[0], star.position[1], star.position[2]),
+                    offset: Vec3::new(0.0, -3.2, 0.0),
                 }],
                 material: SdfMaterial {
                     material_type: SdfMaterialType::SolidColor,
-                    base_color: Vec3::new(0.8, 0.9, 1.0),
-                    emissive_strength: star.emissive * fade,
+                    base_color: Vec3::new(0.2, 0.24, 0.32),
+                    emissive_strength: 0.03,
                     ..SdfMaterial::default()
                 },
-                bounds_radius: Some(star.radius * 4.0),
-            };
-            children.push(SdfNode::Primitive {
-                object: star_object.clone(),
+                bounds_radius: Some(6.1),
             });
-            objects.push(star_object);
         }
 
-        if stage != BootStage::StarfieldFadeIn {
-            let appear = ((self.boot_timer - 3.0) / 5.0).clamp(0.0, 1.0);
-            for planet in &self.planets {
-                let angle = planet.phase + self.boot_timer * planet.orbit_speed;
-                let x = angle.cos() * planet.orbit_radius;
-                let z = angle.sin() * planet.orbit_radius - 24.0;
-                let y = planet.height;
-                let radius = planet.radius * (0.4 + 0.6 * appear);
+        self.scene.sdf.root = SdfNode::Primitive {
+            object: main_sphere,
+        };
 
-                let planet_core = SdfObject {
-                    primitive: SdfPrimitive::Sphere { radius },
-                    modifiers: vec![SdfModifier::Translate {
-                        offset: Vec3::new(x, y, z),
-                    }],
-                    material: SdfMaterial {
-                        material_type: SdfMaterialType::SolidColor,
-                        base_color: Vec3::new(planet.color[0], planet.color[1], planet.color[2]),
-                        emissive_strength: 0.05 + appear * 0.06,
-                        ..SdfMaterial::default()
-                    },
-                    bounds_radius: Some(radius + 0.2),
-                };
-                children.push(SdfNode::Primitive {
-                    object: planet_core.clone(),
-                });
-                objects.push(planet_core);
-
-                let planet_glow = SdfObject {
-                    primitive: SdfPrimitive::Sphere {
-                        radius: radius * 1.08,
-                    },
-                    modifiers: vec![SdfModifier::Translate {
-                        offset: Vec3::new(x, y, z),
-                    }],
-                    material: SdfMaterial {
-                        material_type: SdfMaterialType::SolidColor,
-                        base_color: Vec3::new(0.28, 0.36, 0.55),
-                        emissive_strength: 0.02 + appear * 0.03,
-                        ..SdfMaterial::default()
-                    },
-                    bounds_radius: Some(radius * 1.12),
-                };
-                children.push(SdfNode::Primitive {
-                    object: planet_glow.clone(),
-                });
-                objects.push(planet_glow);
-            }
+        if self.scene.sdf.objects.len() > MAX_BOOT_OBJECTS {
+            self.scene.sdf.objects.truncate(MAX_BOOT_OBJECTS);
         }
-
-        self.scene.sdf.root = SdfNode::Union { children };
-        self.scene.sdf.objects = objects;
-        self.particle_swarm.apply_to_scene(&mut self.scene);
     }
-}
 
-fn generate_stars(seed: u64, count: usize) -> Vec<Star> {
-    let mut stars = Vec::with_capacity(count);
-    for i in 0..count {
-        let s = seed ^ (i as u64).wrapping_mul(0x9E3779B97F4A7C15);
-        let x = sample_symmetric(s.wrapping_mul(3), 60.0);
-        let y = sample_symmetric(s.wrapping_mul(5), 40.0);
-        let z = -30.0 - sample_unit(s.wrapping_mul(7)) * 50.0;
-        let radius = 0.05 + sample_unit(s.wrapping_mul(11)) * 0.09;
-        let emissive = 0.25 + sample_unit(s.wrapping_mul(13)) * 0.7;
-        stars.push(Star {
-            position: [x, y, z],
-            radius,
-            emissive,
-        });
+    fn log_once_per_second(&mut self) {
+        let second = self.boot_timer.floor() as i32;
+        if second != self.last_debug_second {
+            self.last_debug_second = second;
+            println!(
+                "boot objects: {} stage: {:?}",
+                self.scene.sdf.objects.len(),
+                self.stage()
+            );
+        }
     }
-    stars
-}
-
-fn generate_planets(seed: u64) -> Vec<Planet> {
-    (0..3)
-        .map(|i| {
-            let s = seed ^ (i as u64).wrapping_mul(0xD1342543DE82EF95);
-            Planet {
-                radius: 2.0 + sample_unit(s.wrapping_mul(3)) * 4.0,
-                orbit_radius: 8.0 + sample_unit(s.wrapping_mul(5)) * 12.0,
-                orbit_speed: 0.015 + sample_unit(s.wrapping_mul(7)) * 0.03,
-                phase: sample_unit(s.wrapping_mul(11)) * std::f32::consts::TAU,
-                height: -2.0 + sample_symmetric(s.wrapping_mul(13), 4.0),
-                color: [
-                    0.18 + sample_unit(s.wrapping_mul(17)) * 0.5,
-                    0.16 + sample_unit(s.wrapping_mul(19)) * 0.45,
-                    0.2 + sample_unit(s.wrapping_mul(23)) * 0.55,
-                ],
-            }
-        })
-        .collect()
-}
-
-fn menu_bar(offset: Vec3, size: Vec3, color: Vec3) -> SdfNode {
-    SdfNode::Transform {
-        modifiers: vec![SdfModifier::Translate { offset }],
-        child: Box::new(SdfNode::Primitive {
-            object: SdfObject {
-                primitive: SdfPrimitive::Box { size },
-                modifiers: vec![],
-                material: SdfMaterial {
-                    material_type: SdfMaterialType::SolidColor,
-                    base_color: color,
-                    emissive_strength: 0.12,
-                    ..SdfMaterial::default()
-                },
-                bounds_radius: Some(7.0),
-            },
-        }),
-        bounds_radius: Some(7.0),
-    }
-}
-
-fn sample_unit(seed: u64) -> f32 {
-    let mixed = splitmix64(seed);
-    let mantissa = (mixed >> 40) as u32;
-    mantissa as f32 / (u32::MAX >> 8) as f32
-}
-
-fn sample_symmetric(seed: u64, amplitude: f32) -> f32 {
-    (sample_unit(seed) * 2.0 - 1.0) * amplitude
-}
-
-fn splitmix64(mut x: u64) -> u64 {
-    x = x.wrapping_add(0x9E3779B97F4A7C15);
-    x = (x ^ (x >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
-    x = (x ^ (x >> 27)).wrapping_mul(0x94D049BB133111EB);
-    x ^ (x >> 31)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{BootRuntime, SdfNode};
+    use super::{BOOT_TO_LIBRARY_SECONDS, BootRuntime, BootScreenMode};
 
     #[test]
-    fn boot_runtime_generates_visible_geometry() {
+    fn boot_runtime_populates_objects() {
         let runtime = BootRuntime::new(2026);
-        match runtime.scene.sdf.root {
-            SdfNode::Union { ref children } => assert!(!children.is_empty()),
-            _ => panic!("boot runtime root should be union"),
-        }
+        assert!(!runtime.scene.sdf.objects.is_empty());
+        assert!(runtime.scene.sdf.objects.len() <= 100);
     }
 
     #[test]
-    fn boot_runtime_is_deterministic_for_seed() {
-        let a = BootRuntime::new(42);
-        let b = BootRuntime::new(42);
-        assert_eq!(a.scene, b.scene);
+    fn boot_runtime_transitions_to_library_after_three_seconds() {
+        let mut runtime = BootRuntime::new(2026);
+        runtime.update(BOOT_TO_LIBRARY_SECONDS + 0.01);
+        assert_eq!(runtime.screen_mode(), BootScreenMode::Library);
     }
 }
