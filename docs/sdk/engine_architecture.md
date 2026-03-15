@@ -41,3 +41,7 @@ Renderer Pipeline
 - `GeneratorStack` output is currently used for deterministic parameter/scene-node generation only.
 - Runtime rhythm signals (`RhythmField`) modulate generation inputs; they do not add or reorder pipeline stages.
 - Future RhythmField extensions should continue feeding generator/parameter inputs upstream of renderer execution.
+
+## Runtime stabilization contracts
+- Runtime debug and isolation environment flags are documented in `docs/sdk/runtime_debug_flags.md`.
+- GeometrySdf mode contract is additive and explicit: `flat`, `safe`, `legacy` (default `safe`).
