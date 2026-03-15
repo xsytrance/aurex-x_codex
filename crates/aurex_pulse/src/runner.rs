@@ -8,7 +8,7 @@ use aurex_render_sdf::{
 use aurex_scene::{Scene, load_scene_from_json_path};
 
 use crate::boot_world::{BootWorldGenerator, BootWorldState};
-use crate::diagnostics::{PulseDiagnostics, RhythmSummary};
+use crate::diagnostics::{PulseDiagnostics, RhythmSummary, RuntimeConfidenceState};
 use crate::living_boot::LivingBootState;
 use crate::prime_pulse::PrimePulseState;
 use crate::resonance::ResonanceTracker;
@@ -101,6 +101,8 @@ impl PulseRunner {
         self.scene.sdf.seed = self.definition.metadata.seed;
         self.base_ambient_light = self.scene.sdf.lighting.ambient_light;
         self.state = PulseState::Initialized;
+        self.diagnostics.runtime_confidence = RuntimeConfidenceState::Boot;
+        self.diagnostics.handoff = Default::default();
         self.diagnostics.lifecycle.initialize_ms = init_start.elapsed().as_secs_f64() * 1000.0;
     }
 
@@ -203,8 +205,24 @@ impl PulseRunner {
         config.time = RenderTime {
             seconds: self.runtime_seconds,
         };
+
+        self.diagnostics.runtime_confidence = match config.geometry_mode {
+            aurex_render_sdf::GeometrySdfMode::Flat => RuntimeConfidenceState::Fallback,
+            aurex_render_sdf::GeometrySdfMode::Safe => RuntimeConfidenceState::ProceduralSafe,
+            aurex_render_sdf::GeometrySdfMode::Legacy => RuntimeConfidenceState::ProceduralLegacy,
+        };
+
+        self.diagnostics.handoff.warmup_frames =
+            self.diagnostics.handoff.warmup_frames.saturating_add(1);
+        if self.state == PulseState::Running {
+            self.diagnostics.handoff.transitioned_to_procedural = true;
+        }
+
         let (frame, frame_diag) = render_sdf_scene_with_diagnostics(&self.scene, config);
         self.diagnostics.frames_rendered += 1;
+        if self.diagnostics.frames_rendered > 0 {
+            self.diagnostics.handoff.first_procedural_presented = true;
+        }
         self.diagnostics.last_frame = Some(frame_diag);
         self.diagnostics.lifecycle.render_ms += render_start.elapsed().as_secs_f64() * 1000.0;
         frame
