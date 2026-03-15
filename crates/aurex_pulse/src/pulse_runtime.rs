@@ -4,11 +4,13 @@ use aurex_midi::{analyze_timeline, load_midi_timeline};
 use aurex_scene::{Scene, scene_generator};
 
 use crate::beat_driver::{BeatDriver, apply_beat_pulse};
+use crate::demo_sequencer::{DemoSequencer, apply_stage_effect};
 use crate::pulse_blueprint::{PulseBlueprint, blueprint_from_midi_analysis};
 
 pub struct PulseRuntime {
     pub blueprint: PulseBlueprint,
     beat_driver: BeatDriver,
+    demo_sequencer: DemoSequencer,
 }
 
 impl PulseRuntime {
@@ -17,9 +19,11 @@ impl PulseRuntime {
         let analysis = analyze_timeline(&timeline);
         let blueprint = blueprint_from_midi_analysis(&analysis);
         let beat_driver = BeatDriver::new(&blueprint);
+        let demo_sequencer = DemoSequencer::new();
         Ok(Self {
             blueprint,
             beat_driver,
+            demo_sequencer,
         })
     }
 
@@ -45,11 +49,16 @@ impl PulseRuntime {
     }
 
     pub fn update_scene_for_frame(&mut self, scene: &mut Scene, delta_seconds: f32) -> bool {
-        if self.beat_driver.update(delta_seconds) {
+        let beat_triggered = self.beat_driver.update(delta_seconds);
+        if beat_triggered {
             apply_beat_pulse(scene, self.blueprint.energy_level);
-            return true;
         }
-        false
+
+        let transitioned_to = self.demo_sequencer.update(delta_seconds);
+        let stage = transitioned_to.unwrap_or_else(|| self.demo_sequencer.current_stage_type());
+        apply_stage_effect(stage, scene);
+
+        beat_triggered
     }
 
     pub fn current_beat(&self) -> usize {

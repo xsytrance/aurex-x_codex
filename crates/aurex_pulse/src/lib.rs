@@ -1,5 +1,6 @@
 pub mod beat_driver;
 pub mod boot_world;
+pub mod demo_sequencer;
 pub mod diagnostics;
 pub mod living_boot;
 pub mod loader;
