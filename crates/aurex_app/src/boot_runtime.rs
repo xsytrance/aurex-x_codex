@@ -1,7 +1,7 @@
 use aurex_pulse::{camera_rig::CameraRig, demo_sequencer::DemoSequencer};
 use aurex_scene::{
-    Scene, SdfCamera, SdfLighting, SdfMaterial, SdfMaterialType, SdfModifier, SdfNode, SdfObject,
-    SdfPrimitive, SdfScene, Vec3, particle_swarm::ParticleSwarm,
+    KeyLight, Scene, SdfCamera, SdfLighting, SdfMaterial, SdfMaterialType, SdfModifier, SdfNode,
+    SdfObject, SdfPrimitive, SdfScene, Vec3, particle_swarm::ParticleSwarm,
     typography_generator::TypographyGenerator,
 };
 
@@ -47,6 +47,7 @@ pub struct BootRuntime {
     screen_mode: BootScreenMode,
     stars: Vec<Star>,
     planets: Vec<Planet>,
+    last_debug_second: i32,
 }
 
 impl BootRuntime {
@@ -56,14 +57,18 @@ impl BootRuntime {
         let scene = Scene {
             sdf: SdfScene {
                 camera: SdfCamera {
-                    position: Vec3::new(0.0, 3.5, -18.0),
+                    position: Vec3::new(0.0, 0.0, 12.0),
                     target: Vec3::new(0.0, 0.0, 0.0),
                     fov_degrees: 60.0,
                     aspect_ratio: 16.0 / 9.0,
                 },
                 lighting: SdfLighting {
                     ambient_light: 0.08,
-                    key_lights: vec![],
+                    key_lights: vec![KeyLight {
+                        direction: Vec3::new(0.5, -1.0, -0.5),
+                        intensity: 3.0,
+                        color: Vec3::new(1.0, 0.96, 0.9),
+                    }],
                     fog_color: Vec3::new(0.01, 0.02, 0.04),
                     fog_density: 0.002,
                     fog_height_falloff: 0.06,
@@ -100,6 +105,7 @@ impl BootRuntime {
             screen_mode: BootScreenMode::Cinematic,
             stars,
             planets,
+            last_debug_second: -1,
         };
         runtime.particle_swarm.clear_targets();
         runtime.rebuild_scene();
@@ -125,6 +131,20 @@ impl BootRuntime {
         self.particle_swarm.update(dt * 0.4);
         self.rebuild_scene();
 
+        let second = self.boot_timer.floor() as i32;
+        if second != self.last_debug_second {
+            self.last_debug_second = second;
+            println!(
+                "boot objects: {} root_nodes: {} stage: {:?}",
+                self.scene.sdf.objects.len(),
+                match &self.scene.sdf.root {
+                    SdfNode::Union { children } => children.len(),
+                    _ => 1,
+                },
+                self.stage()
+            );
+        }
+
         if self.boot_timer >= 24.0 {
             self.enter_library_mode();
         }
@@ -143,7 +163,11 @@ impl BootRuntime {
                 },
                 lighting: SdfLighting {
                     ambient_light: 0.3,
-                    key_lights: vec![],
+                    key_lights: vec![KeyLight {
+                        direction: Vec3::new(0.5, -1.0, -0.5),
+                        intensity: 3.0,
+                        color: Vec3::new(1.0, 0.96, 0.9),
+                    }],
                     fog_color: Vec3::new(0.03, 0.03, 0.04),
                     fog_density: 0.01,
                     fog_height_falloff: 0.08,
@@ -196,13 +220,13 @@ impl BootRuntime {
 
     fn update_camera(&mut self) {
         let t = self.boot_timer;
-        self.camera_rig.orbit_radius = 16.0 + (t * 0.07).sin() * 1.6;
+        self.camera_rig.orbit_radius = 12.0 + (t * 0.07).sin() * 1.2;
         self.camera_rig.orbit_speed = 0.12;
-        self.camera_rig.position[1] = 3.2 + (t * 0.05).sin() * 1.1;
-        self.camera_rig.target = [0.0, 0.6, 0.0];
+        self.camera_rig.position[1] = 1.8 + (t * 0.05).sin() * 0.8;
+        self.camera_rig.target = [0.0, 0.0, 0.0];
         self.camera_rig.update(1.0 / 60.0);
         self.camera_rig.apply_to_scene(&mut self.scene);
-        self.scene.sdf.camera.position.z = -self.scene.sdf.camera.position.z.abs();
+        self.scene.sdf.camera.position.z = self.scene.sdf.camera.position.z.abs();
     }
 
     fn update_lighting(&mut self) {
@@ -217,6 +241,20 @@ impl BootRuntime {
         let visible_stars = ((self.stars.len() as f32) * fade).round() as usize;
 
         let mut children = Vec::with_capacity(visible_stars + self.planets.len() * 2 + 280);
+
+        children.push(SdfNode::Primitive {
+            object: SdfObject {
+                primitive: SdfPrimitive::Sphere { radius: 2.0 },
+                modifiers: vec![],
+                material: SdfMaterial {
+                    material_type: SdfMaterialType::SolidColor,
+                    base_color: Vec3::new(0.9, 0.4, 0.5),
+                    emissive_strength: 0.35,
+                    ..SdfMaterial::default()
+                },
+                bounds_radius: Some(2.5),
+            },
+        });
 
         for star in self.stars.iter().take(visible_stars) {
             children.push(SdfNode::Transform {
@@ -247,7 +285,7 @@ impl BootRuntime {
             for planet in &self.planets {
                 let angle = planet.phase + self.boot_timer * planet.orbit_speed;
                 let x = angle.cos() * planet.orbit_radius;
-                let z = angle.sin() * planet.orbit_radius - 38.0;
+                let z = angle.sin() * planet.orbit_radius - 24.0;
                 let y = planet.height;
                 let radius = planet.radius * (0.4 + 0.6 * appear);
 
@@ -300,6 +338,19 @@ impl BootRuntime {
         }
 
         self.scene.sdf.root = SdfNode::Union { children };
+        self.scene.sdf.objects = vec![SdfObject {
+            primitive: SdfPrimitive::Sphere { radius: 2.0 },
+            modifiers: vec![SdfModifier::Translate {
+                offset: Vec3::new(0.0, 0.0, 0.0),
+            }],
+            material: SdfMaterial {
+                material_type: SdfMaterialType::SolidColor,
+                base_color: Vec3::new(0.85, 0.45, 0.5),
+                emissive_strength: 0.3,
+                ..SdfMaterial::default()
+            },
+            bounds_radius: Some(2.5),
+        }];
         self.particle_swarm.apply_to_scene(&mut self.scene);
     }
 }
@@ -308,9 +359,9 @@ fn generate_stars(seed: u64, count: usize) -> Vec<Star> {
     let mut stars = Vec::with_capacity(count);
     for i in 0..count {
         let s = seed ^ (i as u64).wrapping_mul(0x9E3779B97F4A7C15);
-        let x = sample_symmetric(s.wrapping_mul(3), 220.0);
-        let y = sample_symmetric(s.wrapping_mul(5), 120.0);
-        let z = -90.0 - sample_unit(s.wrapping_mul(7)) * 260.0;
+        let x = sample_symmetric(s.wrapping_mul(3), 60.0);
+        let y = sample_symmetric(s.wrapping_mul(5), 40.0);
+        let z = -30.0 - sample_unit(s.wrapping_mul(7)) * 50.0;
         let radius = 0.05 + sample_unit(s.wrapping_mul(11)) * 0.09;
         let emissive = 0.25 + sample_unit(s.wrapping_mul(13)) * 0.7;
         stars.push(Star {
@@ -327,11 +378,11 @@ fn generate_planets(seed: u64) -> Vec<Planet> {
         .map(|i| {
             let s = seed ^ (i as u64).wrapping_mul(0xD1342543DE82EF95);
             Planet {
-                radius: 4.5 + sample_unit(s.wrapping_mul(3)) * 5.5,
-                orbit_radius: 28.0 + sample_unit(s.wrapping_mul(5)) * 28.0,
+                radius: 2.0 + sample_unit(s.wrapping_mul(3)) * 4.0,
+                orbit_radius: 8.0 + sample_unit(s.wrapping_mul(5)) * 12.0,
                 orbit_speed: 0.015 + sample_unit(s.wrapping_mul(7)) * 0.03,
                 phase: sample_unit(s.wrapping_mul(11)) * std::f32::consts::TAU,
-                height: -6.0 + sample_symmetric(s.wrapping_mul(13), 14.0),
+                height: -2.0 + sample_symmetric(s.wrapping_mul(13), 4.0),
                 color: [
                     0.18 + sample_unit(s.wrapping_mul(17)) * 0.5,
                     0.16 + sample_unit(s.wrapping_mul(19)) * 0.45,

@@ -256,14 +256,16 @@ mod tests {
     }
 }
 
-#[test]
-fn runtime_supports_midi_demo_mode() {
-    let options = parse_runtime_options(vec!["midi_demo".to_string(), "example.mid".to_string()])
-        .expect("midi_demo mode should parse");
-    assert_eq!(
-        options.mode,
-        RuntimeMode::MidiDemo {
-            midi_path: "example.mid".to_string()
-        }
-    );
+    #[test]
+    fn runtime_supports_midi_demo_mode() {
+        let options =
+            parse_runtime_options(vec!["midi_demo".to_string(), "example.mid".to_string()])
+                .expect("midi_demo mode should parse");
+        assert_eq!(
+            options.mode,
+            RuntimeMode::MidiDemo {
+                midi_path: "example.mid".to_string()
+            }
+        );
+    }
 }
