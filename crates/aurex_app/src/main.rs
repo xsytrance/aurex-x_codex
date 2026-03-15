@@ -260,6 +260,7 @@ mod tests {
             parse_runtime_options(vec!["boot".to_string()]).expect("boot mode should parse");
         assert_eq!(options.mode, RuntimeMode::Boot);
     }
+}
 
     #[test]
     fn runtime_supports_midi_demo_mode() {

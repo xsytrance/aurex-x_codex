@@ -521,36 +521,13 @@ fn fs_main(inf: VsOut) -> @location(0) vec4<f32> {
                                 screen,
                             );
                             frame
-                        } else if elapsed < 6.0 {
-                            let mut frame = rasterize_boot_frame(boot, config.width, config.height);
-                            overlay_boot_caption(
-                                &mut frame.rgba,
-                                config.width,
-                                config.height,
-                                screen,
-                            );
-                            let fade = (1.0 - (elapsed - 5.0)).clamp(0.0, 1.0);
-                            apply_fade_to_black(&mut frame.rgba, fade);
-                            frame
-                        } else if elapsed < 12.0 {
-                            rasterize_reveal_frame(config.width, config.height, elapsed - 6.0, boot)
                         } else {
-                            let scene_time = elapsed - 12.0;
-                            let scene = select_demo_scene(scene_time);
-                            let local_t = local_scene_time(scene_time);
-                            rasterize_demo_scene(
-                                config.width,
-                                config.height,
-                                scene,
-                                local_t,
-                                dt,
-                                runtime_pulse,
-                                &mut scene_particles,
-                                &mut particle_cursor,
-                                &starfield,
-                            )
+                            BootFramebuffer {
+                                width: config.width,
+                                height: config.height,
+                                rgba: vec![0; (config.width * config.height * 4) as usize],
+                            }
                         };
-
                         queue.write_texture(
                             wgpu::TexelCopyTextureInfo {
                                 texture: &boot_texture,
