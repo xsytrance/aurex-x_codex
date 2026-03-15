@@ -1,4 +1,4 @@
-mod boot_runtime;
+mod boot;
 mod runtime_flags;
 
 use std::io::{self, BufRead};
@@ -15,7 +15,7 @@ use aurex_pulse::{
 };
 use aurex_render::run_real_renderer_event_loop_with_frame_hook;
 use aurex_render_sdf::{GeometrySdfMode, RenderConfig};
-use boot_runtime::{BootRuntime, BootScreenMode};
+use boot::{BootRuntime, BootScreenMode};
 use runtime_flags::RuntimeDebugFlags;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -263,14 +263,16 @@ mod tests {
     }
 }
 
-#[test]
-fn runtime_supports_midi_demo_mode() {
-    let options = parse_runtime_options(vec!["midi_demo".to_string(), "example.mid".to_string()])
-        .expect("midi_demo mode should parse");
-    assert_eq!(
-        options.mode,
-        RuntimeMode::MidiDemo {
-            midi_path: "example.mid".to_string()
-        }
-    );
+    #[test]
+    fn runtime_supports_midi_demo_mode() {
+        let options =
+            parse_runtime_options(vec!["midi_demo".to_string(), "example.mid".to_string()])
+                .expect("midi_demo mode should parse");
+        assert_eq!(
+            options.mode,
+            RuntimeMode::MidiDemo {
+                midi_path: "example.mid".to_string()
+            }
+        );
+    }
 }
