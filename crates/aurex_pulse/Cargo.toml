@@ -5,6 +5,7 @@ edition = "2024"
 license = "MIT"
 
 [dependencies]
+aurex_midi = { path = "../aurex_midi" }
 aurex_scene = { path = "../aurex_scene" }
 aurex_render_sdf = { path = "../aurex_render_sdf" }
 aurex_audio = { path = "../aurex_audio" }
