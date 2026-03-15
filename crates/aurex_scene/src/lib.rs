@@ -7,6 +7,7 @@ pub mod effect_graph;
 pub mod fields;
 pub mod generators;
 pub mod harmonics;
+pub mod particle_swarm;
 pub mod patterns;
 pub mod scene_generator;
 pub mod transition;
