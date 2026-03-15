@@ -142,7 +142,9 @@ dependencies = [
  "aurex_lighting",
  "aurex_midi",
  "aurex_postfx",
+ "aurex_pulse",
  "aurex_render",
+ "aurex_render_sdf",
  "aurex_shape_synth",
 ]
 

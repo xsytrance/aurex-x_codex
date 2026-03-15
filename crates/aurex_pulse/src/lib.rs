@@ -5,9 +5,12 @@ pub mod loader;
 pub mod prime_pulse;
 pub mod pulse_blueprint;
 pub mod pulse_graph;
+pub mod pulse_runtime;
 pub mod resonance;
 pub mod runner;
 pub mod schema;
+
+pub use pulse_runtime::PulseRuntime;
 
 #[cfg(test)]
 mod tests {

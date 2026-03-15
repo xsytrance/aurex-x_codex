@@ -15,6 +15,8 @@ aurex_lighting = { path = "../aurex_lighting" }
 aurex_postfx = { path = "../aurex_postfx" }
 aurex_audio = { path = "../aurex_audio" }
 aurex_midi = { path = "../aurex_midi", optional = true }
+aurex_pulse = { path = "../aurex_pulse" }
+aurex_render_sdf = { path = "../aurex_render_sdf" }
 
 [features]
 default = []
