@@ -145,6 +145,7 @@ dependencies = [
  "aurex_pulse",
  "aurex_render",
  "aurex_render_sdf",
+ "aurex_scene",
  "aurex_shape_synth",
 ]
 
